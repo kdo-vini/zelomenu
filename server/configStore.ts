@@ -1,0 +1,439 @@
+import { getServiceSupabase } from './supabaseServer.js';
+import { resolveZeloMenuPublicationCatalogProduct } from '../src/domain/zelomenuPublication.js';
+import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
+import type { ZeloMenuModifierGroup, ZeloMenuModifierOption } from '../src/domain/zelomenuModifiers.js';
+import type { ZeloMenuProductPublication } from '../src/domain/zelomenuPublication.js';
+
+// ─── Public types ──────────────────────────────────────────────────────────────
+
+export type DeliveryNeighborhood = { name: string; fee: number };
+export type DeliveryConfig = { enabled: boolean; neighborhoods: DeliveryNeighborhood[] };
+
+export type PixReceiptConfig = {
+  available: boolean;
+  enabled: boolean;
+  beneficiaryNames: string[];
+  valueTolerance: number;
+  maxAgeHours: number;
+  fallback: string;
+  minConfidence: number;
+};
+
+export type CatalogProduct = {
+  id: number;
+  name: string;
+  price: number;
+  basePrice: number;
+  available: boolean;
+  description?: string | null;
+  photoUrl?: string | null;
+  sortOrder?: number;
+  unitBased?: boolean;
+  stockControlled?: boolean;
+  stockQuantity?: number;
+  modifierGroups: ZeloMenuModifierGroup[];
+};
+
+export type CatalogCategoriaGroup = {
+  nome: string;
+  subcategorias: Array<{ nome: string; produtos: CatalogProduct[] }>;
+  produtosDireto: CatalogProduct[];
+};
+
+export type BusinessConfig = {
+  name: string;
+  address: string;
+  openTime?: string;
+  closeTime?: string;
+  closedDays: string[];
+  timezone?: string;
+  deliveryConfig: DeliveryConfig | null;
+  pixReceiptConfig: PixReceiptConfig | null;
+  catalogHierarchy: CatalogCategoriaGroup[];
+  products: CatalogProduct[];
+};
+
+const DEFAULT_CONFIG: BusinessConfig = {
+  name: '',
+  address: '',
+  closedDays: [],
+  deliveryConfig: null,
+  pixReceiptConfig: null,
+  catalogHierarchy: [],
+  products: [],
+};
+
+const configMap = new Map<string, BusinessConfig>();
+
+export function getConfig(empresaId: string): BusinessConfig {
+  return configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
+}
+
+// ─── Normalizers ───────────────────────────────────────────────────────────────
+
+function normalizeText(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
+function normalizeNumber(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeDeliveryConfig(value: unknown): DeliveryConfig | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as { enabled?: unknown; neighborhoods?: unknown };
+  const neighborhoods = Array.isArray(row.neighborhoods)
+    ? row.neighborhoods
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const n = item as { name?: unknown; fee?: unknown };
+        const name = normalizeText(n.name);
+        const fee = normalizeNumber(n.fee);
+        if (!name || fee < 0) return null;
+        return { name, fee };
+      })
+      .filter((item): item is DeliveryNeighborhood => item !== null)
+    : [];
+  return { enabled: row.enabled === true, neighborhoods };
+}
+
+function normalizePixReceiptConfig(value: unknown): PixReceiptConfig | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const beneficiaryNames = Array.isArray(raw.beneficiaryNames)
+    ? raw.beneficiaryNames.filter((v): v is string => typeof v === 'string')
+    : [];
+  return {
+    available: raw.available === true,
+    enabled: raw.enabled === true,
+    beneficiaryNames,
+    valueTolerance: normalizeNumber(raw.valueTolerance),
+    maxAgeHours: normalizeNumber(raw.maxAgeHours) || 24,
+    fallback: raw.fallback === 'ask_retry' ? 'ask_retry' : 'escalate_human',
+    minConfidence: normalizeNumber(raw.minConfidence) || 0.8,
+  };
+}
+
+type CatalogProductWithPlacement = CatalogProduct & {
+  id: number;
+  idCategoria: number | null;
+  idSubcategoria: number | null;
+  ocultarNoPdv: boolean;
+};
+
+function normalizeProductRow(row: unknown): CatalogProductWithPlacement | null {
+  if (!row || typeof row !== 'object') return null;
+  const product = row as {
+    id?: unknown;
+    nome?: unknown;
+    preco?: unknown;
+    id_categoria?: unknown;
+    id_subcategoria?: unknown;
+    eh_item_por_unidade?: unknown;
+    ocultar_no_pdv?: unknown;
+    controlar_estoque?: unknown;
+    estoque_atual?: unknown;
+  };
+  const id = normalizeNumber(product.id);
+  const name = normalizeText(product.nome);
+  if (!id || !name) return null;
+  const idCategoria = product.id_categoria == null ? null : normalizeNumber(product.id_categoria);
+  const idSubcategoria = product.id_subcategoria == null ? null : normalizeNumber(product.id_subcategoria);
+  const ocultarNoPdv = product.ocultar_no_pdv === true;
+  const stockControlled = product.controlar_estoque === true;
+  const stockQuantity = normalizeNumber(product.estoque_atual);
+  return {
+    id,
+    name,
+    price: normalizeNumber(product.preco),
+    basePrice: normalizeNumber(product.preco),
+    available: !ocultarNoPdv && (!stockControlled || stockQuantity > 0),
+    unitBased: product.eh_item_por_unidade === true,
+    stockControlled,
+    stockQuantity,
+    idCategoria,
+    idSubcategoria,
+    ocultarNoPdv,
+    modifierGroups: [],
+  };
+}
+
+function normalizeProductPublicationRow(row: unknown): ZeloMenuProductPublication | null {
+  if (!row || typeof row !== 'object') return null;
+  const publication = row as {
+    id_produto?: unknown;
+    nome_publico?: unknown;
+    descricao_publica?: unknown;
+    foto_url?: unknown;
+    visivel_online?: unknown;
+    pausado_manualmente?: unknown;
+    ordem?: unknown;
+  };
+  const idProduto = normalizeNumber(publication.id_produto);
+  if (!idProduto) return null;
+  return {
+    id_produto: idProduto,
+    nome_publico: normalizeText(publication.nome_publico) || null,
+    descricao_publica: normalizeText(publication.descricao_publica) || null,
+    foto_url: normalizeText(publication.foto_url) || null,
+    visivel_online: publication.visivel_online === true,
+    pausado_manualmente: publication.pausado_manualmente === true,
+    ordem: Math.max(0, Math.trunc(normalizeNumber(publication.ordem))),
+  };
+}
+
+function normalizeModifierGroupRow(row: unknown): Omit<ZeloMenuModifierGroup, 'options'> | null {
+  if (!row || typeof row !== 'object') return null;
+  const group = row as {
+    id?: unknown;
+    id_produto?: unknown;
+    nome?: unknown;
+    tipo?: unknown;
+    min_selecoes?: unknown;
+    max_selecoes?: unknown;
+    ativo?: unknown;
+    ordem?: unknown;
+  };
+  const id = normalizeText(group.id);
+  const productId = normalizeNumber(group.id_produto);
+  const name = normalizeText(group.nome);
+  if (!id || !productId || !name) return null;
+  return {
+    id,
+    productId,
+    name,
+    kind: group.tipo === 'variacao' ? 'variacao' : 'adicional',
+    minSelections: Math.max(0, Math.trunc(normalizeNumber(group.min_selecoes))),
+    maxSelections: group.max_selecoes == null ? null : Math.max(1, Math.trunc(normalizeNumber(group.max_selecoes))),
+    active: group.ativo !== false,
+    order: Math.max(0, Math.trunc(normalizeNumber(group.ordem))),
+  };
+}
+
+function normalizeModifierOptionRow(row: unknown): (ZeloMenuModifierOption & { groupId: string }) | null {
+  if (!row || typeof row !== 'object') return null;
+  const option = row as {
+    id?: unknown;
+    id_grupo?: unknown;
+    nome?: unknown;
+    price_delta?: unknown;
+    ativo?: unknown;
+    ordem?: unknown;
+  };
+  const id = normalizeText(option.id);
+  const groupId = normalizeText(option.id_grupo);
+  const name = normalizeText(option.nome);
+  if (!id || !groupId || !name) return null;
+  return {
+    id,
+    groupId,
+    name,
+    priceDelta: normalizeNumber(option.price_delta),
+    active: option.ativo !== false,
+    order: Math.max(0, Math.trunc(normalizeNumber(option.ordem))),
+  };
+}
+
+function toPublicCatalogProduct(product: CatalogProductWithPlacement): CatalogProduct {
+  return {
+    id: product.id,
+    name: product.name,
+    price: product.price,
+    basePrice: product.basePrice,
+    available: product.available,
+    description: product.description ?? null,
+    photoUrl: product.photoUrl ?? null,
+    sortOrder: product.sortOrder ?? 0,
+    unitBased: product.unitBased,
+    stockControlled: product.stockControlled,
+    stockQuantity: product.stockQuantity,
+    modifierGroups: product.modifierGroups ?? [],
+  };
+}
+
+function sortCatalogProducts(a: CatalogProductWithPlacement, b: CatalogProductWithPlacement): number {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name);
+}
+
+function buildCatalogHierarchy(
+  categorias: unknown[],
+  subcategorias: unknown[],
+  produtos: Array<CatalogProductWithPlacement | null>,
+): CatalogCategoriaGroup[] {
+  const productRows = produtos.filter((item): item is CatalogProductWithPlacement => item !== null);
+  const subRows = subcategorias
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as { id?: unknown; id_categoria?: unknown; nome?: unknown };
+      const nome = normalizeText(row.nome);
+      if (!nome) return null;
+      return {
+        id: normalizeNumber(row.id),
+        idCategoria: normalizeNumber(row.id_categoria),
+        nome,
+      };
+    })
+    .filter((item): item is { id: number; idCategoria: number; nome: string } => item !== null);
+
+  return categorias
+    .map((item): CatalogCategoriaGroup | null => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as { id?: unknown; nome?: unknown };
+      const id = normalizeNumber(row.id);
+      const nome = normalizeText(row.nome);
+      if (!nome) return null;
+      const productsInCategory = productRows.filter((p) => p.idCategoria === id);
+      const subs = subRows
+        .filter((sub) => sub.idCategoria === id)
+        .map((sub) => ({
+          nome: sub.nome,
+          produtos: productsInCategory
+            .filter((p) => p.idSubcategoria === sub.id)
+            .sort(sortCatalogProducts)
+            .map(toPublicCatalogProduct),
+        }));
+      return {
+        nome,
+        subcategorias: subs,
+        produtosDireto: productsInCategory
+          .filter((p) => p.idSubcategoria == null)
+          .sort(sortCatalogProducts)
+          .map(toPublicCatalogProduct),
+      };
+    })
+    .filter((item): item is CatalogCategoriaGroup => item !== null);
+}
+
+// ─── Loader ───────────────────────────────────────────────────────────────────
+
+export async function loadCatalogFromDb(empresaId: string): Promise<void> {
+  const supabase = getServiceSupabase();
+
+  const { data: perfilData, error: perfilError } = await supabase
+    .from('empresa_perfil')
+    .select('user_id, nome_exibicao, endereco, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+    .eq('id', empresaId)
+    .maybeSingle();
+  if (perfilError) throw perfilError;
+  if (!perfilData) throw new Error(`empresa_perfil not found for ${empresaId}`);
+
+  const row = perfilData as {
+    user_id?: string | null;
+    nome_exibicao?: string | null;
+    endereco?: string | null;
+    delivery_config?: unknown;
+    pix_receipt_config?: unknown;
+    horario_abertura?: string | null;
+    horario_fechamento?: string | null;
+    dias_fechamento?: unknown;
+    timezone?: string | null;
+  };
+
+  const userId = normalizeText(row.user_id);
+  if (!userId) throw new Error(`empresa_perfil.user_id missing for ${empresaId}`);
+
+  const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes] = await Promise.all([
+    supabase.from('categorias').select('id, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome'),
+    supabase.from('subcategorias').select('id, id_categoria, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome'),
+    supabase.from('produtos').select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual').eq('id_usuario', userId).order('nome'),
+    supabase.from('zelomenu_product_publications').select('id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem').eq('id_usuario', userId).order('ordem').limit(2000),
+    supabase.from('zelomenu_modifier_groups').select('id, id_produto, nome, tipo, min_selecoes, max_selecoes, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(4000),
+    supabase.from('zelomenu_modifier_options').select('id, id_grupo, nome, price_delta, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(8000),
+  ]);
+
+  if (categoriasRes.error) throw categoriasRes.error;
+  if (subcategoriasRes.error) throw subcategoriasRes.error;
+  if (produtosRes.error) throw produtosRes.error;
+  if (publicationsRes.error) throw publicationsRes.error;
+  if (modifierGroupsRes.error) throw modifierGroupsRes.error;
+  if (modifierOptionsRes.error) throw modifierOptionsRes.error;
+
+  const publicationsByProductId = new Map<number, ZeloMenuProductPublication>();
+  for (const pubRow of publicationsRes.data ?? []) {
+    const publication = normalizeProductPublicationRow(pubRow);
+    if (publication) publicationsByProductId.set(publication.id_produto, publication);
+  }
+
+  const optionsByGroupId = new Map<string, ZeloMenuModifierOption[]>();
+  for (const optRow of modifierOptionsRes.data ?? []) {
+    const option = normalizeModifierOptionRow(optRow);
+    if (!option) continue;
+    const existing = optionsByGroupId.get(option.groupId) ?? [];
+    existing.push({ id: option.id, name: option.name, priceDelta: option.priceDelta, active: option.active, order: option.order });
+    optionsByGroupId.set(option.groupId, existing);
+  }
+
+  const modifierGroupsByProductId = new Map<number, ZeloMenuModifierGroup[]>();
+  for (const grpRow of modifierGroupsRes.data ?? []) {
+    const group = normalizeModifierGroupRow(grpRow);
+    if (!group) continue;
+    const existing = modifierGroupsByProductId.get(group.productId) ?? [];
+    existing.push({ ...group, options: optionsByGroupId.get(group.id) ?? [] });
+    modifierGroupsByProductId.set(group.productId, existing);
+  }
+  for (const [productId, groups] of modifierGroupsByProductId.entries()) {
+    modifierGroupsByProductId.set(productId, sortModifierGroups(groups));
+  }
+
+  const productsWithPlacement = (produtosRes.data ?? [])
+    .map(normalizeProductRow)
+    .map((product) => {
+      if (!product) return null;
+      const publication = publicationsByProductId.get(product.id) ?? null;
+      const resolved = resolveZeloMenuPublicationCatalogProduct({
+        id: product.id,
+        nome: product.name,
+        name: product.name,
+        price: product.price,
+        id_categoria: product.idCategoria,
+        controlar_estoque: product.stockControlled === true,
+        estoque_atual: product.stockQuantity ?? 0,
+        ocultar_no_pdv: product.ocultarNoPdv,
+        unitBased: product.unitBased,
+        stockControlled: product.stockControlled,
+        stockQuantity: product.stockQuantity,
+        publication,
+        modifierGroups: modifierGroupsByProductId.get(product.id) ?? [],
+      });
+      return {
+        ...product,
+        id: resolved.id,
+        name: resolved.name,
+        price: resolved.price,
+        basePrice: resolved.price,
+        available: resolved.available,
+        description: resolved.description,
+        photoUrl: resolved.photoUrl,
+        sortOrder: resolved.sortOrder,
+        modifierGroups: resolved.modifierGroups,
+      };
+    });
+
+  const products = productsWithPlacement
+    .filter((item): item is CatalogProductWithPlacement => item !== null)
+    .sort(sortCatalogProducts)
+    .map(toPublicCatalogProduct);
+
+  const catalogHierarchy = buildCatalogHierarchy(
+    categoriasRes.data ?? [],
+    subcategoriasRes.data ?? [],
+    productsWithPlacement,
+  );
+
+  const closedDays = Array.isArray(row.dias_fechamento) ? (row.dias_fechamento as string[]) : [];
+
+  configMap.set(empresaId, {
+    name: normalizeText(row.nome_exibicao) || 'Loja',
+    address: normalizeText(row.endereco),
+    openTime: normalizeText(row.horario_abertura) || undefined,
+    closeTime: normalizeText(row.horario_fechamento) || undefined,
+    closedDays,
+    timezone: normalizeText(row.timezone) || undefined,
+    deliveryConfig: normalizeDeliveryConfig(row.delivery_config),
+    pixReceiptConfig: normalizePixReceiptConfig(row.pix_receipt_config),
+    catalogHierarchy,
+    products,
+  });
+}

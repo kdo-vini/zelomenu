@@ -11,7 +11,7 @@ import { NeutralState } from '../components/NeutralState';
  *  1. Read the Supabase session (AuthContext).
  *  2. No session  → neutral PT-BR state ("Acesse pelo seu painel...").
  *  3. Session     → fetch the user's `subscriptions` row, build the entitlement
- *                   signals, and call @zelo/menu-core's `hasZeloMenuAccess`.
+ *                   signals, and call `hasZeloMenuAccess` (domain/zelomenuEntitlements).
  *  4. hasAccess === false → neutral blocked/upsell PT-BR state.
  *  5. hasAccess === true  → render CatalogView scoped to that owner
  *                           (`id_usuario = session.user.id`, exactly like the

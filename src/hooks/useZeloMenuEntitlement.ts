@@ -5,7 +5,7 @@ import {
   resolveZeloMenuCapabilities,
   type ZeloMenuCapabilitySet,
   type ZeloMenuEntitlementSignals,
-} from '@zelo/menu-core';
+} from '../domain/zelomenuEntitlements';
 import { supabase } from '../services/supabaseClient';
 import { isSubscriptionCurrentlyActive } from '../domain/subscription';
 
@@ -21,9 +21,9 @@ export interface ZeloMenuSubscription {
 export interface UseZeloMenuEntitlementResult {
   /** Latest subscription row (any plan_tier) — null se o user nunca assinou. */
   subscription: ZeloMenuSubscription | null;
-  /** Sinais puros passados ao resolver de @zelo/menu-core. */
+  /** Sinais puros passados ao resolver de entitlement. */
   signals: ZeloMenuEntitlementSignals;
-  /** Capabilities efetivas do ZeloMenu, resolvidas por @zelo/menu-core. */
+  /** Capabilities efetivas do ZeloMenu, resolvidas pelo resolver de domínio. */
   capabilities: ZeloMenuCapabilitySet;
   /** True se o owner pode publicar/configurar o cardápio (gate de /admin). */
   hasAccess: boolean;
@@ -35,7 +35,7 @@ export interface UseZeloMenuEntitlementResult {
 
 /**
  * Lê a assinatura do owner na tabela compartilhada `subscriptions` e resolve o
- * entitlement do ZeloMenu via @zelo/menu-core (fonte única cross-repo).
+ * entitlement do ZeloMenu via o resolver local (`domain/zelomenuEntitlements`).
  *
  * Espelha o comportamento do ZeloChat (`useSubscription`): pega a row mais
  * recente por `user_id`, calcula `active` (status + expiry) localmente, e passa

@@ -1,8 +1,8 @@
 // Pure subscription expiry/active helpers. Copied from ZeloChat's
 // src/domain/subscription.ts (the migration manifest says copy small pure utils
-// the graph needs rather than importing from Chat). `@zelo/menu-core` resolves
-// capabilities but the caller is responsible for resolving `active`
-// (status + expiry) — that is exactly what this file does.
+// the graph needs rather than importing from Chat). The entitlement resolver in
+// `domain/zelomenuEntitlements.ts` resolves capabilities, but the caller is
+// responsible for resolving `active` (status + expiry) — that is what this does.
 
 export interface SubscriptionExpiryLike {
   current_period_end: string | null;
