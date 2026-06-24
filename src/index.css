@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/*
+ * Theme tokens shared with the ZeloChat config surface. The migrated
+ * CatalogView / publication panel reference these CSS variables directly
+ * (e.g. var(--color-brand-soft), var(--color-ink)). Keep them in sync with
+ * ZeloChat's src/index.css @theme block.
+ */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-canvas: #f6f7f8;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f2f3f5;
+  --color-line: #e7e9ec;
+  --color-line-strong: #d5d9dd;
+
+  --color-ink: #101418;
+  --color-ink-soft: #3a4049;
+  --color-ink-muted: #6b7380;
+  --color-ink-faint: #98a0ab;
+
+  --color-brand: #0b9778;
+  --color-brand-deep: #07745c;
+  --color-brand-soft: #e4f4ef;
+
+  --color-alert: #d04545;
+  --color-alert-soft: #fbe9e9;
+  --color-warn: #b87a00;
+  --color-warn-soft: #fbf0d8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
