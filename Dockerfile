@@ -28,6 +28,7 @@ RUN npm ci
 
 # Copy server source + built frontend
 COPY server ./server
+COPY src/domain ./src/domain
 COPY --from=build /app/dist ./dist
 
 # Copy tsconfig so tsx can resolve path aliases
