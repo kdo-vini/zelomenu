@@ -8,6 +8,7 @@ import { NeutralState } from '../components/NeutralState';
 import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
 import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
 import { AdminLayout, type NavSection } from '../components/AdminLayout';
+import { OnboardingWizard, ONBOARDING_KEY } from '../components/OnboardingWizard';
 import { Settings } from 'lucide-react';
 
 // ─── Upsell ────────────────────────────────────────────────────────────────
@@ -63,6 +64,10 @@ export function AdminPage() {
     window.location.hash = section;
   };
 
+  const [onboardingDone, setOnboardingDone] = useState(
+    () => localStorage.getItem(ONBOARDING_KEY) === 'done',
+  );
+
   const catalogEnabled = !!session && entitlement.hasAccess;
   const catalog = useCatalog(session, { enabled: catalogEnabled });
 
@@ -76,6 +81,11 @@ export function AdminPage() {
 
   // No entitlement
   if (!entitlement.hasAccess) return <UpsellScreen isActiveWithoutMenu={entitlement.isActiveWithoutMenu} />;
+
+  // First-time onboarding
+  if (!onboardingDone) {
+    return <OnboardingWizard onComplete={() => setOnboardingDone(true)} />;
+  }
 
   const catalogContent = (
     <CatalogView
