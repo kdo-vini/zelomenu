@@ -12,8 +12,9 @@ COPY . .
 
 # Vite inlines VITE_* env vars at build time — they must be present here, not
 # at runtime. Passed via --build-arg from the deploy step.
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
+# Default values set for Dokploy auto-build (which doesn't pass --build-arg).
+ARG VITE_SUPABASE_URL=https://xnnjyrblpvsqrtsshawa.supabase.co
+ARG VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhubmp5cmJscHZzcXJ0c3NoYXdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE4MTQ2NDksImV4cCI6MjA3NzM5MDY0OX0.ctfUWDadjnnC4AVZnaD8Z33kaErxr0HQHrNnSw9MEGA
 ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
 ENV VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
 
@@ -44,6 +45,12 @@ COPY tsconfig*.json ./
 
 ARG PUBLIC_APP_VERSION
 ENV PUBLIC_APP_VERSION=${PUBLIC_APP_VERSION}
+
+# Runtime env vars (the Express server injects these into the SPA HTML).
+# Also set in the build stage above — repeated here because Docker stages
+# don't inherit ARG/ENV from previous stages.
+ENV VITE_SUPABASE_URL=https://xnnjyrblpvsqrtsshawa.supabase.co
+ENV VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhubmp5cmJscHZzcXJ0c3NoYXdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE4MTQ2NDksImV4cCI6MjA3NzM5MDY0OX0.ctfUWDadjnnC4AVZnaD8Z33kaErxr0HQHrNnSw9MEGA
 
 ENV SERVER_PORT=${PORT:-3101}
 EXPOSE ${PORT:-3101}
