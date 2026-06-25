@@ -1,15 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 
-// Standalone Supabase client for the ZeloMenu owner-config app. This is NOT
-// shared with ZeloChat — it is our own client. It reads the same Supabase
-// project (shared by ZeloPDV / ZeloChat) via the public anon key.
-//
-// TODO: cross-subdomain cookie storage on .zelopdv.com.br for SSO. Today this
-// uses @supabase/supabase-js defaults (localStorage persistence), which means
-// the session is NOT shared with the PDV/Chat apps across subdomains. The
-// product decision is that auth comes from the PDV/Chat session, so a later
-// task must swap the auth storage for a cookie-based store scoped to
-// .zelopdv.com.br (and add the SSO handshake). Do not implement that here.
+// Supabase client with cookie-based auth storage at `.zelopdv.com.br`.
+// Cookies survive across subdomains (pdv.zelopdv.com.br, chat.zelopdv.com.br,
+// menu.zelopdv.com.br) so a session created anywhere on the `.zelopdv.com.br`
+// domain is visible everywhere.
 
 const env = (import.meta as ImportMeta & {
   env?: Record<string, string | undefined>;
@@ -19,14 +13,24 @@ const supabaseUrl = env?.VITE_SUPABASE_URL;
 const supabaseAnonKey = env?.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  // Keep the app booting in dev, but make the misconfiguration obvious on use.
   console.warn(
     '[Supabase] Variáveis ausentes: VITE_SUPABASE_URL e/ou VITE_SUPABASE_ANON_KEY. ' +
       'Configure em .env (veja .env.example).',
   );
 }
 
-export const supabase = createClient(
+export const supabase = createBrowserClient(
   supabaseUrl ?? 'http://127.0.0.1:54321',
   supabaseAnonKey ?? 'public-anon-key-placeholder',
+  {
+    cookieOptions: {
+      // Share the session across all zelopdv.com.br subdomains
+      domain: '.zelopdv.com.br',
+      // SameSite Lax allows the cookie to be sent when navigating from
+      // another subdomain (e.g., chat → menu).
+      sameSite: 'lax',
+      // Secure in production where HTTPS is available, false for local dev (http://localhost)
+      secure: typeof location !== 'undefined' ? location.protocol === 'https:' : true,
+    },
+  },
 );

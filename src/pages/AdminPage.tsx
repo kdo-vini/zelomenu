@@ -1,28 +1,122 @@
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
 import { CatalogView } from '../components/views/CatalogView';
 import { NeutralState } from '../components/NeutralState';
+import { supabase } from '../services/supabaseClient';
+import { LogIn, Loader2, AlertCircle } from 'lucide-react';
 
 /**
  * /admin — the ZeloMenu owner config surface.
  *
- * Entitlement gate (no login screen — auth comes from the PDV/Chat session):
- *  1. Read the Supabase session (AuthContext).
- *  2. No session  → neutral PT-BR state ("Acesse pelo seu painel...").
- *  3. Session     → fetch the user's `subscriptions` row, build the entitlement
- *                   signals, and call `hasZeloMenuAccess` (domain/zelomenuEntitlements).
- *  4. hasAccess === false → neutral blocked/upsell PT-BR state.
- *  5. hasAccess === true  → render CatalogView scoped to that owner
- *                           (`id_usuario = session.user.id`, exactly like the
- *                           existing ZeloChat config path; no sub-user→owner
- *                           resolution happens there, so we mirror it).
- *
- * TODO: cookie-SSO handshake + redirect from PDV/Chat. Until cross-subdomain
- * cookie storage is wired (services/supabaseClient.ts), a fresh visit with no
- * local session lands on the neutral state instead of inheriting the PDV/Chat
- * session.
+ * Uses @supabase/ssr cookie storage scoped to .zelopdv.com.br so the session
+ * is shared across all subdomains. If no session exists yet, a login form
+ * allows signing in directly from this origin.
  */
+
+function LoginForm() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError) throw signInError;
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message === 'Invalid login credentials'
+            ? 'Email ou senha inválidos.'
+            : err.message
+          : 'Erro ao fazer login. Tente novamente.';
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[var(--color-canvas)] p-4">
+      <div className="w-full max-w-sm rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-lg">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-primary)]/10">
+            <LogIn className="h-6 w-6 text-[var(--color-primary)]" />
+          </div>
+          <h1 className="text-xl font-semibold text-[var(--color-fg)]">ZeloMenu</h1>
+          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
+            Faça login com sua conta ZeloPDV
+          </p>
+        </div>
+
+        {error && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="login-email" className="mb-1 block text-sm font-medium text-[var(--color-fg)]">
+              Email
+            </label>
+            <input
+              id="login-email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm text-[var(--color-fg)] outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+              placeholder="seu@email.com"
+              autoComplete="email"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="login-password" className="mb-1 block text-sm font-medium text-[var(--color-fg)]">
+              Senha
+            </label>
+            <input
+              id="login-password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm text-[var(--color-fg)] outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+              placeholder="••••••••"
+              autoComplete="current-password"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Entrando…
+              </>
+            ) : (
+              'Entrar'
+            )}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function AdminPage() {
   const { session, loading: authLoading } = useAuth();
   const entitlement = useZeloMenuEntitlement(session);
@@ -42,12 +136,7 @@ export function AdminPage() {
   }
 
   if (!session) {
-    return (
-      <NeutralState
-        title="ZeloMenu"
-        description="Acesse pelo seu painel ZeloPDV ou ZeloChat."
-      />
-    );
+    return <LoginForm />;
   }
 
   if (!entitlement.hasAccess) {
