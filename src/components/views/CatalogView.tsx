@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
+  ArrowUpDown,
   ChevronDown,
   ChevronRight,
   CircleCheck,
@@ -17,6 +18,7 @@ import {
   ExternalLink,
   X,
 } from 'lucide-react';
+import { SortableList } from '../zelomenu/SortableList';
 import type {
   Categoria,
   ProdutoRow,
@@ -55,6 +57,7 @@ interface Props {
   refresh: () => Promise<void>;
   createCategoria: (input: { nome: string; ordem?: number }) => Promise<Categoria>;
   updateCategoria: (id: number, patch: { nome?: string; ordem?: number }) => Promise<void>;
+  reorderCategorias: (ordered: Categoria[]) => Promise<void>;
   deleteCategoria: (id: number) => Promise<void>;
   createSubcategoria: (input: { nome: string; id_categoria: number; ordem?: number }) => Promise<Subcategoria>;
   updateSubcategoria: (id: number, patch: { nome?: string; id_categoria?: number; ordem?: number }) => Promise<void>;
@@ -78,6 +81,7 @@ interface Props {
   ) => Promise<void>;
   deleteProduto: (id: number) => Promise<void>;
   upsertProductPublication: (productId: number, patch: ZeloMenuProductPublicationInput) => Promise<ZeloMenuProductPublicationRow>;
+  reorderProductPublications: (orderedProductIds: number[]) => Promise<void>;
   replaceProductModifierGroups: (productId: number, groups: ZeloMenuModifierGroupDraft[]) => Promise<ZeloMenuModifierGroupRow[]>;
   uploadProductPublicationImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
   deleteProductPublicationImage: (url: string | null | undefined) => Promise<void>;
@@ -112,6 +116,7 @@ export const CatalogView = ({
   refresh,
   createCategoria,
   updateCategoria,
+  reorderCategorias,
   deleteCategoria,
   createSubcategoria,
   updateSubcategoria,
@@ -120,6 +125,7 @@ export const CatalogView = ({
   updateProduto,
   deleteProduto,
   upsertProductPublication,
+  reorderProductPublications,
   replaceProductModifierGroups,
   uploadProductPublicationImage,
   deleteProductPublicationImage,
@@ -130,6 +136,8 @@ export const CatalogView = ({
   const [del, setDel] = useState<DeleteState>(null);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [reorderMode, setReorderMode] = useState(false);
+  const [reorderBusy, setReorderBusy] = useState(false);
 
   const normalized = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -137,8 +145,14 @@ export const CatalogView = ({
     return produtos.filter((p) => p.nome.toLowerCase().includes(normalized));
   }, [produtos, normalized]);
 
-  const tree = useMemo(() => buildTree(categorias, subcategorias, filtered), [categorias, subcategorias, filtered]);
-  const orphanProducts = useMemo(() => filtered.filter((p) => p.id_categoria == null), [filtered]);
+  const tree = useMemo(
+    () => buildTree(categorias, subcategorias, filtered, productPublications),
+    [categorias, subcategorias, filtered, productPublications],
+  );
+  const orphanProducts = useMemo(
+    () => sortProductsForMenu(filtered.filter((p) => p.id_categoria == null), productPublications),
+    [filtered, productPublications],
+  );
   const visibleProducts = useMemo(
     () => [
       ...tree.flatMap((node) => [
@@ -154,6 +168,10 @@ export const CatalogView = ({
     [produtos, productPublications],
   );
   const publicationSummary = useMemo(() => summarizeZeloMenuPublication(publicationProducts), [publicationProducts]);
+  const editorProducts = useMemo(
+    () => sortProductsForEditor(produtos, categorias, subcategorias, productPublications),
+    [categorias, productPublications, produtos, subcategorias],
+  );
   const publicationIssues = useMemo(
     () => publicationProducts
       .map((produto) => ({ produto, details: getZeloMenuPublicationStatus(produto) }))
@@ -211,6 +229,30 @@ export const CatalogView = ({
 
   const expandAll = () => setExpanded(new Set(categorias.map((c) => c.id)));
   const collapseAll = () => setExpanded(new Set());
+
+  const handleCategoryReorder = async (reorderedNodes: TreeNode[]) => {
+    setReorderBusy(true);
+    setBulkFeedback(null);
+    try {
+      await reorderCategorias(reorderedNodes.map((node) => node.categoria));
+    } catch {
+      setBulkFeedback({ tone: 'error', message: 'Não foi possível salvar a ordem das categorias.' });
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
+  const handleProductReorder = async (reorderedProducts: ProdutoRow[]) => {
+    setReorderBusy(true);
+    setBulkFeedback(null);
+    try {
+      await reorderProductPublications(reorderedProducts.map((produto) => produto.id));
+    } catch {
+      setBulkFeedback({ tone: 'error', message: 'Não foi possível salvar a ordem dos produtos.' });
+    } finally {
+      setReorderBusy(false);
+    }
+  };
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto p-4 sm:p-6 lg:p-8">
@@ -307,6 +349,30 @@ export const CatalogView = ({
                   Selecionar
                 </button>
               )}
+              <span className="text-[var(--color-line-strong)]">·</span>
+              <button
+                onClick={() => {
+                  setReorderMode((current) => {
+                    const next = !current;
+                    if (next) {
+                      setExpanded(new Set(categorias.map((categoria) => categoria.id)));
+                      bulk.exitSelection();
+                      setQuery('');
+                    }
+                    return next;
+                  });
+                  setBulkFeedback(null);
+                }}
+                disabled={reorderBusy || categorias.length + produtos.length < 2}
+                className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                  reorderMode
+                    ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+                    : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                }`}
+              >
+                <ArrowUpDown className="h-3.5 w-3.5" />
+                {reorderBusy ? 'Salvando ordem…' : reorderMode ? 'Concluir ordem' : 'Ordenar'}
+              </button>
               <div className="flex w-full min-h-[44px] items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 md:ml-2 md:w-auto">
                 <Search className="h-4 w-4 text-[var(--color-ink-faint)]" />
                 <input
@@ -400,7 +466,62 @@ export const CatalogView = ({
 
           {isAuthenticated && (loading || categorias.length > 0 || produtos.length > 0) && (
             <div className="space-y-3">
-              {tree.map((node) => (
+              {reorderMode ? (
+                <SortableList
+                  items={tree}
+                  getId={(node) => node.categoria.id}
+                  onReorder={(reordered) => void handleCategoryReorder(reordered)}
+                  disabled={reorderBusy}
+                  rowClassName="border-0 bg-transparent"
+                  renderItem={(node) => (
+                    <CategoriaCard
+                  key={node.categoria.id}
+                  node={node}
+                  expanded={expanded.has(node.categoria.id)}
+                  forceExpanded={Boolean(normalized)}
+                  toggle={() => toggleCat(node.categoria.id)}
+                  onEditCategoria={() => setModal({ kind: 'categoria', initial: node.categoria })}
+                  onDeleteCategoria={() => setDel({ kind: 'categoria', item: node.categoria })}
+                  onNewSubcategoria={() =>
+                    setModal({ kind: 'subcategoria', initial: null, defaultCategoriaId: node.categoria.id })
+                  }
+                  onNewProduto={(subId) =>
+                    setModal({
+                      kind: 'produto',
+                      initial: null,
+                      defaultCategoriaId: node.categoria.id,
+                      defaultSubcategoriaId: subId,
+                    })
+                  }
+                  onEditSubcategoria={(sub) => setModal({ kind: 'subcategoria', initial: sub, defaultCategoriaId: sub.id_categoria })}
+                  onDeleteSubcategoria={(sub) => setDel({ kind: 'subcategoria', item: sub })}
+                  selectionMode={bulk.selectionMode}
+                  selectedIds={bulk.selectedIds}
+                  onToggleCategorySelection={(ids) => {
+                    setBulkFeedback(null);
+                    bulk.toggleMany(ids);
+                  }}
+                  onToggleSubcategorySelection={(ids) => {
+                    setBulkFeedback(null);
+                    bulk.toggleMany(ids);
+                  }}
+                  onToggleProdutoSelection={(id) => {
+                    setBulkFeedback(null);
+                    bulk.toggle(id);
+                  }}
+                  onEditProduto={(p) =>
+                    setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
+                  }
+                  onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
+                  productPublications={productPublications}
+                  onConfigurePublication={(p) => setModal({ kind: 'publication', product: p })}
+                  reorderMode
+                  reorderBusy={reorderBusy}
+                  onReorderProducts={(products) => void handleProductReorder(products)}
+                />
+                  )}
+                />
+              ) : tree.map((node) => (
                 <CategoriaCard
                   key={node.categoria.id}
                   node={node}
@@ -442,6 +563,9 @@ export const CatalogView = ({
                   onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
                   productPublications={productPublications}
                   onConfigurePublication={(p) => setModal({ kind: 'publication', product: p })}
+                  reorderMode={false}
+                  reorderBusy={false}
+                  onReorderProducts={() => undefined}
                 />
               ))}
 
@@ -461,8 +585,13 @@ export const CatalogView = ({
                     )}
                     <p className="text-xs font-semibold text-[var(--color-ink-muted)]">Sem categoria ({orphanProducts.length})</p>
                   </div>
-                  <div className="space-y-2">
-                    {orphanProducts.map((p) => (
+                  {reorderMode ? (
+                    <SortableList
+                      items={orphanProducts}
+                      getId={(product) => product.id}
+                      onReorder={(reordered) => void handleProductReorder(reordered)}
+                      disabled={reorderBusy}
+                      renderItem={(p) => (
                       <ProdutoRowItem
                         key={p.id}
                         produto={p}
@@ -479,8 +608,30 @@ export const CatalogView = ({
                         publication={productPublications[p.id] ?? null}
                         onConfigurePublication={() => setModal({ kind: 'publication', product: p })}
                       />
-                    ))}
-                  </div>
+                      )}
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      {orphanProducts.map((p) => (
+                        <ProdutoRowItem
+                          key={p.id}
+                          produto={p}
+                          selectionMode={bulk.selectionMode}
+                          selected={bulk.isSelected(p.id)}
+                          onToggleSelected={() => {
+                            setBulkFeedback(null);
+                            bulk.toggle(p.id);
+                          }}
+                          onEdit={() =>
+                            setModal({ kind: 'produto', initial: p, defaultCategoriaId: null, defaultSubcategoriaId: null })
+                          }
+                          onDelete={() => setDel({ kind: 'produto', item: p })}
+                          publication={productPublications[p.id] ?? null}
+                          onConfigurePublication={() => setModal({ kind: 'publication', product: p })}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -556,24 +707,15 @@ export const CatalogView = ({
       <ProductPublicationModal
         open={modal?.kind === 'publication'}
         product={modal?.kind === 'publication' ? modal.product : null}
+        products={editorProducts}
         initial={modal?.kind === 'publication' ? productPublications[modal.product.id] ?? null : null}
         modifierGroups={modal?.kind === 'publication' ? productModifierGroups[modal.product.id] ?? [] : []}
         uploadImage={uploadProductPublicationImage}
+        deleteImage={deleteProductPublicationImage}
         onClose={() => setModal(null)}
-        onSubmit={async (input, groups) => {
-          if (modal?.kind !== 'publication') return;
-          const previousPhotoUrl = productPublications[modal.product.id]?.foto_url ?? null;
-          const nextPhotoUrl = Object.prototype.hasOwnProperty.call(input, 'foto_url')
-            ? input.foto_url ?? null
-            : previousPhotoUrl;
-          await upsertProductPublication(modal.product.id, input);
-          await replaceProductModifierGroups(modal.product.id, groups);
-          if (previousPhotoUrl && previousPhotoUrl !== nextPhotoUrl) {
-            deleteProductPublicationImage(previousPhotoUrl).catch((error) => {
-              console.warn('[Catalog] Failed to remove previous owned publication image:', error);
-            });
-          }
-        }}
+        onNavigate={(product) => setModal({ kind: 'publication', product })}
+        onSavePublication={upsertProductPublication}
+        onSaveModifierGroups={replaceProductModifierGroups}
       />
 
       <ConfirmDelete
@@ -622,16 +764,59 @@ type TreeNode = {
   subcategorias: Array<{ subcategoria: Subcategoria; produtos: ProdutoRow[] }>;
 };
 
-function buildTree(categorias: Categoria[], subcategorias: Subcategoria[], produtos: ProdutoRow[]): TreeNode[] {
+function buildTree(
+  categorias: Categoria[],
+  subcategorias: Subcategoria[],
+  produtos: ProdutoRow[],
+  publications: Record<number, ZeloMenuProductPublicationRow>,
+): TreeNode[] {
   return categorias.map((categoria) => {
     const subs = subcategorias.filter((s) => s.id_categoria === categoria.id);
     const produtosByCategoria = produtos.filter((p) => p.id_categoria === categoria.id);
-    const produtosDireto = produtosByCategoria.filter((p) => p.id_subcategoria == null);
+    const produtosDireto = sortProductsForMenu(
+      produtosByCategoria.filter((p) => p.id_subcategoria == null),
+      publications,
+    );
     const subNodes = subs.map((sub) => ({
       subcategoria: sub,
-      produtos: produtosByCategoria.filter((p) => p.id_subcategoria === sub.id),
+      produtos: sortProductsForMenu(
+        produtosByCategoria.filter((p) => p.id_subcategoria === sub.id),
+        publications,
+      ),
     }));
     return { categoria, produtosDireto, subcategorias: subNodes };
+  });
+}
+
+function sortProductsForMenu(
+  products: ProdutoRow[],
+  publications: Record<number, ZeloMenuProductPublicationRow>,
+): ProdutoRow[] {
+  return [...products].sort((a, b) => {
+    const orderDiff = (publications[a.id]?.ordem ?? Number.MAX_SAFE_INTEGER)
+      - (publications[b.id]?.ordem ?? Number.MAX_SAFE_INTEGER);
+    return orderDiff || a.nome.localeCompare(b.nome);
+  });
+}
+
+function sortProductsForEditor(
+  products: ProdutoRow[],
+  categories: Categoria[],
+  subcategories: Subcategoria[],
+  publications: Record<number, ZeloMenuProductPublicationRow>,
+): ProdutoRow[] {
+  const categoryOrder = new Map(categories.map((category, index) => [category.id, index]));
+  const subcategoryOrder = new Map(subcategories.map((subcategory, index) => [subcategory.id, index]));
+  return [...products].sort((a, b) => {
+    const categoryDiff = (a.id_categoria == null ? Number.MAX_SAFE_INTEGER : categoryOrder.get(a.id_categoria) ?? Number.MAX_SAFE_INTEGER)
+      - (b.id_categoria == null ? Number.MAX_SAFE_INTEGER : categoryOrder.get(b.id_categoria) ?? Number.MAX_SAFE_INTEGER);
+    if (categoryDiff) return categoryDiff;
+    const subcategoryDiff = (a.id_subcategoria == null ? -1 : subcategoryOrder.get(a.id_subcategoria) ?? Number.MAX_SAFE_INTEGER)
+      - (b.id_subcategoria == null ? -1 : subcategoryOrder.get(b.id_subcategoria) ?? Number.MAX_SAFE_INTEGER);
+    if (subcategoryDiff) return subcategoryDiff;
+    const publicationDiff = (publications[a.id]?.ordem ?? Number.MAX_SAFE_INTEGER)
+      - (publications[b.id]?.ordem ?? Number.MAX_SAFE_INTEGER);
+    return publicationDiff || a.nome.localeCompare(b.nome);
   });
 }
 
@@ -665,6 +850,9 @@ type CategoriaCardProps = {
   onDeleteProduto: (p: ProdutoRow) => void;
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
   onConfigurePublication: (p: ProdutoRow) => void;
+  reorderMode: boolean;
+  reorderBusy: boolean;
+  onReorderProducts: (products: ProdutoRow[]) => void;
 };
 
 const CategoriaCard: React.FC<CategoriaCardProps> = ({
@@ -687,6 +875,9 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
   onDeleteProduto,
   productPublications,
   onConfigurePublication,
+  reorderMode,
+  reorderBusy,
+  onReorderProducts,
 }) => {
   const isOpen = expanded || forceExpanded;
   const totalProdutos = node.produtosDireto.length + node.subcategorias.reduce((acc, s) => acc + s.produtos.length, 0);
@@ -738,7 +929,25 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
 
       {isOpen && (
         <div className="divide-y divide-[var(--color-line)]">
-          {node.produtosDireto.map((p) => (
+          {reorderMode && node.produtosDireto.length > 1 ? (
+            <div className="px-4 py-2">
+              <SortableList
+                items={node.produtosDireto}
+                getId={(product) => product.id}
+                onReorder={onReorderProducts}
+                disabled={reorderBusy}
+                renderItem={(p) => (
+                  <ProdutoRowItem
+                    produto={p}
+                    publication={productPublications[p.id] ?? null}
+                    onEdit={() => onEditProduto(p)}
+                    onDelete={() => onDeleteProduto(p)}
+                    onConfigurePublication={() => onConfigurePublication(p)}
+                  />
+                )}
+              />
+            </div>
+          ) : node.produtosDireto.map((p) => (
             <div key={p.id} className="px-4 py-2">
               <ProdutoRowItem
                 produto={p}
@@ -782,26 +991,44 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                   </IconBtn>
                 </div>
               </div>
-              <div className="space-y-1.5">
-                {produtos.map((p) => (
+              {reorderMode && produtos.length > 1 ? (
+                <SortableList
+                  items={produtos}
+                  getId={(product) => product.id}
+                  onReorder={onReorderProducts}
+                  disabled={reorderBusy}
+                  renderItem={(p) => (
                   <ProdutoRowItem
-                    key={p.id}
                     produto={p}
-                    selectionMode={selectionMode}
-                    selected={selectedIds.has(p.id)}
-                    onToggleSelected={() => onToggleProdutoSelection(p.id)}
                     publication={productPublications[p.id] ?? null}
                     onEdit={() => onEditProduto(p)}
                     onDelete={() => onDeleteProduto(p)}
                     onConfigurePublication={() => onConfigurePublication(p)}
                   />
-                ))}
+                  )}
+                />
+              ) : (
+                <div className="space-y-1.5">
+                  {produtos.map((p) => (
+                    <ProdutoRowItem
+                      key={p.id}
+                      produto={p}
+                      selectionMode={selectionMode}
+                      selected={selectedIds.has(p.id)}
+                      onToggleSelected={() => onToggleProdutoSelection(p.id)}
+                      publication={productPublications[p.id] ?? null}
+                      onEdit={() => onEditProduto(p)}
+                      onDelete={() => onDeleteProduto(p)}
+                      onConfigurePublication={() => onConfigurePublication(p)}
+                    />
+                  ))}
+                </div>
+              )}
                 {produtos.length === 0 && (
                   <p className="py-1 text-[12px] italic text-[var(--color-ink-faint)]">
                     Nenhum produto aqui ainda.
                   </p>
                 )}
-              </div>
             </div>
           ))}
 

@@ -237,6 +237,7 @@ export function AdminPage() {
               refresh={catalog.refresh}
               createCategoria={catalog.createCategoria}
               updateCategoria={catalog.updateCategoria}
+              reorderCategorias={catalog.reorderCategorias}
               deleteCategoria={catalog.deleteCategoria}
               createSubcategoria={catalog.createSubcategoria}
               updateSubcategoria={catalog.updateSubcategoria}
@@ -245,6 +246,7 @@ export function AdminPage() {
               updateProduto={catalog.updateProduto}
               deleteProduto={catalog.deleteProduto}
               upsertProductPublication={catalog.upsertProductPublication}
+              reorderProductPublications={catalog.reorderProductPublications}
               replaceProductModifierGroups={catalog.replaceProductModifierGroups}
               uploadProductPublicationImage={catalog.uploadProductPublicationImage}
               deleteProductPublicationImage={catalog.deleteProductPublicationImage}

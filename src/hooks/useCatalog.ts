@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
 import {
@@ -105,12 +105,25 @@ type UseCatalogOptions = {
 
 export function useCatalog(session: Session | null, options: UseCatalogOptions = {}) {
   const [data, setData] = useState<CatalogState>(EMPTY);
+  const dataRef = useRef<CatalogState>(EMPTY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
 
   const userId = session?.user?.id ?? null;
   const enabled = options.enabled ?? true;
+
+  const commitData = useCallback((updater: (previous: CatalogState) => CatalogState) => {
+    setData((previous) => {
+      const next = updater(previous);
+      dataRef.current = next;
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   const refresh = useCallback(async () => {
     if (!userId) {
@@ -216,6 +229,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
         ),
         productModifierGroups,
       };
+      dataRef.current = nextData;
       setData(nextData);
       setHasLoaded(true);
     } catch (err) {
@@ -370,7 +384,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
 
   const deleteProduto = useCallback(async (id: number): Promise<void> => {
     if (!userId) throw new Error('Faça login para continuar.');
-    const publicationPhotoUrl = data.productPublications[id]?.foto_url ?? null;
+    const publicationPhotoUrl = dataRef.current.productPublications[id]?.foto_url ?? null;
     const { error: dbError } = await supabase.from('produtos').delete().eq('id', id).eq('id_usuario', userId);
     if (dbError) throw dbError;
     if (publicationPhotoUrl) {
@@ -396,7 +410,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
   ): Promise<ZeloMenuProductPublicationRow> => {
     if (!userId) throw new Error('Faça login para continuar.');
 
-    const current = data.productPublications[productId];
+    const current = dataRef.current.productPublications[productId];
     const nextText = (field: keyof Pick<ZeloMenuProductPublicationInput, 'nome_publico' | 'descricao_publica' | 'foto_url'>) => (
       Object.prototype.hasOwnProperty.call(patch, field)
         ? normalizeOptionalText(patch[field] ?? null)
@@ -422,12 +436,12 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     if (dbError) throw dbError;
 
     const saved = normalizeProductPublicationRow(row);
-    setData((prev) => ({
+    commitData((prev) => ({
       ...prev,
       productPublications: { ...prev.productPublications, [productId]: saved },
     }));
     return saved;
-  }, [data.productPublications, userId]);
+  }, [commitData, userId]);
 
   const replaceProductModifierGroups = useCallback(async (
     productId: number,
@@ -435,7 +449,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
   ): Promise<ZeloMenuModifierGroupRow[]> => {
     if (!userId) throw new Error('Faça login para continuar.');
 
-    const currentGroups = data.productModifierGroups[productId] ?? [];
+    const currentGroups = dataRef.current.productModifierGroups[productId] ?? [];
     const nextGroups = groups.map((group, groupIndex) => {
       const groupId = group.id ?? globalThis.crypto.randomUUID();
       return {
@@ -525,7 +539,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     }
 
     const saved = sortModifierGroups(nextGroups);
-    setData((prev) => ({
+    commitData((prev) => ({
       ...prev,
       productModifierGroups: {
         ...prev.productModifierGroups,
@@ -533,7 +547,81 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
       },
     }));
     return saved;
-  }, [data.productModifierGroups, userId]);
+  }, [commitData, userId]);
+
+  const reorderCategorias = useCallback(async (ordered: Categoria[]): Promise<void> => {
+    if (!userId) throw new Error('Faça login para continuar.');
+    const previous = dataRef.current.categorias;
+    const next = ordered.map((categoria, ordem) => ({ ...categoria, ordem }));
+    commitData((current) => ({ ...current, categorias: next }));
+    try {
+      const results = await Promise.all(
+        next.map((categoria) => supabase
+          .from('categorias')
+          .update({ ordem: categoria.ordem })
+          .eq('id', categoria.id)
+          .eq('id_usuario', userId)),
+      );
+      const failed = results.find((result) => result.error);
+      if (failed?.error) throw failed.error;
+    } catch (error) {
+      commitData((current) => ({ ...current, categorias: previous }));
+      throw error;
+    }
+  }, [commitData, userId]);
+
+  const reorderProductPublications = useCallback(async (orderedProductIds: number[]): Promise<void> => {
+    if (!userId) throw new Error('Faça login para continuar.');
+    const previous = dataRef.current.productPublications;
+    const optimistic = { ...previous };
+    orderedProductIds.forEach((productId, ordem) => {
+      const current = optimistic[productId];
+      optimistic[productId] = current
+        ? { ...current, ordem }
+        : {
+            id: `optimistic-${productId}`,
+            id_produto: productId,
+            nome_publico: null,
+            descricao_publica: null,
+            foto_url: null,
+            visivel_online: false,
+            pausado_manualmente: false,
+            ordem,
+          };
+    });
+    commitData((current) => ({ ...current, productPublications: optimistic }));
+
+    try {
+      const payload = orderedProductIds.map((productId, ordem) => {
+        const current = previous[productId];
+        return {
+          id_usuario: userId,
+          id_produto: productId,
+          nome_publico: current?.nome_publico ?? null,
+          descricao_publica: current?.descricao_publica ?? null,
+          foto_url: current?.foto_url ?? null,
+          visivel_online: current?.visivel_online ?? false,
+          pausado_manualmente: current?.pausado_manualmente ?? false,
+          ordem,
+          updated_at: new Date().toISOString(),
+        };
+      });
+      const { data: rows, error: dbError } = await supabase
+        .from('zelomenu_product_publications')
+        .upsert(payload, { onConflict: 'id_usuario,id_produto' })
+        .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem');
+      if (dbError) throw dbError;
+      const saved = { ...optimistic };
+      for (const row of rows ?? []) {
+        const publication = normalizeProductPublicationRow(row);
+        saved[publication.id_produto] = publication;
+      }
+      commitData((current) => ({ ...current, productPublications: saved }));
+    } catch (error) {
+      commitData((current) => ({ ...current, productPublications: previous }));
+      throw error;
+    }
+  }, [commitData, userId]);
 
   const uploadProductPublicationImage = useCallback(async (
     productId: number,
@@ -556,6 +644,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     refresh,
     createCategoria,
     updateCategoria,
+    reorderCategorias,
     deleteCategoria,
     createSubcategoria,
     updateSubcategoria,
@@ -564,6 +653,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     updateProduto,
     deleteProduto,
     upsertProductPublication,
+    reorderProductPublications,
     replaceProductModifierGroups,
     uploadProductPublicationImage,
     deleteProductPublicationImage,

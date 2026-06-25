@@ -52,12 +52,12 @@ Fonte para copiar: `zelochat/src/components/zelomenu/ZeloMenuSettingsCard.tsx` (
 #### B. Slug editor no /admin (IMAGEM #3)
 - Card "Link público do cardápio": input do slug + "Salvar" + "Copiar link" (`menu.zelopdv.com.br/{slug}`). Back-end já existe; só fazer a UI e chamar `/api/admin/zelomenu/slug`. ⚠ hoje o endpoint recebe `empresaId` por query/body — trocar para resolver via sessão (Bearer token) pra não confiar em `empresaId` do cliente.
 
-#### C. Elevar a CONFIG a tier-S (mobile-first, premium) — nada disto existe ainda
+#### C. Elevar a CONFIG a tier-S (mobile-first, premium) — ✅ implementado localmente, pendente deploy
 - **Editor com swipe:** abre num produto e desliza pro próximo (prev/next) sem fechar.
-- **Autosave:** texto com debounce; toggles/ordem/foto instantâneos; indicador `Salvo ✓`; recarrega ao abrir (last-write-wins).
-- **Crop de foto 1:1** opcional (zoom/reposição) + "Usar imagem inteira" (ex. `react-easy-crop` — não instalado).
-- **Arrastar pra ordenar** (touch, ex. `dnd-kit` — não instalado) em 2 níveis: categorias (`categorias.ordem`) e produtos (`zelomenu_product_publications.ordem`).
-- **Preview = card REAL da vitrine** (WYSIWYG).
+- **Autosave:** texto com debounce; toggles/ordem/foto instantâneos; indicador `Salvo`; gravações serializadas para preservar last-write-wins.
+- **Crop de foto 1:1** opcional (zoom/reposição) + "Usar imagem inteira" com `react-easy-crop`.
+- **Arrastar pra ordenar** com `dnd-kit`, touch + teclado, em 2 níveis: categorias (`categorias.ordem`) e produtos (`zelomenu_product_publications.ordem`), com atualização otimista e rollback.
+- **Preview = card real da vitrine** no editor de publicação.
 - Chips de resumo já são clicáveis? Verificar filtros publicados/pausados/etc.
 
 #### D. Wiring final (PDV + Chat) e cutover — não feito

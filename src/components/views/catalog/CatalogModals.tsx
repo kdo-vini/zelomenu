@@ -1,7 +1,8 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
-import { Globe2, ImagePlus, Trash2, X, ExternalLink } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, X } from 'lucide-react';
 import { ConfirmModal } from '../../ConfirmModal';
 import { Modal, useModalTitleId } from '../../Modal';
+import { ImageCropField } from '../../zelomenu/ImageCropField';
 import type {
   Categoria,
   Subcategoria,
@@ -24,9 +25,10 @@ type ModalShellProps = {
   subtitle?: string;
   onClose: () => void;
   children: ReactNode;
+  wide?: boolean;
 };
 
-function ModalShell({ title, subtitle, onClose, children }: ModalShellProps) {
+function ModalShell({ title, subtitle, onClose, children, wide = false }: ModalShellProps) {
   const titleId = useModalTitleId();
 
   return (
@@ -38,7 +40,7 @@ function ModalShell({ title, subtitle, onClose, children }: ModalShellProps) {
       // capped at 92dvh and scrollable. On sm+ it becomes a centered dialog.
       containerClassName="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4"
       backdropClassName="zm-backdrop absolute inset-0 bg-black/45 backdrop-blur-[1px]"
-      panelLayoutClassName="w-full sm:max-w-lg"
+      panelLayoutClassName={`w-full ${wide ? 'sm:max-w-4xl' : 'sm:max-w-lg'}`}
       panelClassName="zm-sheet flex max-h-[92dvh] flex-col overflow-hidden rounded-t-2xl bg-[var(--color-surface)] shadow-xl sm:max-h-[88vh] sm:rounded-2xl"
     >
       {/* Grab handle — affordance that this is a draggable-feeling sheet (mobile only) */}
@@ -459,330 +461,469 @@ export function ProductModal({
 type ProductPublicationModalProps = {
   open: boolean;
   product: ProdutoRow | null;
+  products: ProdutoRow[];
   initial?: ZeloMenuProductPublicationRow | null;
   modifierGroups: ZeloMenuModifierGroupRow[];
   uploadImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
+  deleteImage: (url: string | null | undefined) => Promise<void>;
   onClose: () => void;
-  onSubmit: (
+  onNavigate: (product: ProdutoRow) => void;
+  onSavePublication: (
+    productId: number,
     patch: ZeloMenuProductPublicationInput,
+  ) => Promise<ZeloMenuProductPublicationRow>;
+  onSaveModifierGroups: (
+    productId: number,
     modifierGroups: ZeloMenuModifierGroupDraft[],
-  ) => Promise<void>;
+  ) => Promise<ZeloMenuModifierGroupRow[]>;
 };
 
 export function ProductPublicationModal({
   open,
   product,
+  products,
   initial,
   modifierGroups,
   uploadImage,
+  deleteImage,
   onClose,
-  onSubmit,
+  onNavigate,
+  onSavePublication,
+  onSaveModifierGroups,
 }: ProductPublicationModalProps) {
   const [visivelOnline, setVisivelOnline] = useState(false);
   const [pausado, setPausado] = useState(false);
   const [nomePublico, setNomePublico] = useState('');
   const [descricaoPublica, setDescricaoPublica] = useState('');
   const [fotoUrl, setFotoUrl] = useState('');
-  const [fotoFile, setFotoFile] = useState<File | null>(null);
-  const [fotoPreviewUrl, setFotoPreviewUrl] = useState<string | null>(null);
   const [ordem, setOrdem] = useState('0');
   const [groupsDraft, setGroupsDraft] = useState<ZeloMenuModifierGroupDraft[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [groupsDirty, setGroupsDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [err, setErr] = useState<string | null>(null);
+  const hydratedProductRef = useRef<number | null>(null);
+  const queueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const saveTokenRef = useRef(0);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setVisivelOnline(initial?.visivel_online ?? false);
-      setPausado(initial?.pausado_manualmente ?? false);
-      setNomePublico(initial?.nome_publico ?? '');
-      setDescricaoPublica(initial?.descricao_publica ?? '');
-      setFotoUrl(initial?.foto_url ?? '');
-      setFotoFile(null);
-      setFotoPreviewUrl(null);
-      setOrdem(String(initial?.ordem ?? 0));
-      setGroupsDraft(modifierGroups.map((group) => ({
-        id: group.id,
-        name: group.name,
-        kind: group.kind,
-        minSelections: group.minSelections,
-        maxSelections: group.maxSelections,
-        active: group.active,
-        order: group.order,
-        options: group.options.map((option) => ({
-          id: option.id,
-          name: option.name,
-          priceDelta: option.priceDelta,
-          active: option.active,
-          order: option.order,
-        })),
-      })));
-      setErr(null);
+    if (!open) {
+      hydratedProductRef.current = null;
+      return;
     }
-  }, [open, initial, modifierGroups]);
+    if (!product || hydratedProductRef.current === product.id) return;
+    hydratedProductRef.current = product.id;
+    setVisivelOnline(initial?.visivel_online ?? false);
+    setPausado(initial?.pausado_manualmente ?? false);
+    setNomePublico(initial?.nome_publico ?? '');
+    setDescricaoPublica(initial?.descricao_publica ?? '');
+    setFotoUrl(initial?.foto_url ?? '');
+    setOrdem(String(initial?.ordem ?? 0));
+    setGroupsDraft(toModifierDrafts(modifierGroups));
+    setGroupsDirty(false);
+    setSaveStatus('idle');
+    setErr(null);
+  }, [open, product, initial, modifierGroups]);
 
-  useEffect(() => () => {
-    if (fotoPreviewUrl) URL.revokeObjectURL(fotoPreviewUrl);
-  }, [fotoPreviewUrl]);
+  const enqueueSave = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    const token = ++saveTokenRef.current;
+    setSaveStatus('saving');
+    setErr(null);
+    const next = queueRef.current.catch(() => undefined).then(operation);
+    queueRef.current = next;
+    try {
+      const result = await next;
+      if (saveTokenRef.current === token) setSaveStatus('saved');
+      return result;
+    } catch (error) {
+      if (saveTokenRef.current === token) setSaveStatus('error');
+      setErr(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.');
+      throw error;
+    }
+  }, []);
+
+  const savePublication = useCallback((patch: ZeloMenuProductPublicationInput) => {
+    if (!product) return Promise.resolve(null);
+    return enqueueSave(() => onSavePublication(product.id, patch));
+  }, [enqueueSave, onSavePublication, product]);
+
+  useEffect(() => {
+    if (!open || !product || hydratedProductRef.current !== product.id) return;
+    const timer = window.setTimeout(() => {
+      void savePublication({
+        nome_publico: nomePublico,
+        descricao_publica: descricaoPublica,
+      }).catch(() => undefined);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [descricaoPublica, nomePublico, open, product, savePublication]);
 
   if (!open || !product) return null;
 
-  const currentPhotoUrl = fotoPreviewUrl ?? (fotoUrl.trim() || null);
+  const productId = product.id;
+  const productIndex = products.findIndex((entry) => entry.id === product.id);
+  const previousProduct = productIndex > 0 ? products[productIndex - 1] : null;
+  const nextProduct = productIndex >= 0 && productIndex < products.length - 1 ? products[productIndex + 1] : null;
+  const currentPhotoUrl = fotoUrl.trim() || null;
 
-  const handlePhotoFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    event.target.value = '';
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setErr('Envie uma imagem em PNG, JPG, WEBP ou formato compatível.');
-      return;
-    }
-
-    if (fotoPreviewUrl) URL.revokeObjectURL(fotoPreviewUrl);
-    setFotoFile(file);
-    setFotoPreviewUrl(URL.createObjectURL(file));
-    setFotoUrl('');
-    setErr(null);
-  };
-
-  const clearPhoto = () => {
-    if (fotoPreviewUrl) URL.revokeObjectURL(fotoPreviewUrl);
-    setFotoFile(null);
-    setFotoPreviewUrl(null);
-    setFotoUrl('');
-    setErr(null);
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  async function flushAll(): Promise<boolean> {
     const parsedOrder = Number.parseInt(ordem, 10);
     if (!Number.isFinite(parsedOrder) || parsedOrder < 0) {
       setErr('Informe uma ordem válida.');
-      return;
+      return false;
     }
-
     const trimmedFoto = fotoUrl.trim();
     if (trimmedFoto && !/^https:\/\//i.test(trimmedFoto)) {
       setErr('Use um link de foto começando com https://.');
-      return;
+      return false;
     }
-
     const draftError = validateModifierGroupDrafts(groupsDraft);
     if (draftError) {
       setErr(draftError);
-      return;
+      return false;
     }
-
-    setLoading(true);
-    setErr(null);
     try {
-      const uploadedPhotoUrl = fotoFile
-        ? await uploadImage(product.id, fotoFile, initial?.foto_url ?? null)
-        : trimmedFoto || null;
-      await onSubmit(
-        {
+      await savePublication({
           visivel_online: visivelOnline,
           pausado_manualmente: visivelOnline ? pausado : false,
           nome_publico: nomePublico,
           descricao_publica: descricaoPublica,
-          foto_url: uploadedPhotoUrl,
+          foto_url: trimmedFoto || null,
           ordem: parsedOrder,
-        },
-        groupsDraft,
-      );
-      onClose();
+      });
+      if (groupsDirty) {
+        await enqueueSave(() => onSaveModifierGroups(productId, groupsDraft));
+        setGroupsDirty(false);
+      }
+      return true;
     } catch {
-      setErr('Não foi possível salvar a publicação. Tente novamente.');
-    } finally {
-      setLoading(false);
+      return false;
     }
-  };
+  }
+
+  async function finish(action: () => void) {
+    if (await flushAll()) action();
+  }
+
+  async function navigateTo(target: ProdutoRow | null) {
+    if (!target) return;
+    await finish(() => onNavigate(target));
+  }
 
   return (
     <ModalShell
-      title="Publicação no ZeloMenu"
-      subtitle="Controle como este produto aparece no link do cardápio."
-      onClose={onClose}
+      title={product.nome}
+      subtitle={products.length > 1 ? `Produto ${productIndex + 1} de ${products.length} · deslize para navegar` : 'Publicação no ZeloMenu'}
+      onClose={() => void finish(onClose)}
+      wide
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
-              <Globe2 className="h-4 w-4" />
+      <div
+        className="space-y-5"
+        onTouchStart={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.closest('input, textarea, select, button, label, [role="slider"]')) {
+            touchStartRef.current = null;
+            return;
+          }
+          const touch = event.touches[0];
+          touchStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+        }}
+        onTouchEnd={(event) => {
+          const start = touchStartRef.current;
+          const touch = event.changedTouches[0];
+          touchStartRef.current = null;
+          if (!start || !touch) return;
+          const deltaX = touch.clientX - start.x;
+          const deltaY = touch.clientY - start.y;
+          if (Math.abs(deltaX) < 70 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+          void navigateTo(deltaX > 0 ? previousProduct : nextProduct);
+        }}
+      >
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-surface-muted)] p-2">
+          <button
+            type="button"
+            onClick={() => void navigateTo(previousProduct)}
+            disabled={!previousProduct || saveStatus === 'saving'}
+            className="flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface)] disabled:opacity-35"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <span className="hidden sm:inline">Anterior</span>
+          </button>
+          <SaveIndicator status={saveStatus} />
+          <button
+            type="button"
+            onClick={() => void navigateTo(nextProduct)}
+            disabled={!nextProduct || saveStatus === 'saving'}
+            className="flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface)] disabled:opacity-35"
+          >
+            <span className="hidden sm:inline">Próximo</span>
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_260px]">
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ToggleCard
+                checked={visivelOnline}
+                title="Publicado no ZeloMenu"
+                description="Aparece no link quando estiver disponível."
+                onChange={(checked) => {
+                  setVisivelOnline(checked);
+                  if (!checked) setPausado(false);
+                  void savePublication({
+                    visivel_online: checked,
+                    pausado_manualmente: checked ? pausado : false,
+                  }).catch(() => undefined);
+                }}
+              />
+              <ToggleCard
+                checked={pausado}
+                disabled={!visivelOnline}
+                title="Pausar temporariamente"
+                description="Mantém configurado, mas esconde por enquanto."
+                onChange={(checked) => {
+                  setPausado(checked);
+                  void savePublication({ pausado_manualmente: checked }).catch(() => undefined);
+                }}
+              />
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-[var(--color-ink)]">{product.nome}</p>
-              <p className="text-xs text-[var(--color-ink-muted)]">Produto base do cardápio operacional.</p>
+
+            <div>
+              <label className={LABEL_CLS}>Nome público</label>
+              <input
+                value={nomePublico}
+                onChange={(event) => setNomePublico(event.target.value)}
+                placeholder={product.nome}
+                className={INPUT_CLS}
+              />
             </div>
-          </div>
-        </div>
+            <div>
+              <label className={LABEL_CLS}>Descrição pública</label>
+              <textarea
+                value={descricaoPublica}
+                onChange={(event) => setDescricaoPublica(event.target.value)}
+                placeholder="Ingredientes, tamanho ou detalhe importante para o cliente."
+                rows={3}
+                className={`${INPUT_CLS} min-h-24 resize-y`}
+              />
+            </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex items-start gap-2 rounded-xl border border-[var(--color-line)] bg-white p-3 text-sm text-[var(--color-ink-soft)]">
-            <input
-              type="checkbox"
-              checked={visivelOnline}
-              onChange={(e) => setVisivelOnline(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
-            />
-            <span>
-              <span className="block font-semibold text-[var(--color-ink)]">Publicado no ZeloMenu</span>
-              <span className="text-xs text-[var(--color-ink-muted)]">Aparece no link do cardápio quando estiver disponível.</span>
-            </span>
-          </label>
-
-          <label className="flex items-start gap-2 rounded-xl border border-[var(--color-line)] bg-white p-3 text-sm text-[var(--color-ink-soft)]">
-            <input
-              type="checkbox"
-              checked={pausado}
-              disabled={!visivelOnline}
-              onChange={(e) => setPausado(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-40"
-            />
-            <span>
-              <span className="block font-semibold text-[var(--color-ink)]">Pausar temporariamente</span>
-              <span className="text-xs text-[var(--color-ink-muted)]">Mantém configurado, mas esconde do link por enquanto.</span>
-            </span>
-          </label>
-        </div>
-
-        <div>
-          <label className={LABEL_CLS}>Nome público</label>
-          <input
-            value={nomePublico}
-            onChange={(e) => setNomePublico(e.target.value)}
-            placeholder={product.nome}
-            className={INPUT_CLS}
-          />
-        </div>
-
-        <div>
-          <label className={LABEL_CLS}>Descrição pública</label>
-          <textarea
-            value={descricaoPublica}
-            onChange={(e) => setDescricaoPublica(e.target.value)}
-            placeholder="Ingredientes, tamanho ou detalhe importante para o cliente."
-            rows={3}
-            className={`${INPUT_CLS} min-h-24 resize-y`}
-          />
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
-          <div className="space-y-3">
             <div>
               <label className={LABEL_CLS}>Foto do produto</label>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]">
-                  <ImagePlus className="h-4 w-4" />
-                  Enviar imagem
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="sr-only"
-                    onChange={handlePhotoFileChange}
-                  />
-                </label>
-                {currentPhotoUrl ? (
-                  <button
-                    type="button"
-                    onClick={clearPhoto}
-                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Remover foto
-                  </button>
-                ) : null}
-              </div>
-              <p className="mt-1 text-[11px] text-[var(--color-ink-muted)]">
-                Envie uma imagem própria ou cole um link HTTPS. A foto enviada fica salva na sua conta.
+              <ImageCropField
+                value={currentPhotoUrl}
+                busy={saveStatus === 'saving'}
+                onError={setErr}
+                onChange={async (file) => {
+                  const uploadedUrl = await enqueueSave(() => uploadImage(product.id, file, currentPhotoUrl));
+                  setFotoUrl(uploadedUrl);
+                  await savePublication({ foto_url: uploadedUrl });
+                }}
+                onRemove={async () => {
+                  const previous = currentPhotoUrl;
+                  setFotoUrl('');
+                  await savePublication({ foto_url: null });
+                  if (previous) await deleteImage(previous).catch(() => undefined);
+                }}
+              />
+              <p className="mt-2 text-[11px] text-[var(--color-ink-muted)]">
+                O recorte quadrado preenche melhor o card. “Imagem inteira” preserva o enquadramento original.
               </p>
             </div>
 
-            {currentPhotoUrl ? (
-              <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)]">
-                <img
-                  src={currentPhotoUrl}
-                  alt=""
-                  className="h-40 w-full object-cover"
-                />
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-6 text-center text-xs text-[var(--color-ink-muted)]">
-                Nenhuma foto selecionada.
-              </div>
-            )}
-
             <div>
-              <label className={LABEL_CLS}>Ou use um link de foto</label>
+              <label className={LABEL_CLS}>Link externo da foto</label>
               <input
                 value={fotoUrl}
-                onChange={(e) => {
-                  if (fotoPreviewUrl) URL.revokeObjectURL(fotoPreviewUrl);
-                  setFotoFile(null);
-                  setFotoPreviewUrl(null);
-                  setFotoUrl(e.target.value);
+                onChange={(event) => setFotoUrl(event.target.value)}
+                onBlur={() => {
+                  const trimmed = fotoUrl.trim();
+                  if (!trimmed || /^https:\/\//i.test(trimmed)) {
+                    void savePublication({ foto_url: trimmed || null }).catch(() => undefined);
+                  } else {
+                    setErr('Use um link de foto começando com https://.');
+                  }
                 }}
                 placeholder="https://..."
                 className={INPUT_CLS}
               />
             </div>
+
+            <div className="max-w-32">
+              <label className={LABEL_CLS}>Ordem</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={ordem}
+                onChange={(event) => setOrdem(event.target.value)}
+                onBlur={() => {
+                  const parsed = Number.parseInt(ordem, 10);
+                  if (Number.isFinite(parsed) && parsed >= 0) {
+                    void savePublication({ ordem: parsed }).catch(() => undefined);
+                  }
+                }}
+                className={INPUT_CLS}
+              />
+            </div>
           </div>
-          <div>
-            <label className={LABEL_CLS}>Ordem</label>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={ordem}
-              onChange={(e) => setOrdem(e.target.value)}
-              className={INPUT_CLS}
+
+          <aside className="md:sticky md:top-0 md:self-start">
+            <p className="mb-2 text-xs font-semibold text-[var(--color-ink-muted)]">Prévia no cardápio</p>
+            <ProductCardPreview
+              product={product}
+              name={nomePublico.trim() || product.nome}
+              description={descricaoPublica.trim()}
+              photoUrl={currentPhotoUrl}
             />
-          </div>
+          </aside>
         </div>
 
-        <div className="space-y-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-4">
+        <div className="space-y-3 rounded-xl bg-[var(--color-surface-muted)] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-[var(--color-ink)]">Adicionais e variações</p>
-              <p className="text-xs text-[var(--color-ink-muted)]">
-                O cliente escolhe essas opções antes de confirmar o pedido.
-              </p>
+              <p className="text-xs text-[var(--color-ink-muted)]">Salvos ao concluir ou trocar de produto.</p>
             </div>
             <button
               type="button"
-              onClick={() => setGroupsDraft((prev) => [...prev, createEmptyModifierGroup(prev.length)])}
-              className="rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
+              onClick={() => {
+                setGroupsDraft((prev) => [...prev, createEmptyModifierGroup(prev.length)]);
+                setGroupsDirty(true);
+              }}
+              className="min-h-[44px] rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-white"
             >
               Novo grupo
             </button>
           </div>
-
           {groupsDraft.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-[var(--color-line)] bg-white px-3 py-4 text-center text-xs text-[var(--color-ink-muted)]">
-              Nenhum adicional ou variação configurado ainda.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {groupsDraft.map((group, groupIndex) => (
-                <div key={group.id ?? `group-${groupIndex}`}>
-                  <ModifierGroupEditor
-                    group={group}
-                    onChange={(nextGroup) => {
-                      setGroupsDraft((prev) => prev.map((entry, index) => index === groupIndex ? nextGroup : entry));
-                    }}
-                    onDelete={() => {
-                      setGroupsDraft((prev) => prev.filter((_, index) => index !== groupIndex));
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+            <p className="rounded-xl border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] px-3 py-4 text-center text-xs text-[var(--color-ink-muted)]">
+              Nenhum adicional ou variação configurado.
+            </p>
+          ) : groupsDraft.map((group, groupIndex) => (
+            <ModifierGroupEditor
+              key={group.id ?? `group-${groupIndex}`}
+              group={group}
+              onChange={(nextGroup) => {
+                setGroupsDirty(true);
+                setGroupsDraft((prev) => prev.map((entry, index) => index === groupIndex ? nextGroup : entry));
+              }}
+              onDelete={() => {
+                setGroupsDirty(true);
+                setGroupsDraft((prev) => prev.filter((_, index) => index !== groupIndex));
+              }}
+            />
+          ))}
         </div>
 
         {err && <p className="text-xs text-[var(--color-alert)]">{err}</p>}
-        <ActionBar onCancel={onClose} submitLabel="Salvar publicação" loading={loading} />
-      </form>
+        <div className="sticky bottom-0 -mx-5 -mb-5 flex items-center justify-between gap-3 border-t border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4">
+          <SaveIndicator status={saveStatus} />
+          <button
+            type="button"
+            onClick={() => void finish(onClose)}
+            disabled={saveStatus === 'saving'}
+            className="min-h-[44px] rounded-xl bg-[var(--color-brand)] px-6 text-sm font-semibold text-white hover:bg-[var(--color-brand-deep)] disabled:opacity-50"
+          >
+            Concluir
+          </button>
+        </div>
+      </div>
     </ModalShell>
+  );
+}
+
+function toModifierDrafts(groups: ZeloMenuModifierGroupRow[]): ZeloMenuModifierGroupDraft[] {
+  return groups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    kind: group.kind,
+    minSelections: group.minSelections,
+    maxSelections: group.maxSelections,
+    active: group.active,
+    order: group.order,
+    options: group.options.map((option) => ({
+      id: option.id,
+      name: option.name,
+      priceDelta: option.priceDelta,
+      active: option.active,
+      order: option.order,
+    })),
+  }));
+}
+
+function SaveIndicator({ status }: { status: 'idle' | 'saving' | 'saved' | 'error' }) {
+  if (status === 'saving') {
+    return <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-ink-muted)]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Salvando…</span>;
+  }
+  if (status === 'saved') {
+    return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-brand-deep)]"><Check className="h-3.5 w-3.5" /> Salvo</span>;
+  }
+  if (status === 'error') {
+    return <span className="text-xs font-semibold text-[var(--color-alert)]">Não salvo</span>;
+  }
+  return <span className="text-xs text-[var(--color-ink-faint)]">Salvamento automático</span>;
+}
+
+function ToggleCard({
+  checked,
+  disabled = false,
+  title,
+  description,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  title: string;
+  description: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`flex min-h-[72px] items-start gap-3 rounded-xl border p-3 ${checked ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)]/40' : 'border-[var(--color-line)] bg-[var(--color-surface)]'} ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 h-4 w-4"
+      />
+      <span>
+        <span className="block text-sm font-semibold text-[var(--color-ink)]">{title}</span>
+        <span className="mt-0.5 block text-xs leading-snug text-[var(--color-ink-muted)]">{description}</span>
+      </span>
+    </label>
+  );
+}
+
+function ProductCardPreview({
+  product,
+  name,
+  description,
+  photoUrl,
+}: {
+  product: ProdutoRow;
+  name: string;
+  description: string;
+  photoUrl: string | null;
+}) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
+      <div className="flex aspect-square items-center justify-center bg-[var(--color-canvas)] p-3">
+        {photoUrl ? (
+          <img src={photoUrl} alt="" className="h-full w-full object-contain" />
+        ) : (
+          <Globe2 className="h-8 w-8 text-[var(--color-line-strong)]" />
+        )}
+      </div>
+      <div className="flex min-h-[108px] flex-col gap-1 p-3">
+        <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-[var(--color-ink)]">{name}</p>
+        {description ? <p className="line-clamp-2 text-[11px] leading-snug text-[var(--color-ink-muted)]">{description}</p> : null}
+        <p className="mt-auto pt-2 text-[13px] font-bold text-[var(--color-brand-deep)]">
+          {product.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+        </p>
+      </div>
+    </div>
   );
 }
 
