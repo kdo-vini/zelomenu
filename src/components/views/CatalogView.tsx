@@ -438,8 +438,8 @@ export const CatalogView = ({
           {bulkFeedback && (
             <div className={`mb-4 rounded-xl border p-3 ${
               bulkFeedback.tone === 'success'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                : 'border-amber-200 bg-amber-50 text-amber-800'
+                ? 'border-[var(--color-success-soft)] bg-[var(--color-success-soft)] text-[var(--color-success)]'
+                : 'border-[var(--color-warn-soft)] bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
             }`}>
               <p className="text-xs font-medium">{bulkFeedback.message}</p>
             </div>
@@ -452,8 +452,8 @@ export const CatalogView = ({
           )}
 
           {!authLoading && !isAuthenticated && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs font-medium text-amber-800">Faça login para carregar o cardápio.</p>
+            <div className="rounded-xl border border-[var(--color-warn-soft)] bg-[var(--color-warn-soft)] p-3">
+              <p className="text-xs font-medium text-[var(--color-warn)]">Faça login para carregar o cardápio.</p>
             </div>
           )}
 
@@ -1107,8 +1107,8 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
             produto.estoque_atual === 0
               ? 'bg-[var(--color-alert-soft)] text-[var(--color-alert)]'
               : produto.estoque_atual <= 5
-                ? 'bg-amber-100 text-amber-700'
-                : 'bg-green-100 text-green-700'
+                ? 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
+                : 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
           }`}
         >
           {produto.estoque_atual === 0 ? 'Sem estoque' : `${produto.estoque_atual} em estoque`}
@@ -1279,7 +1279,7 @@ function publicationTone(status: ZeloMenuPublicationStatus): { label: string; cl
   if (status === 'out_of_stock') {
     return { label: 'Sem estoque', className: 'bg-[var(--color-alert-soft)] text-[var(--color-alert)]' };
   }
-  return { label: 'Sem categoria', className: 'bg-amber-50 text-amber-700' };
+  return { label: 'Sem categoria', className: 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]' };
 }
 
 function IconBtn({

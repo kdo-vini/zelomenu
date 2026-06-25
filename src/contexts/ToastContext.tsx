@@ -117,9 +117,9 @@ interface ItemProps {
 
 function ToastItem({ toast, onDismiss }: ItemProps) {
   const palette = {
-    success: { ring: 'ring-emerald-200', bg: 'bg-emerald-50', text: 'text-emerald-900', Icon: CheckCircle2, iconClass: 'text-emerald-500' },
-    error:   { ring: 'ring-red-200',     bg: 'bg-red-50',     text: 'text-red-900',     Icon: AlertCircle,  iconClass: 'text-red-500' },
-    info:    { ring: 'ring-sky-200',     bg: 'bg-sky-50',     text: 'text-sky-900',     Icon: Info,         iconClass: 'text-sky-500' },
+    success: { ring: 'ring-[var(--color-success-soft)]', bg: 'bg-[var(--color-success-soft)]', text: 'text-[var(--color-success)]', Icon: CheckCircle2, iconClass: 'text-[var(--color-success)]' },
+    error:   { ring: 'ring-[var(--color-alert-soft)]',   bg: 'bg-[var(--color-alert-soft)]',   text: 'text-[var(--color-alert)]',   Icon: AlertCircle,  iconClass: 'text-[var(--color-alert)]' },
+    info:    { ring: 'ring-sky-200',                     bg: 'bg-sky-50',                      text: 'text-sky-900',                Icon: Info,         iconClass: 'text-sky-500' },
   }[toast.variant];
 
   const { Icon } = palette;
