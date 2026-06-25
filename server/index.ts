@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings } from './zelomenuCartSessions.js';
 import { requireEmpresaId } from './supabaseServer.js';
@@ -219,9 +220,27 @@ app.get('/api/health', (_req, res) => {
 const distPath = path.resolve(__dirname, '..', 'dist');
 app.use(express.static(distPath));
 
-// SPA fallback — any non-API request returns index.html
+// Inject runtime env vars into the HTML so the frontend doesn't depend on
+// build-time --build-arg. The server reads them from process.env (set via
+// Dokploy runtime env or VPS .env file).
+const runtimeEnv = {
+  VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL ?? '',
+  VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY ?? '',
+};
+const envScript = `<script>window.__ENV__ = ${JSON.stringify(runtimeEnv)};</script>`;
+
+let cachedHtml: string | null = null;
+
+function getIndexHtml(): string {
+  if (cachedHtml) return cachedHtml;
+  const html = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
+  cachedHtml = html.replace('</head>', `${envScript}\n  </head>`);
+  return cachedHtml;
+}
+
+// SPA fallback — any non-API request returns index.html with runtime env
 app.get('*', (_req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'));
+  res.type('html').send(getIndexHtml());
 });
 
 app.listen(PORT, () => {

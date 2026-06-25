@@ -9,8 +9,16 @@ const env = (import.meta as ImportMeta & {
   env?: Record<string, string | undefined>;
 }).env;
 
-const supabaseUrl = env?.VITE_SUPABASE_URL;
-const supabaseAnonKey = env?.VITE_SUPABASE_ANON_KEY;
+// Runtime fallback: the Express server injects window.__ENV__ into the HTML
+// so the frontend can pick up VITE_SUPABASE_* from the server's process.env
+// without needing Docker --build-arg.
+const runtimeEnv: Record<string, string> | undefined =
+  typeof window !== 'undefined'
+    ? (window as unknown as { __ENV__?: Record<string, string> }).__ENV__
+    : undefined;
+
+const supabaseUrl = env?.VITE_SUPABASE_URL || runtimeEnv?.VITE_SUPABASE_URL;
+const supabaseAnonKey = env?.VITE_SUPABASE_ANON_KEY || runtimeEnv?.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
