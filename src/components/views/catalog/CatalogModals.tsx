@@ -34,22 +34,40 @@ function ModalShell({ title, subtitle, onClose, children }: ModalShellProps) {
       open
       onClose={onClose}
       titleId={titleId}
-      panelClassName="rounded-2xl bg-white shadow-xl"
+      // Mobile-first: full-width bottom sheet pinned to the bottom edge,
+      // capped at 92dvh and scrollable. On sm+ it becomes a centered dialog.
+      containerClassName="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4"
+      backdropClassName="zm-backdrop absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+      panelLayoutClassName="w-full sm:max-w-lg"
+      panelClassName="zm-sheet flex max-h-[92dvh] flex-col overflow-hidden rounded-t-2xl bg-[var(--color-surface)] shadow-xl sm:max-h-[88vh] sm:rounded-2xl"
     >
-        <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-5">
-          <div>
-            <h3 id={titleId} className="text-base font-bold text-gray-800">{title}</h3>
-            {subtitle && <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>}
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-            aria-label="Fechar"
-          >
-            <X className="h-4 w-4" />
-          </button>
+      {/* Grab handle — affordance that this is a draggable-feeling sheet (mobile only) */}
+      <div className="flex justify-center pt-2.5 sm:hidden" aria-hidden="true">
+        <span className="h-1.5 w-10 rounded-full bg-[var(--color-line-strong)]" />
+      </div>
+
+      {/* Sticky header */}
+      <div className="flex items-start justify-between gap-4 border-b border-[var(--color-line)] px-5 pb-4 pt-3 sm:pt-4">
+        <div className="min-w-0">
+          <h3 id={titleId} className="text-[17px] font-bold leading-tight text-[var(--color-ink)] sm:text-base">
+            {title}
+          </h3>
+          {subtitle && <p className="mt-1 text-[13px] leading-snug text-[var(--color-ink-muted)] sm:text-xs">{subtitle}</p>}
         </div>
-        <div className="p-5">{children}</div>
+        <button
+          onClick={onClose}
+          className="-mr-1 -mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--color-ink-faint)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink-soft)]"
+          aria-label="Fechar"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* Scrollable body. Children that use <ActionBar> render their own
+       * pinned footer via the `sticky` class inside ActionBar. */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 [padding-bottom:env(safe-area-inset-bottom)]">
+        {children}
+      </div>
     </Modal>
   );
 }
@@ -64,30 +82,37 @@ type ActionBarProps = {
 
 function ActionBar({ onCancel, submitLabel, loading, disabled, destructive }: ActionBarProps) {
   return (
-    <div className="mt-6 flex items-center justify-end gap-2">
+    // Pinned to the bottom of the scroll area: on mobile the primary action is
+    // always reachable with the thumb. Full-width buttons on mobile, right-
+    // aligned auto-width on sm+. Reversed DOM order so primary sits on the
+    // right on desktop while staying first (bottom-most = easiest reach) on mobile.
+    <div className="sticky bottom-0 -mx-5 -mb-5 mt-6 flex flex-col-reverse gap-2 border-t border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4 sm:flex-row sm:justify-end sm:py-3">
       <button
         type="button"
         onClick={onCancel}
-        className="rounded-lg px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100"
+        className="min-h-[44px] rounded-xl px-4 py-2.5 text-sm font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] sm:min-h-0 sm:py-2"
       >
         Cancelar
       </button>
       <button
         type="submit"
         disabled={loading || disabled}
-        className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-300 ${
-          destructive ? 'bg-red-600 hover:bg-red-700' : 'bg-[#25D366] hover:bg-[#1EBE5D]'
+        className={`min-h-[44px] rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-[var(--color-line-strong)] sm:min-h-0 sm:py-2 ${
+          destructive
+            ? 'bg-[var(--color-alert)] hover:brightness-95'
+            : 'bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)]'
         }`}
       >
-        {loading ? 'Salvando...' : submitLabel}
+        {loading ? 'Salvando…' : submitLabel}
       </button>
     </div>
   );
 }
 
-const LABEL_CLS = 'block text-[12px] font-semibold text-gray-700 mb-1.5';
+const LABEL_CLS = 'block text-[13px] font-semibold text-[var(--color-ink-soft)] mb-1.5';
+// 16px on mobile prevents iOS Safari from zooming the viewport on focus.
 const INPUT_CLS =
-  'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-[#25D366] focus:outline-none focus:ring-2 focus:ring-[#25D366]/20';
+  'w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-3.5 py-2.5 text-base text-[var(--color-ink)] placeholder:text-[var(--color-ink-faint)] transition-colors focus:border-[var(--color-brand)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 sm:text-sm';
 
 // ---------- Categoria ----------
 type CategoriaModalProps = {
@@ -145,7 +170,7 @@ export function CategoriaModal({ open, initial, onClose, onSubmit }: CategoriaMo
           placeholder="Ex: Bebidas, Lanches, Sobremesas"
           className={INPUT_CLS}
         />
-        {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+        {err && <p className="mt-2 text-xs text-[var(--color-alert)]">{err}</p>}
         <ActionBar onCancel={onClose} submitLabel={initial ? 'Salvar' : 'Criar categoria'} loading={loading} />
       </form>
     </ModalShell>
@@ -242,7 +267,7 @@ export function SubcategoriaModal({
           </select>
         </div>
 
-        {err && <p className="text-xs text-red-600">{err}</p>}
+        {err && <p className="text-xs text-[var(--color-alert)]">{err}</p>}
         <ActionBar onCancel={onClose} submitLabel={initial ? 'Salvar' : 'Criar subcategoria'} loading={loading} />
       </form>
     </ModalShell>
@@ -388,7 +413,7 @@ export function ProductModal({
               value={idSubcategoria}
               onChange={(e) => setIdSubcategoria(e.target.value === '' ? '' : Number(e.target.value))}
               disabled={!idCategoria || subcategoriasFiltered.length === 0}
-              className={`${INPUT_CLS} disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400`}
+              className={`${INPUT_CLS} disabled:cursor-not-allowed disabled:bg-[var(--color-surface-muted)] disabled:text-[var(--color-ink-faint)]`}
             >
               <option value="">Nenhuma</option>
               {subcategoriasFiltered.map((s) => (
@@ -400,30 +425,30 @@ export function ProductModal({
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
           <input
             type="checkbox"
             checked={ocultar}
             onChange={(e) => setOcultar(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+            className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
           />
           Ocultar nos cardápios (produto fica inativo)
         </label>
 
-        <div className="rounded-lg bg-[#F2F3F8] p-3 text-[12px] text-gray-600">
+        <div className="rounded-lg bg-[#F2F3F8] p-3 text-[12px] text-[var(--color-ink-soft)]">
           Para detalhes avançados de estoque e imagens próprias, acesse o{' '}
           <a
             href="https://zelopdv.com.br"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 font-semibold text-[#0B7A3B] hover:underline"
+            className="inline-flex items-center gap-1 font-semibold text-[var(--color-brand-deep)] hover:underline"
           >
             ZeloPDV <ExternalLink className="h-3 w-3" />
           </a>
           .
         </div>
 
-        {err && <p className="text-xs text-red-600">{err}</p>}
+        {err && <p className="text-xs text-[var(--color-alert)]">{err}</p>}
         <ActionBar onCancel={onClose} submitLabel={initial ? 'Salvar' : 'Criar produto'} loading={loading} />
       </form>
     </ModalShell>
@@ -579,43 +604,43 @@ export function ProductPublicationModal({
       onClose={onClose}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+        <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#25D366]/10 text-[#0B7A3B]">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
               <Globe2 className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-gray-800">{product.nome}</p>
-              <p className="text-xs text-gray-500">Produto base do cardápio operacional.</p>
+              <p className="truncate text-sm font-semibold text-[var(--color-ink)]">{product.nome}</p>
+              <p className="text-xs text-[var(--color-ink-muted)]">Produto base do cardápio operacional.</p>
             </div>
           </div>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex items-start gap-2 rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-700">
+          <label className="flex items-start gap-2 rounded-xl border border-[var(--color-line)] bg-white p-3 text-sm text-[var(--color-ink-soft)]">
             <input
               type="checkbox"
               checked={visivelOnline}
               onChange={(e) => setVisivelOnline(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+              className="mt-0.5 h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
             />
             <span>
-              <span className="block font-semibold text-gray-800">Publicado no ZeloMenu</span>
-              <span className="text-xs text-gray-500">Aparece no link do cardápio quando estiver disponível.</span>
+              <span className="block font-semibold text-[var(--color-ink)]">Publicado no ZeloMenu</span>
+              <span className="text-xs text-[var(--color-ink-muted)]">Aparece no link do cardápio quando estiver disponível.</span>
             </span>
           </label>
 
-          <label className="flex items-start gap-2 rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-700">
+          <label className="flex items-start gap-2 rounded-xl border border-[var(--color-line)] bg-white p-3 text-sm text-[var(--color-ink-soft)]">
             <input
               type="checkbox"
               checked={pausado}
               disabled={!visivelOnline}
               onChange={(e) => setPausado(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-0.5 h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-40"
             />
             <span>
-              <span className="block font-semibold text-gray-800">Pausar temporariamente</span>
-              <span className="text-xs text-gray-500">Mantém configurado, mas esconde do link por enquanto.</span>
+              <span className="block font-semibold text-[var(--color-ink)]">Pausar temporariamente</span>
+              <span className="text-xs text-[var(--color-ink-muted)]">Mantém configurado, mas esconde do link por enquanto.</span>
             </span>
           </label>
         </div>
@@ -646,7 +671,7 @@ export function ProductPublicationModal({
             <div>
               <label className={LABEL_CLS}>Foto do produto</label>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]">
                   <ImagePlus className="h-4 w-4" />
                   Enviar imagem
                   <input
@@ -660,20 +685,20 @@ export function ProductPublicationModal({
                   <button
                     type="button"
                     onClick={clearPhoto}
-                    className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
                   >
                     <Trash2 className="h-4 w-4" />
                     Remover foto
                   </button>
                 ) : null}
               </div>
-              <p className="mt-1 text-[11px] text-gray-500">
+              <p className="mt-1 text-[11px] text-[var(--color-ink-muted)]">
                 Envie uma imagem própria ou cole um link HTTPS. A foto enviada fica salva na sua conta.
               </p>
             </div>
 
             {currentPhotoUrl ? (
-              <div className="overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+              <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)]">
                 <img
                   src={currentPhotoUrl}
                   alt=""
@@ -681,7 +706,7 @@ export function ProductPublicationModal({
                 />
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-6 text-center text-xs text-gray-500">
+              <div className="rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-6 text-center text-xs text-[var(--color-ink-muted)]">
                 Nenhuma foto selecionada.
               </div>
             )}
@@ -714,25 +739,25 @@ export function ProductPublicationModal({
           </div>
         </div>
 
-        <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div className="space-y-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-gray-800">Adicionais e variações</p>
-              <p className="text-xs text-gray-500">
+              <p className="text-sm font-semibold text-[var(--color-ink)]">Adicionais e variações</p>
+              <p className="text-xs text-[var(--color-ink-muted)]">
                 O cliente escolhe essas opções antes de confirmar o pedido.
               </p>
             </div>
             <button
               type="button"
               onClick={() => setGroupsDraft((prev) => [...prev, createEmptyModifierGroup(prev.length)])}
-              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+              className="rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
             >
               Novo grupo
             </button>
           </div>
 
           {groupsDraft.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-center text-xs text-gray-500">
+            <div className="rounded-lg border border-dashed border-[var(--color-line)] bg-white px-3 py-4 text-center text-xs text-[var(--color-ink-muted)]">
               Nenhum adicional ou variação configurado ainda.
             </div>
           ) : (
@@ -754,7 +779,7 @@ export function ProductPublicationModal({
           )}
         </div>
 
-        {err && <p className="text-xs text-red-600">{err}</p>}
+        {err && <p className="text-xs text-[var(--color-alert)]">{err}</p>}
         <ActionBar onCancel={onClose} submitLabel="Salvar publicação" loading={loading} />
       </form>
     </ModalShell>
@@ -775,7 +800,7 @@ function ModifierGroupEditor({
   };
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-3">
+    <div className="rounded-xl border border-[var(--color-line)] bg-white p-3">
       <div className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1.5">
           <span className={LABEL_CLS}>Nome do grupo</span>
@@ -826,19 +851,19 @@ function ModifierGroupEditor({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
           <input
             type="checkbox"
             checked={group.active}
             onChange={(event) => updateGroup({ active: event.target.checked })}
-            className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+            className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
           />
           Grupo ativo no link
         </label>
         <button
           type="button"
           onClick={onDelete}
-          className="rounded-lg px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+          className="rounded-lg px-2 py-1 text-xs font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
         >
           Remover grupo
         </button>
@@ -846,23 +871,23 @@ function ModifierGroupEditor({
 
       <div className="mt-4 space-y-2">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Opções</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">Opções</p>
           <button
             type="button"
             onClick={() => onChange({
               ...group,
               options: [...group.options, createEmptyModifierOption(group.options.length)],
             })}
-            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+            className="rounded-lg border border-[var(--color-line)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
           >
             Nova opção
           </button>
         </div>
 
         {group.options.map((option, optionIndex) => (
-          <div key={option.id ?? `option-${optionIndex}`} className="grid gap-2 rounded-lg border border-gray-100 bg-gray-50 p-3 md:grid-cols-[minmax(0,1fr)_140px_auto]">
+          <div key={option.id ?? `option-${optionIndex}`} className="grid gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 md:grid-cols-[minmax(0,1fr)_140px_auto]">
             <label className="space-y-1">
-              <span className="text-[11px] font-semibold text-gray-500">Nome</span>
+              <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Nome</span>
               <input
                 value={option.name}
                 onChange={(event) => onChange({
@@ -875,7 +900,7 @@ function ModifierGroupEditor({
             </label>
 
             <label className="space-y-1">
-              <span className="text-[11px] font-semibold text-gray-500">Adicional (R$)</span>
+              <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Adicional (R$)</span>
               <input
                 type="number"
                 min={0}
@@ -890,7 +915,7 @@ function ModifierGroupEditor({
             </label>
 
             <div className="flex items-end justify-between gap-2">
-              <label className="flex items-center gap-2 text-xs text-gray-700">
+              <label className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
                 <input
                   type="checkbox"
                   checked={option.active}
@@ -898,7 +923,7 @@ function ModifierGroupEditor({
                     ...group,
                     options: group.options.map((entry, index) => index === optionIndex ? { ...entry, active: event.target.checked } : entry),
                   })}
-                  className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]/30"
+                  className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
                 />
                 Ativa
               </label>
@@ -908,7 +933,7 @@ function ModifierGroupEditor({
                   ...group,
                   options: group.options.filter((_, index) => index !== optionIndex),
                 })}
-                className="rounded-lg px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+                className="rounded-lg px-2 py-1 text-xs font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
               >
                 Remover
               </button>

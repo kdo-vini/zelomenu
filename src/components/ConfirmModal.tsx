@@ -58,29 +58,32 @@ export function ConfirmModal({
       onClose={handleClose}
       titleId={titleId}
       disableEscape={loading}
-      panelClassName="rounded-2xl bg-white shadow-xl"
+      containerClassName="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4"
+      backdropClassName="zm-backdrop absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+      panelLayoutClassName="w-full sm:max-w-md"
+      panelClassName="zm-sheet rounded-t-2xl bg-[var(--color-surface)] shadow-xl sm:rounded-2xl"
     >
-        <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-5">
-          <h3 id={titleId} className="text-base font-bold text-gray-800">{title}</h3>
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--color-line)] px-5 pb-4 pt-3 sm:pt-4">
+          <h3 id={titleId} className="text-[17px] font-bold text-[var(--color-ink)] sm:text-base">{title}</h3>
           <button
             onClick={handleClose}
             disabled={loading}
-            className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            className="-mr-1 -mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--color-ink-faint)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink-soft)]"
             aria-label="Fechar"
           >
-            <X className="h-4 w-4" />
+            <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="p-5">
-          <p className="text-sm text-gray-700">{message}</p>
+        <div className="px-5 py-5 [padding-bottom:env(safe-area-inset-bottom)]">
+          <p className="text-sm leading-relaxed text-[var(--color-ink-soft)]">{message}</p>
           {helperContent ? <div className="mt-3">{helperContent}</div> : null}
-          {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
-          <div className="mt-6 flex items-center justify-end gap-2">
+          {err && <p className="mt-2 text-xs text-[var(--color-alert)]">{err}</p>}
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
             <button
               type="button"
               onClick={handleClose}
               disabled={loading}
-              className="rounded-lg px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+              className="min-h-[44px] rounded-xl px-4 py-2.5 text-sm font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:opacity-50 sm:min-h-0 sm:py-2"
             >
               Cancelar
             </button>
@@ -88,8 +91,8 @@ export function ConfirmModal({
               type="button"
               onClick={handleConfirm}
               disabled={loading}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-300 ${
-                destructive ? 'bg-red-600 hover:bg-red-700' : 'bg-[#25D366] hover:bg-[#1EBE5D]'
+              className={`min-h-[44px] rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-[var(--color-line-strong)] sm:min-h-0 sm:py-2 ${
+                destructive ? 'bg-[var(--color-alert)] hover:brightness-95' : 'bg-[var(--color-brand)] hover:bg-[var(--color-brand-deep)]'
               }`}
             >
               {loading ? confirmLoadingLabel : confirmLabel}

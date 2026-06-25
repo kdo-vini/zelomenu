@@ -213,14 +213,14 @@ export const CatalogView = ({
   const collapseAll = () => setExpanded(new Set());
 
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto p-8">
+    <div className="flex flex-1 flex-col overflow-y-auto p-4 sm:p-6 lg:p-8">
       <div className="space-y-6">
         <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="flex items-start gap-3">
-            <ShoppingBag className="mt-0.5 h-6 w-6 text-[#25D366]" />
+            <ShoppingBag className="mt-0.5 h-6 w-6 shrink-0 text-[var(--color-brand)]" />
             <div>
-              <h2 className="text-2xl font-bold text-gray-800">Cardápio</h2>
-              <p className="text-sm text-gray-500">
+              <h2 className="text-xl font-bold text-[var(--color-ink)] sm:text-2xl">Cardápio</h2>
+              <p className="text-sm text-[var(--color-ink-muted)]">
                 Cadastre categorias, subcategorias e produtos. A IA usa esses dados para responder clientes no WhatsApp.
               </p>
             </div>
@@ -230,20 +230,20 @@ export const CatalogView = ({
             <button
               onClick={() => void refresh()}
               disabled={authLoading || loading}
-              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               Atualizar
             </button>
             <button
               onClick={() => setModal({ kind: 'categoria', initial: null })}
-              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+              className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)]"
             >
               <FolderPlus className="h-4 w-4" /> Nova categoria
             </button>
             <button
               onClick={() => setModal({ kind: 'produto', initial: null, defaultCategoriaId: null, defaultSubcategoriaId: null })}
-              className="flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1EBE5D]"
+              className="flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-lg bg-[var(--color-brand)] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--color-brand-deep)] sm:flex-none"
             >
               <Plus className="h-4 w-4" /> Novo produto
             </button>
@@ -260,11 +260,11 @@ export const CatalogView = ({
           onConfigurePublication={(produto) => setModal({ kind: 'publication', product: produto })}
         />
 
-        <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+        <section className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-sm sm:p-6">
           <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <h3 className="text-sm font-bold text-gray-800">{produtos.length} produtos cadastrados</h3>
-              <p className="text-xs text-gray-500">
+              <h3 className="text-sm font-bold text-[var(--color-ink)]">{produtos.length} produtos cadastrados</h3>
+              <p className="text-xs text-[var(--color-ink-muted)]">
                 {categorias.length} categorias · {subcategorias.length} subcategorias
               </p>
             </div>
@@ -272,25 +272,25 @@ export const CatalogView = ({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={expandAll}
-                className="text-xs font-semibold text-gray-500 hover:text-gray-800"
+                className="text-xs font-semibold text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
               >
                 Expandir tudo
               </button>
-              <span className="text-gray-300">·</span>
+              <span className="text-[var(--color-line-strong)]">·</span>
               <button
                 onClick={collapseAll}
-                className="text-xs font-semibold text-gray-500 hover:text-gray-800"
+                className="text-xs font-semibold text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
               >
                 Recolher tudo
               </button>
-              <span className="text-gray-300">·</span>
+              <span className="text-[var(--color-line-strong)]">·</span>
               {bulk.selectionMode ? (
                 <button
                   onClick={() => {
                     bulk.exitSelection();
                     setBulkFeedback(null);
                   }}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-800"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
                 >
                   <X className="h-3.5 w-3.5" />
                   Cancelar seleção
@@ -302,13 +302,13 @@ export const CatalogView = ({
                     setBulkFeedback(null);
                   }}
                   disabled={visibleProducts.length === 0}
-                  className="text-xs font-semibold text-gray-500 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="text-xs font-semibold text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Selecionar
                 </button>
               )}
-              <div className="ml-2 flex items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
-                <Search className="h-4 w-4 text-gray-400" />
+              <div className="flex w-full min-h-[44px] items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-2 md:ml-2 md:w-auto">
+                <Search className="h-4 w-4 text-[var(--color-ink-faint)]" />
                 <input
                   value={query}
                   onChange={(event) => {
@@ -316,7 +316,7 @@ export const CatalogView = ({
                     setBulkFeedback(null);
                   }}
                   placeholder="Buscar produto..."
-                  className="w-full bg-transparent text-sm outline-none md:w-56"
+                  className="w-full bg-transparent text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-faint)] md:w-56"
                 />
               </div>
             </div>
@@ -345,7 +345,7 @@ export const CatalogView = ({
                 <button
                   onClick={() => void bulk.toggleVisible()}
                   disabled={visibleProducts.length === 0 || bulk.busyAction !== null}
-                  className="rounded-lg border border-[var(--color-brand-soft)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-[44px] rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {bulk.allVisibleSelected ? 'Limpar visíveis' : 'Selecionar visíveis'}
                 </button>
@@ -353,7 +353,7 @@ export const CatalogView = ({
                   <button
                     onClick={() => void handleBulkPublish()}
                     disabled={!bulk.hasSelection || bulk.busyAction !== null}
-                    className="rounded-lg bg-[#25D366] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1EBE5D] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-[44px] rounded-lg bg-[var(--color-brand)] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-brand-deep)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {bulk.busyAction === 'set-publication' ? 'Publicando...' : 'Publicar no link'}
                   </button>
@@ -361,7 +361,7 @@ export const CatalogView = ({
                 <button
                   onClick={() => setBulkDeleteConfirm(true)}
                   disabled={!bulk.hasSelection || bulk.busyAction !== null}
-                  className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-[44px] rounded-lg border border-[var(--color-alert-soft)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-alert)] transition-colors hover:bg-[var(--color-alert-soft)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {bulk.busyAction === 'delete' ? 'Excluindo...' : 'Excluir selecionados'}
                 </button>
@@ -380,8 +380,8 @@ export const CatalogView = ({
           )}
 
           {error && (
-            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3">
-              <p className="text-xs font-medium text-red-700">{error}</p>
+            <div className="mb-4 rounded-xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-3">
+              <p className="text-xs font-medium text-[var(--color-alert)]">{error}</p>
             </div>
           )}
 
@@ -446,7 +446,7 @@ export const CatalogView = ({
               ))}
 
               {orphanProducts.length > 0 && (
-                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4">
+                <div className="rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface-muted)] p-4">
                   <div className="mb-3 flex items-center gap-2">
                     {bulk.selectionMode && (
                       <SelectionCheckbox
@@ -459,7 +459,7 @@ export const CatalogView = ({
                         ariaLabel="Selecionar produtos sem categoria"
                       />
                     )}
-                    <p className="text-xs font-semibold text-gray-500">Sem categoria ({orphanProducts.length})</p>
+                    <p className="text-xs font-semibold text-[var(--color-ink-muted)]">Sem categoria ({orphanProducts.length})</p>
                   </div>
                   <div className="space-y-2">
                     {orphanProducts.map((p) => (
@@ -485,20 +485,20 @@ export const CatalogView = ({
               )}
 
               {normalized && filtered.length === 0 && (
-                <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">
+                <div className="rounded-xl border border-dashed border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-muted)]">
                   Nenhum produto encontrado para "{query}".
                 </div>
               )}
             </div>
           )}
 
-          <p className="mt-6 border-t border-gray-100 pt-4 text-[12px] text-gray-500">
+          <p className="mt-6 border-t border-[var(--color-line)] pt-4 text-[12px] text-[var(--color-ink-muted)]">
             Para imagens próprias do produto, acesse o{' '}
             <a
               href="https://zelopdv.com.br"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 font-semibold text-[#0B7A3B] hover:underline"
+              className="inline-flex items-center gap-1 font-semibold text-[var(--color-brand-deep)] hover:underline"
             >
               ZeloPDV <ExternalLink className="h-3 w-3" />
             </a>
@@ -694,8 +694,8 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
   const categorySelectionState = getSelectionState(categoryIds, selectedIds);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-100 bg-white">
-      <div className="flex items-center gap-2 bg-gray-50 px-3 py-3">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]">
+      <div className="flex min-h-[44px] items-center gap-2 bg-[var(--color-surface-muted)] px-3 py-3">
         {selectionMode && totalProdutos > 0 && (
           <SelectionCheckbox
             checked={categorySelectionState === 'all'}
@@ -706,15 +706,15 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
         )}
         <button
           onClick={toggle}
-          className="rounded-lg p-1 text-gray-500 hover:bg-white"
+          className="rounded-lg p-1 text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)]"
           aria-label={isOpen ? 'Recolher' : 'Expandir'}
         >
           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
 
         <button onClick={toggle} className="flex-1 text-left">
-          <span className="text-sm font-bold text-gray-800">{node.categoria.nome}</span>
-          <span className="ml-2 text-xs text-gray-500">
+          <span className="text-sm font-bold text-[var(--color-ink)]">{node.categoria.nome}</span>
+          <span className="ml-2 text-xs text-[var(--color-ink-muted)]">
             {totalProdutos} {totalProdutos === 1 ? 'produto' : 'produtos'}
             {node.subcategorias.length > 0 ? ` · ${node.subcategorias.length} subcategoria${node.subcategorias.length === 1 ? '' : 's'}` : ''}
           </span>
@@ -737,7 +737,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
       </div>
 
       {isOpen && (
-        <div className="divide-y divide-gray-100">
+        <div className="divide-y divide-[var(--color-line)]">
           {node.produtosDireto.map((p) => (
             <div key={p.id} className="px-4 py-2">
               <ProdutoRowItem
@@ -764,10 +764,10 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                     ariaLabel={`Selecionar subcategoria ${subcategoria.nome}`}
                   />
                 )}
-                <span className="text-[12px] font-semibold uppercase tracking-wide text-gray-500">
+                <span className="text-[12px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
                   {subcategoria.nome}
                 </span>
-                <span className="text-[11px] text-gray-400">
+                <span className="text-[11px] text-[var(--color-ink-faint)]">
                   {produtos.length} {produtos.length === 1 ? 'produto' : 'produtos'}
                 </span>
                 <div className="ml-auto flex items-center gap-1">
@@ -797,7 +797,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                   />
                 ))}
                 {produtos.length === 0 && (
-                  <p className="py-1 text-[12px] italic text-gray-400">
+                  <p className="py-1 text-[12px] italic text-[var(--color-ink-faint)]">
                     Nenhum produto aqui ainda.
                   </p>
                 )}
@@ -806,11 +806,11 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
           ))}
 
           {node.produtosDireto.length === 0 && node.subcategorias.length === 0 && (
-            <div className="px-4 py-5 text-center text-xs text-gray-500">
+            <div className="px-4 py-5 text-center text-xs text-[var(--color-ink-muted)]">
               Nenhum produto nesta categoria.{' '}
               <button
                 onClick={() => onNewProduto(null)}
-                className="font-semibold text-[#0B7A3B] hover:underline"
+                className="font-semibold text-[var(--color-brand-deep)] hover:underline"
               >
                 Adicionar produto
               </button>
@@ -846,7 +846,7 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
   const publicationStatus = getZeloMenuPublicationStatus({ ...produto, publication: publication ?? null });
 
   return (
-    <div className="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-50">
+    <div className="group flex min-h-[44px] items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-muted)]">
       {selectionMode && (
         <SelectionCheckbox
           checked={selected}
@@ -856,29 +856,29 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
       )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium text-gray-800">{produto.nome}</span>
+          <span className="truncate text-sm font-medium text-[var(--color-ink)]">{produto.nome}</span>
           {produto.ocultar_no_pdv && (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
+            <span className="rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-ink-muted)]">
               Oculto
             </span>
           )}
           <PublicationStatusPill status={publicationStatus.status} />
         </div>
         {(publication?.nome_publico || publication?.descricao_publica) && (
-          <p className="mt-0.5 truncate text-[11.5px] text-gray-500">
+          <p className="mt-0.5 truncate text-[11.5px] text-[var(--color-ink-muted)]">
             {publication.nome_publico || produto.nome}
             {publication.descricao_publica ? ` · ${publication.descricao_publica}` : ''}
           </p>
         )}
       </div>
 
-      <span className="font-mono text-sm text-gray-700">R$ {produto.preco.toFixed(2)}</span>
+      <span className="font-mono text-sm text-[var(--color-ink-soft)]">R$ {produto.preco.toFixed(2)}</span>
 
       {produto.controlar_estoque && (
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums ${
             produto.estoque_atual === 0
-              ? 'bg-red-100 text-red-700'
+              ? 'bg-[var(--color-alert-soft)] text-[var(--color-alert)]'
               : produto.estoque_atual <= 5
                 ? 'bg-amber-100 text-amber-700'
                 : 'bg-green-100 text-green-700'
@@ -889,7 +889,7 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
       )}
 
       {!selectionMode && (
-        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex items-center gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
           <IconBtn title="Publicação no ZeloMenu" onClick={onConfigurePublication}>
             <Globe2 className="h-3.5 w-3.5" />
           </IconBtn>
@@ -923,7 +923,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
   const readyPercent = totalProdutos > 0 ? Math.round((summary.published / totalProdutos) * 100) : 0;
 
   return (
-    <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+    <section className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
@@ -938,7 +938,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-5">
+      <div className="mt-5 -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 md:mx-0 md:grid md:snap-none md:grid-cols-5 md:overflow-visible md:px-0 md:pb-0">
         <PublicationMetric label="Publicados" value={summary.published} detail={`${readyPercent}% do cardápio`} tone="published" />
         <PublicationMetric label="Não publicados" value={summary.unpublished} detail="Fora do link" tone="unpublished" />
         <PublicationMetric label="Pausados" value={summary.paused} detail="Ocultos por agora" tone="paused" />
@@ -947,7 +947,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
       </div>
 
       {issues.length > 0 ? (
-        <div className="mt-5 border-t border-gray-100 pt-4">
+        <div className="mt-5 border-t border-[var(--color-line)] pt-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <p className="text-[13px] font-semibold text-[var(--color-ink)]">Ajustes pendentes</p>
@@ -961,7 +961,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
               </span>
             )}
           </div>
-          <div className="divide-y divide-gray-100 rounded-xl border border-gray-100">
+          <div className="divide-y divide-[var(--color-line)] rounded-xl border border-[var(--color-line)]">
             {issues.map(({ produto, details }) => (
               <button
                 key={produto.id}
@@ -973,7 +973,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
                     onEditProduto(produto);
                   }
                 }}
-                className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+                className="flex min-h-[44px] w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
               >
                 <PublicationStatusPill status={details.status} />
                 <div className="min-w-0 flex-1">
@@ -1007,7 +1007,7 @@ function PublicationMetric({
   tone: ZeloMenuPublicationStatus;
 }) {
   return (
-    <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3">
+    <div className="min-h-[44px] w-[44vw] min-w-[140px] shrink-0 snap-start rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-3 sm:w-[38vw] md:w-auto md:min-w-0 md:shrink">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">{label}</span>
         <PublicationStatusIcon status={tone} />
@@ -1041,7 +1041,7 @@ function publicationTone(status: ZeloMenuPublicationStatus): { label: string; cl
     return { label: 'Publicado', className: 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]' };
   }
   if (status === 'unpublished') {
-    return { label: 'Não publicado', className: 'bg-gray-100 text-gray-600' };
+    return { label: 'Não publicado', className: 'bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)]' };
   }
   if (status === 'paused') {
     return { label: 'Pausado', className: 'bg-blue-50 text-blue-700' };
@@ -1050,7 +1050,7 @@ function publicationTone(status: ZeloMenuPublicationStatus): { label: string; cl
     return { label: 'Inativo', className: 'bg-slate-100 text-slate-700' };
   }
   if (status === 'out_of_stock') {
-    return { label: 'Sem estoque', className: 'bg-red-50 text-red-700' };
+    return { label: 'Sem estoque', className: 'bg-[var(--color-alert-soft)] text-[var(--color-alert)]' };
   }
   return { label: 'Sem categoria', className: 'bg-amber-50 text-amber-700' };
 }
@@ -1073,8 +1073,8 @@ function IconBtn({
       onClick={onClick}
       className={`rounded-lg p-1.5 transition-colors ${
         destructive
-          ? 'text-gray-400 hover:bg-red-50 hover:text-red-600'
-          : 'text-gray-500 hover:bg-white hover:text-gray-800'
+          ? 'text-[var(--color-ink-faint)] hover:bg-[var(--color-alert-soft)] hover:text-[var(--color-alert)]'
+          : 'text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-ink)]'
       }`}
     >
       {children}
@@ -1109,7 +1109,7 @@ function SelectionCheckbox({
       checked={checked}
       onChange={onChange}
       aria-label={ariaLabel}
-      className="h-4 w-4 rounded border-gray-300 text-[#25D366] focus:ring-[#25D366]"
+      className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
     />
   );
 }
@@ -1123,25 +1123,25 @@ function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center gap-4 py-12 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#25D366]/10">
-        <ShoppingBag className="h-8 w-8 text-[#25D366]" />
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-brand-soft)]">
+        <ShoppingBag className="h-8 w-8 text-[var(--color-brand)]" />
       </div>
       <div>
-        <h3 className="text-base font-bold text-gray-800">Comece cadastrando seu cardápio</h3>
-        <p className="mt-1 text-sm text-gray-500">
+        <h3 className="text-base font-bold text-[var(--color-ink)]">Comece cadastrando seu cardápio</h3>
+        <p className="mt-1 text-sm text-[var(--color-ink-muted)]">
           Categorias, subcategorias e produtos. Tudo em um só lugar.
         </p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap justify-center gap-2">
         <button
           onClick={onCreateCategoria}
-          className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-2 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
         >
           <FolderPlus className="h-4 w-4" /> Criar categoria
         </button>
         <button
           onClick={onCreateProduto}
-          className="flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1EBE5D]"
+          className="flex min-h-[44px] items-center gap-2 rounded-lg bg-[var(--color-brand)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-brand-deep)]"
         >
           <Plus className="h-4 w-4" /> Criar produto
         </button>

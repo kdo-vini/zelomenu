@@ -43,3 +43,42 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
 }
+
+/* Native form controls adopt the brand color (checkboxes, radios, range). */
+:root {
+  accent-color: var(--color-brand);
+}
+
+/* Modal / bottom-sheet entrance. On mobile the panel slides up from the
+ * bottom edge; on desktop it's a soft scale-fade. Reduced-motion users get
+ * an instant appearance. */
+@keyframes zm-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes zm-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes zm-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.zm-backdrop {
+  animation: zm-backdrop-in 200ms ease-out;
+}
+.zm-sheet {
+  animation: zm-sheet-up 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (min-width: 640px) {
+  .zm-sheet {
+    animation: zm-dialog-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zm-backdrop,
+  .zm-sheet {
+    animation: none;
+  }
+}
