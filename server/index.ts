@@ -209,6 +209,40 @@ app.post('/api/admin/zelomenu/welcome', async (req, res) => {
   }
 });
 
+// ─── AI product description generation (admin, Bearer-authed) ───────────────
+
+app.post('/api/admin/zelomenu/product-description', async (req, res) => {
+  try {
+    await requireEmpresaId(req);
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'AI_UNAVAILABLE' });
+
+    const productName = typeof req.body?.productName === 'string' ? req.body.productName.trim() : '';
+    if (!productName) return res.status(400).json({ error: 'Nome do produto é obrigatório.' });
+
+    const prompt = `Escreva uma descrição curta e atraente para o produto "${productName}" de um cardápio digital de restaurante.\n\nRegras: máximo 2 frases, tom apetitoso e direto, sem emojis, em português brasileiro. Retorne apenas o texto, sem aspas ou explicações.`;
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.7,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    if (!response.ok) {
+      console.error('[ZeloMenu] OpenAI product description generation failed:', response.status, await response.text().catch(() => ''));
+      return res.status(503).json({ error: 'AI_UNAVAILABLE' });
+    }
+    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const text = (data.choices?.[0]?.message?.content ?? '').trim();
+    res.json({ text });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
 // ─── Health check ─────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {

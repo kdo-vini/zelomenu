@@ -100,6 +100,16 @@ export async function generateZeloMenuWelcome(params: {
   return body.text;
 }
 
+export async function generateZeloMenuProductDescription(productName: string): Promise<string> {
+  const response = await fetch('/api/admin/zelomenu/product-description', {
+    method: 'POST',
+    headers: await authHeader(),
+    body: JSON.stringify({ productName }),
+  });
+  const body = await parseResponse<{ text: string }>(response);
+  return body.text;
+}
+
 export async function getZeloMenuSlug(): Promise<{ slug: string | null }> {
   const response = await fetch('/api/admin/zelomenu/slug', {
     headers: await authHeader(),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, Sparkles, X } from 'lucide-react';
 import { motion, useMotionValue, useTransform } from 'motion/react';
 import { ConfirmModal } from '../../ConfirmModal';
 import { Modal, useModalTitleId } from '../../Modal';
@@ -502,6 +502,7 @@ export function ProductPublicationModal({
   const [groupsDirty, setGroupsDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [err, setErr] = useState<string | null>(null);
+  const [aiLoadingDesc, setAiLoadingDesc] = useState(false);
   const hydratedProductRef = useRef<number | null>(null);
   const queueRef = useRef<Promise<unknown>>(Promise.resolve());
   const saveTokenRef = useRef(0);
@@ -530,6 +531,7 @@ export function ProductPublicationModal({
     setGroupsDirty(false);
     setSaveStatus('idle');
     setErr(null);
+    setAiLoadingDesc(false);
     cardX.set(0);
   }, [open, product, initial, modifierGroups, cardX]);
 
@@ -737,8 +739,33 @@ export function ProductPublicationModal({
                 className={INPUT_CLS}
               />
             </div>
-            <div>
-              <label className={LABEL_CLS}>Descrição pública</label>
+            <div className="group relative">
+              <div className="flex items-center justify-between">
+                <label className={LABEL_CLS}>Descrição pública</label>
+                <button
+                  type="button"
+                  disabled={aiLoadingDesc}
+                  onClick={() => {
+                    const name = nomePublico.trim() || product.nome;
+                    setAiLoadingDesc(true);
+                    import('../../../services/zelomenuAdminApi').then((m) =>
+                      m.generateZeloMenuProductDescription(name).then((t) => {
+                        setDescricaoPublica(t);
+                        setAiLoadingDesc(false);
+                      }).catch(() => setAiLoadingDesc(false)),
+                    );
+                  }}
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-[var(--color-ink-faint)] opacity-0 transition-all hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-brand)] group-hover:opacity-100"
+                  aria-label="Gerar descrição com IA"
+                >
+                  {aiLoadingDesc ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  IA
+                </button>
+              </div>
               <textarea
                 value={descricaoPublica}
                 onChange={(event) => setDescricaoPublica(event.target.value)}
