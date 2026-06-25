@@ -22,52 +22,49 @@ Construir **um app único de cardápio** que centraliza TODA a configuração de
 | Banco | SEM schema novo. Tabelas: `zelomenu_product_publications`, `zelomenu_modifier_groups`, `zelomenu_modifier_options`, `empresa_perfil.zelomenu_slug`, `subscriptions.has_zelo_menu`. Tudo owner-scoped por RLS |
 | Ordem | Categorias: `categorias.ordem` (compartilhada c/ PDV). Produtos: `zelomenu_product_publications.ordem` (só do cardápio) |
 
-## O que JÁ está pronto (não refazer)
+## Estado atual (auditado 2026-06-25)
 
-1. **Resolver de entitlement** em `src/domain/zelomenuEntitlements.ts` (15 testes vitest — `npm test`). API: `resolveZeloMenuCapabilities`, `hasZeloMenuAccess`, `hasOrderingReviewAccess`, `hasKitchenQueueAccess`, `hasZeloMenuCapability` + tipos. É a regra de "quem pode usar o cardápio"; PDV (`guards.js`) e Chat têm a cópia deles da mesma regra (sincronizadas à mão, como já era — não houve pacote separado).
-2. **Este app** já existe e builda (`npm install && npm run build` verde). A **CONFIG foi migrada do ZeloChat com paridade** (copiada, não reescrita):
-   - `src/components/views/CatalogView.tsx`, `src/components/views/catalog/CatalogModals.tsx`
-   - `src/hooks/useCatalog.ts` (CRUD direto no Supabase — sem back-end), `src/hooks/useCatalogBulkController.ts`
-   - `src/domain/zelomenuPublication.ts`, `zelomenuModifiers.ts`, `zelomenuPublicationImages.ts`
-   - `src/services/zelomenuPublicationImages.ts`, `imageCompress.ts`, `errorMessages.ts`, `supabaseClient.ts` (novo)
-   - `src/contexts/ToastContext.tsx`, `AuthContext.tsx`, `hooks/useZeloMenuEntitlement.ts`
-   - Rota `/admin` gateada por sessão Supabase + `hasZeloMenuAccess` do pacote.
-   - **TODO já marcado no código:** storage de auth em cookie `.zelopdv.com.br` (SSO) ainda não implementado — hoje usa localStorage, então sem sessão local cai no estado "Acesse pelo seu painel".
+Legenda: ✅ feito e em produção · 🟡 parcial · ❌ não feito.
+**No ar:** `https://menu.zelopdv.com.br` (Docker Swarm no VPS do ZeloChat — `2.24.66.12`, Dokploy). Container único Express servindo API (`/api/*`) + SPA estática. Build/deploy: `git push` → ssh no VPS → `cd /etc/dokploy/applications/zelomenu && git pull && docker build --build-arg VITE_SUPABASE_URL=… --build-arg VITE_SUPABASE_ANON_KEY=… -t zelomenu:latest . && docker service update --force zelomenu`.
 
-## O que falta (faça nesta ordem)
+### ✅ Feito (não refazer)
 
-### A. Migrar a VITRINE pública (copiar do ZeloChat)
-Copie e adapte imports (não reescreva). Arquivos no ZeloChat:
-- `src/pages/ZeloMenuStorePage.tsx` (loja) e `src/pages/ZeloMenuCartPage.tsx` (carrinho/checkout)
-- `src/domain/zelomenuStoreCartCache.ts` (carrinho em localStorage, TTL 12h)
-- `src/domain/zelomenuCheckout.ts` (validação de checkout)
-- `src/domain/zelomenuDelivery.ts` (taxa por bairro — depende de `normalizeComparableText` de `src/domain/pixReceipt.ts`; **copie só essa função**, não o pixReceipt inteiro)
-- `src/services/zelomenuApi.ts` (consome o back-end `/api/public/zelomenu/*`)
-- utils de telefone de `src/domain/chat.ts` (`maskBrazilianPhone`, `normalizePhoneNumber`) — **copie as funções**
-- `zelomenuModifiers.ts` e `ToastContext.tsx` já existem aqui (reuse).
-- Roteamento: loja em `/{slug}`, carrinho em `/menu/carrinho/:token`. **Reserve** `/admin`, `/cart`, etc. pra não colidir com `/{slug}`.
+1. **Resolver de entitlement** — `src/domain/zelomenuEntitlements.ts` (15 testes vitest). Agora **lê a coluna `subscriptions.has_zelo_menu`** (publicada) + addons `has_pedidos_addon`/`has_mesas_addon`/`has_acessos_addon` via `useZeloMenuEntitlement`. Acesso liberado para: `chat`, `bundle`, OU `has_zelo_menu=true` (inclui `pdv` puro). Senão → estado de upsell PT-BR.
+2. **Vitrine pública** — `ZeloMenuStorePage` (`/:slug`) e `ZeloMenuCartPage` (`/menu/carrinho/:token`). Catálogo, destaques, busca, modais de unidade/modificadores, carrinho flutuante, cache 12h localStorage, checkout 3-passos. Consome `src/services/zelomenuApi.ts`.
+3. **Back-end da vitrine** — `server/` próprio (Express :3101, não depende mais do ZeloChat). `supabaseServer.ts` (service-role + `ws`), `configStore.ts` (carrega catálogo das mesmas tabelas), `zelomenuCartSessions.ts` (sessões/tokens de carrinho, revalidação, confirmação → materializa `zelochat_orders` + baixa estoque). Rotas `/api/public/zelomenu/*` e `/api/admin/zelomenu/slug`. `Dockerfile` multi-stage.
+4. **CatalogView (config de produtos)** — `src/components/views/CatalogView.tsx` + `catalog/CatalogModals.tsx` + `useCatalog.ts`/`useCatalogBulkController.ts`. **Imagem #1** (CRUD categorias/subcategorias/produtos, métricas de publicação publicados/não-publicados/pausados/sem-estoque/sem-categoria, "Ajustes pendentes", bulk). Upload de foto wired (`uploadProductPublicationImage`).
+5. **Auth** — `@supabase/ssr` com cookie em `.zelopdv.com.br` (sessão compartilhada cross-subdomínio). Formulário de login direto (email+senha) + **login com Google** (`signInWithOAuth`) no `/admin`. Rota **`/auth/callback`** (`AuthCallbackPage`) trata PKCE/OAuth (`?code=`) e SSO handoff (`#access_token`/`#refresh_token`).
 
-### B. Migrar o BACK-END da vitrine
-A vitrine NÃO fala direto com o Supabase — usa o servidor Express do ZeloChat. Mapear e portar:
-- Rotas `/api/public/zelomenu/*` em `/home/vinicius/code/zelochat/server/` (catálogo público, preço, carrinho, iniciar pedido, revalidação).
-- Sistema de "link do carrinho": tabelas `zelomenu_cart_sessions` e `zelomenu_cart_tokens` (token emitido pelo back-end, expira).
-- Este app vai precisar do seu próprio servidor (mesma forma do Chat: Vite + Express) ou funções serverless no Vercel. **Primeiro mapeie** o que existe, depois porte.
+### 🟡 Parcial
 
-### C. Elevar a CONFIG a tier-S (mobile-first, premium)
-Sobre a config já migrada, implementar:
+- **Slug no admin** — back-end pronto (`/api/admin/zelomenu/slug` GET/POST, valida formato/reservado/unicidade). ❌ **Falta a UI** no `/admin` (campo "Link público do cardápio" + copiar, como na **imagem #3** das Extensões do PDV). Hoje só dá pra setar o slug pelo PDV.
+
+### ❌ Não feito (prioridade)
+
+#### A. Painel "Cardápio digital" / store-settings (IMAGEM #2 — falta inteiro)
+Fonte para copiar: `zelochat/src/components/zelomenu/ZeloMenuSettingsCard.tsx` (330 linhas). É o card lateral com:
+- **Texto de boas-vindas** (textarea, 400 chars) + botão **"Gerar com IA"**.
+- **Seção de Destaques** — toggle on/off + multi-select de produtos (`featuredProductIds`).
+- **Ordem das categorias** — arrastar pra reordenar (`Reorder` do `motion/react`, já temos `motion`).
+- Botão **"Salvar configurações"**.
+- API a portar (contrato do ZeloChat `waApi.ts`): `GET/PATCH /api/zelomenu/settings` e `POST` de welcome com IA. **No back-end do ZeloMenu falta `getZeloMenuStoreSettings`/`updateZeloMenuStoreSettings`** (existem no `zelochat/server/zelomenuCartSessions.ts`, copiar) + endpoint de geração de welcome com IA (precisa de chave OpenAI no server — decidir se porta ou stuba).
+
+#### B. Slug editor no /admin (IMAGEM #3)
+- Card "Link público do cardápio": input do slug + "Salvar" + "Copiar link" (`menu.zelopdv.com.br/{slug}`). Back-end já existe; só fazer a UI e chamar `/api/admin/zelomenu/slug`. ⚠ hoje o endpoint recebe `empresaId` por query/body — trocar para resolver via sessão (Bearer token) pra não confiar em `empresaId` do cliente.
+
+#### C. Elevar a CONFIG a tier-S (mobile-first, premium) — nada disto existe ainda
 - **Editor com swipe:** abre num produto e desliza pro próximo (prev/next) sem fechar.
-- **Autosave:** texto com debounce; toggles/ordem/foto instantâneos; flush ao deslizar; indicador `Salvo ✓`; recarrega ao abrir (last-write-wins).
-- **Crop de foto 1:1** opcional (zoom/reposição) + botão "Usar imagem inteira"; gera o arquivo no cliente. Pode usar lib madura React (ex. `react-easy-crop`).
-- **Arrastar pra ordenar** (touch, ex. `dnd-kit`) em 2 níveis: categorias (`categorias.ordem`) e produtos dentro da categoria (`zelomenu_product_publications.ordem`).
-- **Preview = card REAL da vitrine** (mesmo app → WYSIWYG de verdade).
-- **Resumo** em chips clicáveis (filtros): publicados / pausados / não publicados / sem categoria / sem estoque.
-- **Slug no header** (link público + copiar). Reusar o contrato do endpoint de slug do PDV (`/api/zelomenu/slug`) ou portar a lógica (precisa service-role pra checar unicidade entre tenants).
+- **Autosave:** texto com debounce; toggles/ordem/foto instantâneos; indicador `Salvo ✓`; recarrega ao abrir (last-write-wins).
+- **Crop de foto 1:1** opcional (zoom/reposição) + "Usar imagem inteira" (ex. `react-easy-crop` — não instalado).
+- **Arrastar pra ordenar** (touch, ex. `dnd-kit` — não instalado) em 2 níveis: categorias (`categorias.ordem`) e produtos (`zelomenu_product_publications.ordem`).
+- **Preview = card REAL da vitrine** (WYSIWYG).
+- Chips de resumo já são clicáveis? Verificar filtros publicados/pausados/etc.
 
-### D. Wiring final (PDV + Chat) e cutover
-- **Auth SSO:** trocar o storage do cliente Supabase (neste app, no PDV e no Chat) pra cookie em `.zelopdv.com.br`. ⚠ migração arriscada: pode deslogar usuários uma vez — fazer com transição cuidadosa.
-- **PDV** (`/home/vinicius/code/zelopdv`): remover config de menu de `gestao/produtos` (toggle/bulk/`ModalModificadores`) e de `gestao/extensoes` (editor de slug); deixar 1 botão "Configurar cardápio" → redirect; manter os guards de entitlement do próprio PDV (`guards.js`).
-- **Chat** (`/home/vinicius/code/zelochat`): remover vitrine + config de menu; botão de redirect; manter o entitlement do próprio Chat.
-- **Cutover:** apontar `menu.zelopdv.com.br` (DNS/Vercel) pra este app; Chat para de servir a vitrine.
+#### D. Wiring final (PDV + Chat) e cutover — não feito
+- **SSO de verdade:** o PDV/Chat ainda não gravam o cookie em `.zelopdv.com.br` nem redirecionam pro `/auth/callback` com tokens. Hoje o usuário loga manualmente no `/admin`. Adicionar botão "Configurar cardápio" no PDV/Chat que faz o handoff.
+- **PDV** (`/home/vinicius/code/zelopdv`): remover config de menu de `gestao/produtos` e o editor de slug de `gestao/extensoes`; deixar 1 botão "Configurar cardápio" → redirect.
+- **Chat** (`/home/vinicius/code/zelochat`): remover vitrine + config de menu; botão de redirect.
+- **Cutover:** o DNS de `menu.zelopdv.com.br` JÁ aponta pra este app (Traefik). Falta o ZeloChat parar de servir a vitrine e PDV/Chat virarem só redirect.
 
 ## Regras inquebráveis
 
@@ -89,9 +86,10 @@ npm run dev                       # /admin e /{slug}
 
 ## Mapa rápido de fontes
 
-- Config (referência): `zelochat/src/components/views/CatalogView.tsx`, `.../catalog/CatalogModals.tsx`, `zelochat/src/hooks/useCatalog.ts`
-- Vitrine (a copiar): `zelochat/src/pages/ZeloMenuStorePage.tsx`, `ZeloMenuCartPage.tsx`
-- Back-end vitrine: `zelochat/server/` (`/api/public/zelomenu/*`)
-- Entitlement canônico: `zelochat/src/domain/zelomenuEntitlements.ts` (já no pacote) e `zelopdv/src/lib/guards.js`
-- Slug: `zelopdv/src/routes/api/zelomenu/slug/+server.js`
+- **Store-settings (FALTA — imagem #2):** `zelochat/src/components/zelomenu/ZeloMenuSettingsCard.tsx`; contrato API em `zelochat/src/services/waApi.ts` (`getZeloMenuSettings`/`updateZeloMenuSettings`/`generateZeloMenuWelcome`); back-end em `zelochat/server/zelomenuCartSessions.ts` (`getZeloMenuStoreSettings`/`updateZeloMenuStoreSettings`) e rotas `zelochat/server/router.ts` (`/api/zelomenu/settings`).
+- Config produtos (já portado): `zelochat/src/components/views/CatalogView.tsx`, `.../catalog/CatalogModals.tsx`, `zelochat/src/hooks/useCatalog.ts`
+- Vitrine (já portado): `zelochat/src/pages/ZeloMenuStorePage.tsx`, `ZeloMenuCartPage.tsx`
+- Back-end vitrine (já portado): `zelochat/server/` (`/api/public/zelomenu/*`)
+- Entitlement canônico: `zelochat/src/domain/zelomenuEntitlements.ts` e `zelopdv/src/lib/guards.js`
+- Slug (back-end já portado; falta UI): `zelopdv/src/routes/api/zelomenu/slug/+server.js`
 - Plano completo: `zelopdv/docs/projects/zelomenu-app-plan.md`

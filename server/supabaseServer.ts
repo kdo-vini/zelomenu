@@ -1,3 +1,4 @@
+import type { Request } from 'express';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 
@@ -27,6 +28,46 @@ export function getServiceSupabase(): SupabaseClient {
 
 const empresaUserIdCache = new Map<string, { userId: string; cachedAt: number }>();
 const EMPRESA_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// ─── Bearer-auth helpers ────────────────────────────────────────────────────────
+
+const empresaIdCache = new Map<string, { empresaId: string; cachedAt: number }>();
+
+export function extractBearerToken(req: Request): string | null {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return null;
+  const token = header.slice('Bearer '.length).trim();
+  return token || null;
+}
+
+export async function resolveEmpresaIdFromToken(token: string): Promise<string> {
+  const supabase = getServiceSupabase();
+  const { data: authData, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !authData.user) throw new Error('UNAUTHORIZED');
+
+  const userId = authData.user.id;
+  const cached = empresaIdCache.get(userId);
+  if (cached && Date.now() - cached.cachedAt < EMPRESA_CACHE_TTL_MS) return cached.empresaId;
+
+  const { data: empresa, error: empresaError } = await supabase
+    .from('empresa_perfil')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (empresaError) throw new Error(empresaError.message);
+  if (!empresa?.id) throw new Error('EMPRESA_NOT_FOUND');
+
+  empresaIdCache.set(userId, { empresaId: empresa.id as string, cachedAt: Date.now() });
+  return empresa.id as string;
+}
+
+export async function requireEmpresaId(req: Request): Promise<string> {
+  const token = extractBearerToken(req);
+  if (!token) throw new Error('UNAUTHORIZED');
+  const empresaId = await resolveEmpresaIdFromToken(token);
+  (req as Request & { empresaId?: string }).empresaId = empresaId;
+  return empresaId;
+}
 
 export async function getEmpresaUserId(empresaId: string): Promise<string | null> {
   const cached = empresaUserIdCache.get(empresaId);

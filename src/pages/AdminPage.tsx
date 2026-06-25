@@ -4,6 +4,8 @@ import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
 import { CatalogView } from '../components/views/CatalogView';
 import { NeutralState } from '../components/NeutralState';
+import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
+import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
 import { supabase } from '../services/supabaseClient';
 import { LogIn, Loader2, AlertCircle } from 'lucide-react';
 
@@ -218,32 +220,42 @@ export function AdminPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-[var(--color-canvas)]">
-      <CatalogView
-        isAuthenticated={!!session}
-        authLoading={authLoading}
-        canPublishToMenu={entitlement.capabilities.menu_publication}
-        loading={catalog.loading}
-        error={catalog.error}
-        categorias={catalog.categorias}
-        subcategorias={catalog.subcategorias}
-        produtos={catalog.produtos}
-        productPublications={catalog.productPublications}
-        productModifierGroups={catalog.productModifierGroups}
-        refresh={catalog.refresh}
-        createCategoria={catalog.createCategoria}
-        updateCategoria={catalog.updateCategoria}
-        deleteCategoria={catalog.deleteCategoria}
-        createSubcategoria={catalog.createSubcategoria}
-        updateSubcategoria={catalog.updateSubcategoria}
-        deleteSubcategoria={catalog.deleteSubcategoria}
-        createProduto={catalog.createProduto}
-        updateProduto={catalog.updateProduto}
-        deleteProduto={catalog.deleteProduto}
-        upsertProductPublication={catalog.upsertProductPublication}
-        replaceProductModifierGroups={catalog.replaceProductModifierGroups}
-        uploadProductPublicationImage={catalog.uploadProductPublicationImage}
-        deleteProductPublicationImage={catalog.deleteProductPublicationImage}
-      />
+      <div className="mx-auto w-full max-w-7xl px-4 py-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
+          <div className="order-2 min-w-0 lg:order-1">
+            <CatalogView
+              isAuthenticated={!!session}
+              authLoading={authLoading}
+              canPublishToMenu={entitlement.capabilities.menu_publication}
+              loading={catalog.loading}
+              error={catalog.error}
+              categorias={catalog.categorias}
+              subcategorias={catalog.subcategorias}
+              produtos={catalog.produtos}
+              productPublications={catalog.productPublications}
+              productModifierGroups={catalog.productModifierGroups}
+              refresh={catalog.refresh}
+              createCategoria={catalog.createCategoria}
+              updateCategoria={catalog.updateCategoria}
+              deleteCategoria={catalog.deleteCategoria}
+              createSubcategoria={catalog.createSubcategoria}
+              updateSubcategoria={catalog.updateSubcategoria}
+              deleteSubcategoria={catalog.deleteSubcategoria}
+              createProduto={catalog.createProduto}
+              updateProduto={catalog.updateProduto}
+              deleteProduto={catalog.deleteProduto}
+              upsertProductPublication={catalog.upsertProductPublication}
+              replaceProductModifierGroups={catalog.replaceProductModifierGroups}
+              uploadProductPublicationImage={catalog.uploadProductPublicationImage}
+              deleteProductPublicationImage={catalog.deleteProductPublicationImage}
+            />
+          </div>
+          <aside className="order-1 flex flex-col gap-6 lg:order-2">
+            <ZeloMenuSlugCard />
+            <ZeloMenuSettingsCard />
+          </aside>
+        </div>
+      </div>
     </div>
   );
 }
