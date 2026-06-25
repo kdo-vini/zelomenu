@@ -25,7 +25,7 @@ Construir **um app único de cardápio** que centraliza TODA a configuração de
 ## Estado atual (auditado 2026-06-25)
 
 Legenda: ✅ feito e em produção · 🟡 parcial · ❌ não feito.
-**No ar:** `https://menu.zelopdv.com.br` (Docker Swarm no VPS do ZeloChat — `2.24.66.12`, Dokploy). Container único Express servindo API (`/api/*`) + SPA estática. Build/deploy: `git push` → ssh no VPS → `cd /etc/dokploy/applications/zelomenu && git pull && docker build --build-arg VITE_SUPABASE_URL=… --build-arg VITE_SUPABASE_ANON_KEY=… -t zelomenu:latest . && docker service update --force zelomenu`.
+**No ar:** `https://menu.zelopdv.com.br` (Docker Swarm no VPS do ZeloChat — `2.24.66.12`, Dokploy). Container único Express servindo API (`/api/*`) + SPA estática. **Auto-deploy via Dokploy + GitHub**: cada push no `master` dispara build automático. Dockerfile com `ARG` defaults para `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (não precisa mais de `--build-arg` manual). Servidor Express injeta `window.__ENV__` em runtime como fallback.
 
 ### ✅ Feito (não refazer)
 
@@ -35,30 +35,19 @@ Legenda: ✅ feito e em produção · 🟡 parcial · ❌ não feito.
 4. **CatalogView (config de produtos)** — `src/components/views/CatalogView.tsx` + `catalog/CatalogModals.tsx` + `useCatalog.ts`/`useCatalogBulkController.ts`. **Imagem #1** (CRUD categorias/subcategorias/produtos, métricas de publicação publicados/não-publicados/pausados/sem-estoque/sem-categoria, "Ajustes pendentes", bulk). Upload de foto wired (`uploadProductPublicationImage`).
 5. **Auth** — `@supabase/ssr` com cookie em `.zelopdv.com.br` (sessão compartilhada cross-subdomínio). Formulário de login direto (email+senha) + **login com Google** (`signInWithOAuth`) no `/admin`. Rota **`/auth/callback`** (`AuthCallbackPage`) trata PKCE/OAuth (`?code=`) e SSO handoff (`#access_token`/`#refresh_token`).
 
+### ✅ Feito (adicional — jun/2025)
+
+- **Store-settings panel** (Item A) — `ZeloMenuSettingsCard` portado do ZeloChat no `/admin`. Welcome text com IA, destaques toggle+multi-select, drag-ordering de categorias.
+- **Slug editor no /admin** (Item B) — campo "Link público do cardápio" com salvar + copiar. Back-end adaptado para resolver empresaId da sessão.
+- **Catalog edit tier-S** (Item C) — swipe, autosave, crop 1:1, drag-ordering dnd-kit, preview real. ✅ Em produção.
+- **Auto-deploy Dokploy + GitHub** — push no master → build automático. Dockerfile com ARG defaults para env vars.
+- **Supabase env vars fix** — `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` embutidas no Dockerfile com valores default. Fallback via `window.__ENV__` em runtime.
+
 ### 🟡 Parcial
 
-- **Slug no admin** — back-end pronto (`/api/admin/zelomenu/slug` GET/POST, valida formato/reservado/unicidade). ❌ **Falta a UI** no `/admin` (campo "Link público do cardápio" + copiar, como na **imagem #3** das Extensões do PDV). Hoje só dá pra setar o slug pelo PDV.
+- **Slug no admin** — back-end pronto, UI pronta. Slug editor funcional.
 
 ### ❌ Não feito (prioridade)
-
-#### A. Painel "Cardápio digital" / store-settings (IMAGEM #2 — falta inteiro)
-Fonte para copiar: `zelochat/src/components/zelomenu/ZeloMenuSettingsCard.tsx` (330 linhas). É o card lateral com:
-- **Texto de boas-vindas** (textarea, 400 chars) + botão **"Gerar com IA"**.
-- **Seção de Destaques** — toggle on/off + multi-select de produtos (`featuredProductIds`).
-- **Ordem das categorias** — arrastar pra reordenar (`Reorder` do `motion/react`, já temos `motion`).
-- Botão **"Salvar configurações"**.
-- API a portar (contrato do ZeloChat `waApi.ts`): `GET/PATCH /api/zelomenu/settings` e `POST` de welcome com IA. **No back-end do ZeloMenu falta `getZeloMenuStoreSettings`/`updateZeloMenuStoreSettings`** (existem no `zelochat/server/zelomenuCartSessions.ts`, copiar) + endpoint de geração de welcome com IA (precisa de chave OpenAI no server — decidir se porta ou stuba).
-
-#### B. Slug editor no /admin (IMAGEM #3)
-- Card "Link público do cardápio": input do slug + "Salvar" + "Copiar link" (`menu.zelopdv.com.br/{slug}`). Back-end já existe; só fazer a UI e chamar `/api/admin/zelomenu/slug`. ⚠ hoje o endpoint recebe `empresaId` por query/body — trocar para resolver via sessão (Bearer token) pra não confiar em `empresaId` do cliente.
-
-#### C. Elevar a CONFIG a tier-S (mobile-first, premium) — ✅ implementado localmente, pendente deploy
-- **Editor com swipe:** abre num produto e desliza pro próximo (prev/next) sem fechar.
-- **Autosave:** texto com debounce; toggles/ordem/foto instantâneos; indicador `Salvo`; gravações serializadas para preservar last-write-wins.
-- **Crop de foto 1:1** opcional (zoom/reposição) + "Usar imagem inteira" com `react-easy-crop`.
-- **Arrastar pra ordenar** com `dnd-kit`, touch + teclado, em 2 níveis: categorias (`categorias.ordem`) e produtos (`zelomenu_product_publications.ordem`), com atualização otimista e rollback.
-- **Preview = card real da vitrine** no editor de publicação.
-- Chips de resumo já são clicáveis? Verificar filtros publicados/pausados/etc.
 
 #### D. Wiring final (PDV + Chat) e cutover — não feito
 - **SSO de verdade:** o PDV/Chat ainda não gravam o cookie em `.zelopdv.com.br` nem redirecionam pro `/auth/callback` com tokens. Hoje o usuário loga manualmente no `/admin`. Adicionar botão "Configurar cardápio" no PDV/Chat que faz o handoff.
