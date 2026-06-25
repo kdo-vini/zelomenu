@@ -10,11 +10,19 @@ RUN npm ci
 
 COPY . .
 
+# Vite inlines VITE_* env vars at build time — they must be present here, not
+# at runtime. Passed via --build-arg from the deploy step.
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+
 ARG PUBLIC_APP_VERSION
 RUN case "$PUBLIC_APP_VERSION" in \
       ''|'${'*) PUBLIC_APP_VERSION=$(git rev-parse --short=12 HEAD 2>/dev/null || echo dev) ;; \
     esac; \
     echo "[build] PUBLIC_APP_VERSION=$PUBLIC_APP_VERSION"; \
+    echo "[build] VITE_SUPABASE_URL=$VITE_SUPABASE_URL"; \
     npm run build
 
 # ─── runtime stage: Express server serving API + static frontend ──────────────
