@@ -4,10 +4,16 @@
 import type {
   ZeloMenuModifierGroup,
   ZeloMenuModifierSelectionInput,
-  ZeloMenuSelectedModifierGroup,
 } from '../domain/zelomenuModifiers';
 
+import type {
+  ZeloMenuCartItem,
+  ZeloMenuCartRevalidationIssue,
+  ZeloMenuCartRevalidation,
+} from '../domain/zelomenuCartSchema';
+
 export type { ZeloMenuModifierGroup };
+export type { ZeloMenuCartItem, ZeloMenuCartRevalidationIssue, ZeloMenuCartRevalidation };
 
 // ─── Catalog types ─────────────────────────────────────────────────────────────
 
@@ -39,54 +45,8 @@ export type ZeloMenuPublicBusinessHoursStatus = {
 };
 
 // ─── Cart types ────────────────────────────────────────────────────────────────
-
-export type ZeloMenuCartItem = {
-  productId: number | null;
-  productName: string;
-  baseUnitPrice: number;
-  selectedModifiers: ZeloMenuSelectedModifierGroup[];
-  modifierDeltaTotal: number;
-  quantity: number;
-  unitPrice: number;
-  lineTotal: number;
-  notes?: string | null;
-};
-
-export type ZeloMenuCartRevalidationIssue = {
-  code:
-    | 'product_missing'
-    | 'product_unavailable'
-    | 'stock_insufficient'
-    | 'price_changed'
-    | 'schedule_unavailable'
-    | 'modifier_invalid';
-  message: string;
-  productName?: string;
-  requestedQuantity?: number;
-  availableQuantity?: number | null;
-  previousUnitPrice?: number;
-  currentUnitPrice?: number;
-};
-
-export type ZeloMenuCartRevalidation = {
-  checkedAt: string;
-  ok: boolean;
-  issues: ZeloMenuCartRevalidationIssue[];
-  previewCart: {
-    items: ZeloMenuCartItem[];
-    observations: string | null;
-  } | null;
-  previewPricing: {
-    subtotal: number;
-    deliveryFee: number;
-    total: number;
-  } | null;
-  previewPayment: {
-    declaredMethod: string | null;
-    pixReceiptRequired: boolean;
-    pixReceiptApproved: boolean;
-  } | null;
-};
+// ZeloMenuCartItem, ZeloMenuCartRevalidationIssue, ZeloMenuCartRevalidation
+// are re-exported from src/domain/zelomenuCartSchema (canonical shared types).
 
 export type ZeloMenuCartSessionPayload = {
   id: string;

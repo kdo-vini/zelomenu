@@ -5,10 +5,18 @@ import { getServiceSupabase, getEmpresaUserId } from './supabaseServer.js';
 import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
 import {
   resolveModifierSelections,
-  buildModifierSelectionKey,
   formatModifierAwareCartItem,
   type ZeloMenuModifierSelectionInput,
 } from '../src/domain/zelomenuModifiers.js';
+import { buildModifierSignature } from '../src/domain/zelomenuCartItemKey.js';
+import type {
+  ZeloMenuCartItemSnapshot,
+  ZeloMenuCartSnapshot,
+  ZeloMenuPricingSnapshot,
+  ZeloMenuPaymentSnapshot,
+  ZeloMenuCartRevalidationIssue,
+  ZeloMenuCartRevalidation,
+} from '../src/domain/zelomenuCartSchema.js';
 import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDelivery.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
@@ -92,27 +100,11 @@ export type ZeloMenuCartItemInput = {
   selectedOptions?: ZeloMenuModifierSelectionInput[] | null;
 };
 
-export type ZeloMenuCartItemSnapshot = {
-  productId: number | null;
-  productName: string;
-  baseUnitPrice: number;
-  selectedModifiers: Array<{
-    groupId: string;
-    groupName: string;
-    kind: 'adicional' | 'variacao';
-    selectedOptions: Array<{ optionId: string; optionName: string; priceDelta: number }>;
-  }>;
-  modifierDeltaTotal: number;
-  quantity: number;
-  unitPrice: number;
-  lineTotal: number;
-  notes?: string | null;
-};
+// ZeloMenuCartItemSnapshot, ZeloMenuCartSnapshot, ZeloMenuPricingSnapshot,
+// ZeloMenuPaymentSnapshot, ZeloMenuCartRevalidationIssue, ZeloMenuCartRevalidation
+// are imported from src/domain/zelomenuCartSchema (canonical shared types).
 
-export type ZeloMenuCartSnapshot = {
-  items: ZeloMenuCartItemSnapshot[];
-  observations: string | null;
-};
+export type { ZeloMenuCartItemSnapshot, ZeloMenuCartSnapshot, ZeloMenuCartRevalidationIssue, ZeloMenuCartRevalidation };
 
 export type ZeloMenuCustomerSnapshot = {
   name: string | null;
@@ -128,37 +120,6 @@ export type ZeloMenuFulfillmentSnapshot = {
   deliveryNeighborhood: string | null;
   deliveryFee: number;
   deliveryFeeToConfirm: boolean;
-};
-
-export type ZeloMenuPricingSnapshot = {
-  subtotal: number;
-  deliveryFee: number;
-  total: number;
-};
-
-export type ZeloMenuPaymentSnapshot = {
-  declaredMethod: string | null;
-  pixReceiptRequired: boolean;
-  pixReceiptApproved: boolean;
-};
-
-export type ZeloMenuCartRevalidationIssue = {
-  code: 'product_missing' | 'product_unavailable' | 'stock_insufficient' | 'price_changed' | 'schedule_unavailable' | 'modifier_invalid';
-  message: string;
-  productName?: string;
-  requestedQuantity?: number;
-  availableQuantity?: number | null;
-  previousUnitPrice?: number;
-  currentUnitPrice?: number;
-};
-
-export type ZeloMenuCartRevalidation = {
-  checkedAt: string;
-  ok: boolean;
-  issues: ZeloMenuCartRevalidationIssue[];
-  previewCart: ZeloMenuCartSnapshot | null;
-  previewPricing: ZeloMenuPricingSnapshot | null;
-  previewPayment: ZeloMenuPaymentSnapshot | null;
 };
 
 // ─── DB row types ─────────────────────────────────────────────────────────────
@@ -720,6 +681,15 @@ async function issueFreshCartToken(
 
 // ─── Revalidation ─────────────────────────────────────────────────────────────
 
+function cartIssueFromError(message: string): ZeloMenuCartRevalidationIssue | null {
+  if (message === 'PRODUCT_NOT_FOUND') return { code: 'product_missing', message: 'Um item desse carrinho não existe mais no cardápio.' };
+  if (message === 'PRODUCT_UNAVAILABLE') return { code: 'product_unavailable', message: 'Um item desse carrinho não está disponível no momento.' };
+  if (message === 'PRODUCT_STOCK_EXCEEDED') return { code: 'stock_insufficient', message: 'A quantidade de um item ultrapassa o estoque atual.' };
+  if (message === 'DELIVERY_DISABLED') return { code: 'schedule_unavailable', message: 'A entrega precisa ser revista antes da confirmação.' };
+  if (message.startsWith('MODIFIER_INVALID:')) return { code: 'modifier_invalid', message: message.slice('MODIFIER_INVALID:'.length) };
+  return null;
+}
+
 async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCartRevalidation> {
   const currentInput = toCartItemInputs(session.cart);
   const issues: ZeloMenuCartRevalidationIssue[] = [];
@@ -742,8 +712,8 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
       const resolvedItem = resolved.cart.items.find(
         (item) =>
           (item.productId === storedItem.productId || normalizeComparableText(item.productName) === normalizeComparableText(storedItem.productName))
-          && buildModifierSelectionKey(item.selectedModifiers.map((g) => ({ groupId: g.groupId, optionIds: g.selectedOptions.map((o) => o.optionId) })))
-          === buildModifierSelectionKey(storedItem.selectedModifiers.map((g) => ({ groupId: g.groupId, optionIds: g.selectedOptions.map((o) => o.optionId) }))),
+          && buildModifierSignature(item.selectedModifiers.map((g) => ({ groupId: g.groupId, optionIds: g.selectedOptions.map((o) => o.optionId) })))
+          === buildModifierSignature(storedItem.selectedModifiers.map((g) => ({ groupId: g.groupId, optionIds: g.selectedOptions.map((o) => o.optionId) }))),
       );
       if (!resolvedItem) {
         issues.push({ code: 'product_missing', message: `O item ${formatModifierAwareCartItem(storedItem)} não está mais disponível nesse carrinho.`, productName: storedItem.productName });
@@ -755,16 +725,9 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'UNKNOWN';
-    if (message === 'PRODUCT_NOT_FOUND') {
-      issues.push({ code: 'product_missing', message: 'Um item desse carrinho não existe mais no cardápio.' });
-    } else if (message === 'PRODUCT_UNAVAILABLE') {
-      issues.push({ code: 'product_unavailable', message: 'Um item desse carrinho não está disponível no momento.' });
-    } else if (message === 'PRODUCT_STOCK_EXCEEDED') {
-      issues.push({ code: 'stock_insufficient', message: 'A quantidade de um item ultrapassa o estoque atual.' });
-    } else if (message === 'DELIVERY_DISABLED') {
-      issues.push({ code: 'schedule_unavailable', message: 'A entrega precisa ser revista antes da confirmação.' });
-    } else if (message.startsWith('MODIFIER_INVALID:')) {
-      issues.push({ code: 'modifier_invalid', message: message.slice('MODIFIER_INVALID:'.length) });
+    const issue = cartIssueFromError(message);
+    if (issue) {
+      issues.push(issue);
     } else {
       throw error;
     }

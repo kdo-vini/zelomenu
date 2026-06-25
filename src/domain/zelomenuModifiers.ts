@@ -89,17 +89,7 @@ export function sortModifierGroups(groups: ZeloMenuModifierGroup[]): ZeloMenuMod
     }));
 }
 
-export function buildModifierSelectionKey(selections: ZeloMenuModifierSelectionInput[] | null | undefined): string {
-  if (!selections || selections.length === 0) return 'plain';
-  return selections
-    .map((selection) => ({
-      groupId: selection.groupId,
-      optionIds: [...new Set(selection.optionIds)].sort(),
-    }))
-    .sort((a, b) => a.groupId.localeCompare(b.groupId))
-    .map((selection) => `${selection.groupId}:${selection.optionIds.join(',')}`)
-    .join('|');
-}
+export { buildModifierSignature as buildModifierSelectionKey } from './zelomenuCartItemKey';
 
 export function resolveModifierSelections(
   groups: ZeloMenuModifierGroup[] | null | undefined,

@@ -1,23 +1,15 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { AlertTriangle, Loader2, Minus, Plus, Search, ShoppingBag, X } from 'lucide-react';
 import {
   getPublicStore,
-  startPublicOrder,
   type ZeloMenuCatalogGroup,
   type ZeloMenuCatalogProduct,
   type ZeloMenuPublicStoreResponse,
 } from '../services/zelomenuApi';
-import {
-  resolveModifierSelections,
-  type ZeloMenuModifierSelectionInput,
-} from '../domain/zelomenuModifiers';
-import {
-  loadZeloMenuStoreCartCache,
-  persistZeloMenuStoreCartCache,
-  type ZeloMenuStoreCartItem,
-} from '../domain/zelomenuStoreCartCache';
-import { useToast } from '../contexts/ToastContext';
+import { resolveModifierSelections } from '../domain/zelomenuModifiers';
+import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
+import { useStoreCart } from '../hooks/useStoreCart';
 
 type SelectedItem = ZeloMenuStoreCartItem;
 
@@ -25,14 +17,6 @@ function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-function selectionSignature(selectedOptions: ZeloMenuModifierSelectionInput[]): string {
-  return (
-    selectedOptions
-      .map((g) => `${g.groupId}:${[...g.optionIds].sort().join(',')}`)
-      .sort()
-      .join('|') || 'plain'
-  );
-}
 
 function allGroupProducts(group: ZeloMenuCatalogGroup): ZeloMenuCatalogProduct[] {
   return [...group.produtosDireto, ...group.subcategorias.flatMap((s) => s.produtos)];
@@ -67,24 +51,14 @@ function getProductQty(productId: number, items: Record<string, SelectedItem>): 
 
 export default function ZeloMenuStorePage() {
   const { slug = '' } = useParams();
-  const navigate = useNavigate();
-  const toast = useToast();
 
   const [store, setStore] = useState<ZeloMenuPublicStoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Carrinho restaurado do localStorage (validade 12h) — sobrevive a voltar/recarregar.
-  const restored = useMemo(() => loadZeloMenuStoreCartCache(slug), [slug]);
-  const [items, setItems] = useState<Record<string, SelectedItem>>(restored.items);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [unitPicker, setUnitPicker] = useState<ZeloMenuCatalogProduct | null>(null);
-  const [picker, setPicker] = useState<{
-    product: ZeloMenuCatalogProduct;
-    selections: Record<string, string[]>;
-  } | null>(null);
+
+  const cart = useStoreCart(slug);
 
   const tabsRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -113,11 +87,6 @@ export default function ZeloMenuStorePage() {
       document.title = 'ZeloMenu';
     };
   }, [slug]);
-
-  // ── Persiste o carrinho no localStorage a cada mudança ──────────────────────
-  useEffect(() => {
-    persistZeloMenuStoreCartCache(slug, { items });
-  }, [slug, items]);
 
   // ── Category tracking via IntersectionObserver ──────────────────────────────
   useEffect(() => {
@@ -153,79 +122,6 @@ export default function ZeloMenuStorePage() {
     }
   }, [activeCategory]);
 
-  // ── Cart helpers ────────────────────────────────────────────────────────────
-  function addPlainProduct(product: ZeloMenuCatalogProduct, qty = 1) {
-    const key = `${product.id}::plain`;
-    setItems((prev) => ({
-      ...prev,
-      [key]: {
-        key,
-        productId: product.id,
-        productName: product.name,
-        quantity: qty,
-        selectedOptions: [],
-        unitPrice: product.basePrice,
-      },
-    }));
-  }
-
-  function changeQty(key: string, delta: number) {
-    setItems((prev) => {
-      const existing = prev[key];
-      if (!existing) return prev;
-      const nextQty = existing.quantity + delta;
-      if (nextQty <= 0) {
-        const { [key]: _drop, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [key]: { ...existing, quantity: nextQty } };
-    });
-  }
-
-  function setQty(key: string, qty: number) {
-    setItems((prev) => {
-      const existing = prev[key];
-      if (!existing) return prev;
-      if (qty <= 0) {
-        const { [key]: _drop, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [key]: { ...existing, quantity: qty } };
-    });
-  }
-
-  function onAddProduct(product: ZeloMenuCatalogProduct) {
-    if (product.modifierGroups.length > 0) {
-      setPicker({ product, selections: {} });
-    } else if (product.unitBased) {
-      setUnitPicker(product);
-    } else {
-      addPlainProduct(product);
-    }
-  }
-
-  function confirmPicker() {
-    if (!picker) return;
-    const selectedOptions = Object.keys(picker.selections)
-      .map((groupId) => ({ groupId, optionIds: picker.selections[groupId] ?? [] }))
-      .filter((sel) => sel.optionIds.length > 0);
-    const resolved = resolveModifierSelections(picker.product.modifierGroups, selectedOptions);
-    if (!resolved.ok) return;
-    const key = `${picker.product.id}::${selectionSignature(selectedOptions)}`;
-    setItems((prev) => ({
-      ...prev,
-      [key]: {
-        key,
-        productId: picker.product.id,
-        productName: picker.product.name,
-        quantity: (prev[key]?.quantity ?? 0) + 1,
-        selectedOptions,
-        unitPrice: Number((picker.product.basePrice + resolved.deltaTotal).toFixed(2)),
-      },
-    }));
-    setPicker(null);
-  }
-
   function scrollToCategory(name: string) {
     const el = sectionRefs.current[name];
     if (el) {
@@ -234,30 +130,6 @@ export default function ZeloMenuStorePage() {
     }
     setActiveCategory(name);
   }
-
-  async function continueToCart() {
-    try {
-      setSubmitting(true);
-      const result = await startPublicOrder(slug, {
-        items: lines.map((line) => ({
-          productId: line.productId,
-          productName: line.productName,
-          quantity: line.quantity,
-          selectedOptions: line.selectedOptions,
-        })),
-      });
-      navigate(result.path);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Não consegui iniciar o pedido. Tente de novo.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  // ── Derived state ───────────────────────────────────────────────────────────
-  const lines = useMemo(() => Object.values(items), [items]);
-  const subtotal = useMemo(() => lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0), [lines]);
-  const totalQty = useMemo(() => lines.reduce((s, l) => s + l.quantity, 0), [lines]);
 
   const filteredCatalog = useMemo(() => {
     if (!store) return [];
@@ -443,7 +315,7 @@ export default function ZeloMenuStorePage() {
               <div className="grid grid-cols-2 gap-3">
                 {featured.map((p) => (
                   <div key={`featured-${p.id}`}>
-                    <PhotoCard product={p} items={items} onAdd={() => onAddProduct(p)} onChangeQty={changeQty} onSetQty={setQty} />
+                    <PhotoCard product={p} items={cart.items} onAdd={() => cart.onAddProduct(p)} onChangeQty={cart.changeQty} onSetQty={cart.setQty} />
                   </div>
                 ))}
               </div>
@@ -474,10 +346,10 @@ export default function ZeloMenuStorePage() {
                     <ProductGrid
                       products={group.produtosDireto}
                       hasPhotos={hasPhotos}
-                      items={items}
-                      onAdd={onAddProduct}
-                      onChangeQty={changeQty}
-                      onSetQty={setQty}
+                      items={cart.items}
+                      onAdd={cart.onAddProduct}
+                      onChangeQty={cart.changeQty}
+                      onSetQty={cart.setQty}
                     />
                   ) : null}
 
@@ -490,10 +362,10 @@ export default function ZeloMenuStorePage() {
                         <ProductGrid
                           products={sub.produtos}
                           hasPhotos={hasPhotos}
-                          items={items}
-                          onAdd={onAddProduct}
-                          onChangeQty={changeQty}
-                          onSetQty={setQty}
+                          items={cart.items}
+                          onAdd={cart.onAddProduct}
+                          onChangeQty={cart.changeQty}
+                          onSetQty={cart.setQty}
                         />
                       </div>
                     ) : null,
@@ -506,7 +378,7 @@ export default function ZeloMenuStorePage() {
       </main>
 
       {/* ── Floating cart bar ────────────────────────────────────────────── */}
-      {lines.length > 0 ? (
+      {cart.lines.length > 0 ? (
         <div
           className="fixed inset-x-0 bottom-0 z-30 px-4"
           style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
@@ -514,8 +386,8 @@ export default function ZeloMenuStorePage() {
           <div className="mx-auto max-w-2xl">
             <button
               type="button"
-              onClick={() => void continueToCart()}
-              disabled={submitting}
+              onClick={() => void cart.continueToCart()}
+              disabled={cart.submitting}
               className="flex w-full items-center justify-between rounded-2xl px-5 py-4 text-white shadow-2xl disabled:cursor-wait disabled:opacity-70"
               style={{ background: 'var(--color-brand)' }}
             >
@@ -524,40 +396,40 @@ export default function ZeloMenuStorePage() {
                   className="flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[11px] font-bold"
                   style={{ background: 'rgba(255,255,255,0.22)' }}
                 >
-                  {totalQty}
+                  {cart.totalQty}
                 </span>
                 <span className="flex items-center gap-2 text-[14px] font-semibold">
-                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
-                  {submitting ? 'Abrindo pedido…' : 'Continuar pedido'}
+                  {cart.submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
+                  {cart.submitting ? 'Abrindo pedido…' : 'Continuar pedido'}
                 </span>
               </div>
-              <span className="text-[15px] font-bold">{toBRL(subtotal)}</span>
+              <span className="text-[15px] font-bold">{toBRL(cart.subtotal)}</span>
             </button>
           </div>
         </div>
       ) : null}
 
       {/* ── Unit quantity modal ──────────────────────────────────────────── */}
-      {unitPicker ? (
+      {cart.unitPicker ? (
         <UnitPickerModal
-          product={unitPicker}
-          currentQty={getProductQty(unitPicker.id, items)}
-          onClose={() => setUnitPicker(null)}
+          product={cart.unitPicker}
+          currentQty={getProductQty(cart.unitPicker.id, cart.items)}
+          onClose={() => cart.setUnitPicker(null)}
           onConfirm={(qty) => {
-            addPlainProduct(unitPicker, qty);
-            setUnitPicker(null);
+            cart.addPlainProduct(cart.unitPicker!, qty);
+            cart.setUnitPicker(null);
           }}
         />
       ) : null}
 
       {/* ── Modifier picker modal ─────────────────────────────────────────── */}
-      {picker ? (
+      {cart.picker ? (
         <ModifierModal
-          product={picker.product}
-          selections={picker.selections}
-          onClose={() => setPicker(null)}
+          product={cart.picker.product}
+          selections={cart.picker.selections}
+          onClose={() => cart.setPicker(null)}
           onToggle={(groupId, optionId) => {
-            setPicker((cur) => {
+            cart.setPicker((cur) => {
               if (!cur) return cur;
               const group = cur.product.modifierGroups.find((g) => g.id === groupId);
               if (!group) return cur;
@@ -570,7 +442,7 @@ export default function ZeloMenuStorePage() {
               return { ...cur, selections: { ...cur.selections, [groupId]: next } };
             });
           }}
-          onConfirm={confirmPicker}
+          onConfirm={cart.confirmPicker}
         />
       ) : null}
     </div>

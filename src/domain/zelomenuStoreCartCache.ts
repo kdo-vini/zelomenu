@@ -1,4 +1,5 @@
 import type { ZeloMenuModifierSelectionInput } from './zelomenuModifiers';
+import { buildCartItemKey } from './zelomenuCartItemKey';
 
 const CART_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -55,14 +56,6 @@ export function persistZeloMenuStoreCartCache(
   }
 }
 
-function selectionSignature(selectedOptions: ZeloMenuModifierSelectionInput[]): string {
-  return (
-    selectedOptions
-      .map((group) => `${group.groupId}:${[...group.optionIds].sort().join(',')}`)
-      .sort()
-      .join('|') || 'plain'
-  );
-}
 
 export function syncZeloMenuStoreCartCache(input: {
   slug: string | null;
@@ -91,7 +84,7 @@ export function syncZeloMenuStoreCartCache(input: {
         groupId: group.groupId,
         optionIds: group.selectedOptions.map((option) => option.optionId),
       }));
-      const key = `${item.productId}::${selectionSignature(selectedOptions)}`;
+      const key = buildCartItemKey(item.productId, selectedOptions);
       return [[key, {
         key,
         productId: item.productId,
