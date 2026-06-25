@@ -35,9 +35,9 @@ function PublicationPage() {
           <Settings className="h-5 w-5 text-[var(--color-brand-deep)]" />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-[var(--color-ink)]">Publicacao</h1>
+          <h1 className="text-xl font-bold text-[var(--color-ink)]">Publicação</h1>
           <p className="text-sm text-[var(--color-ink-muted)]">
-            Configure o link publico e as informacoes da sua loja no cardapio digital.
+            Configure o link público e as informações da sua loja no cardápio digital.
           </p>
         </div>
       </header>

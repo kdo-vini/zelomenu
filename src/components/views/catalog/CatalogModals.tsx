@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, X } from 'lucide-react';
+import { motion, useMotionValue, useTransform } from 'motion/react';
 import { ConfirmModal } from '../../ConfirmModal';
 import { Modal, useModalTitleId } from '../../Modal';
 import { ImageCropField } from '../../zelomenu/ImageCropField';
@@ -504,7 +505,13 @@ export function ProductPublicationModal({
   const hydratedProductRef = useRef<number | null>(null);
   const queueRef = useRef<Promise<unknown>>(Promise.resolve());
   const saveTokenRef = useRef(0);
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const swipeRef = useRef({ startX: 0, startY: 0, dragging: false, suppressed: false });
+
+  // Tinder card animation state
+  const cardX = useMotionValue(0);
+  const cardRotate = useTransform(cardX, [-300, 0, 300], [-6, 0, 6]);
+  const cardScale = useTransform(cardX, [-300, 0, 300], [0.94, 1, 0.94]);
+  const cardOpacity = useTransform(cardX, [-250, 0, 250], [0.85, 1, 0.85]);
 
   useEffect(() => {
     if (!open) {
@@ -523,7 +530,8 @@ export function ProductPublicationModal({
     setGroupsDirty(false);
     setSaveStatus('idle');
     setErr(null);
-  }, [open, product, initial, modifierGroups]);
+    cardX.set(0);
+  }, [open, product, initial, modifierGroups, cardX]);
 
   const enqueueSave = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     const token = ++saveTokenRef.current;
@@ -619,26 +627,57 @@ export function ProductPublicationModal({
     >
       <div
         className="space-y-5"
-        onTouchStart={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.closest('input, textarea, select, button, label, [role="slider"]')) {
-            touchStartRef.current = null;
+        onPointerDown={(event) => {
+          swipeRef.current.startX = event.clientX;
+          swipeRef.current.startY = event.clientY;
+          swipeRef.current.dragging = true;
+          swipeRef.current.suppressed = false;
+        }}
+        onPointerMove={(event) => {
+          if (!swipeRef.current.dragging) return;
+          if (!swipeRef.current.suppressed) {
+            const target = event.target as HTMLElement;
+            const tag = target.tagName.toLowerCase();
+            if (['input', 'textarea', 'select', 'button', 'label'].includes(tag) || target.closest('label, button, [role="slider"]')) {
+              swipeRef.current.suppressed = true;
+              swipeRef.current.dragging = false;
+              cardX.set(0);
+              return;
+            }
+            // only start after 10px to avoid accidental triggers
+            if (Math.abs(event.clientX - swipeRef.current.startX) > 10) {
+              swipeRef.current.suppressed = true;
+            }
+          }
+          const deltaX = event.clientX - swipeRef.current.startX;
+          const deltaY = event.clientY - swipeRef.current.startY;
+          if (Math.abs(deltaX) < Math.abs(deltaY) * 1.2) {
+            cardX.set(0);
             return;
           }
-          const touch = event.touches[0];
-          touchStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+          cardX.set(deltaX);
         }}
-        onTouchEnd={(event) => {
-          const start = touchStartRef.current;
-          const touch = event.changedTouches[0];
-          touchStartRef.current = null;
-          if (!start || !touch) return;
-          const deltaX = touch.clientX - start.x;
-          const deltaY = touch.clientY - start.y;
-          if (Math.abs(deltaX) < 70 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
-          void navigateTo(deltaX > 0 ? previousProduct : nextProduct);
+        onPointerUp={(event) => {
+          swipeRef.current.dragging = false;
+          const deltaX = event.clientX - swipeRef.current.startX;
+          const velocity = Math.abs(event.movementX);
+          if (Math.abs(deltaX) > 70 || velocity > 400) {
+            void navigateTo(deltaX > 0 ? previousProduct : nextProduct);
+          } else {
+            cardX.set(0);
+          }
+        }}
+        onPointerLeave={() => {
+          if (swipeRef.current.dragging) {
+            swipeRef.current.dragging = false;
+            cardX.set(0);
+          }
         }}
       >
+        <motion.div
+          style={{ x: cardX, rotate: cardRotate, scale: cardScale, opacity: cardOpacity }}
+          transition={{ type: 'spring', stiffness: 300, damping: 30, mass: 0.8 }}
+        >
         <div className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-surface-muted)] p-2">
           <button
             type="button"
@@ -829,6 +868,7 @@ export function ProductPublicationModal({
             Concluir
           </button>
         </div>
+      </motion.div>
       </div>
     </ModalShell>
   );
