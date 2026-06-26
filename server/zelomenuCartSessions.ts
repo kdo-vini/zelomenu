@@ -828,7 +828,7 @@ async function decrementAcceptedOrderStockBestEffort(empresaId: string, items: Z
 
 // ─── Slug resolution ──────────────────────────────────────────────────────────
 
-async function resolveEmpresaIdBySlug(slug: string): Promise<string | null> {
+export async function resolveEmpresaIdBySlug(slug: string): Promise<string | null> {
   const normalized = normalizeZeloMenuSlug(slug);
   if (!normalized) return null;
   const { data, error } = await getServiceSupabase()
