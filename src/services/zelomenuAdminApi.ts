@@ -126,3 +126,22 @@ export async function setZeloMenuSlug(slug: string): Promise<{ slug: string }> {
   });
   return parseResponse<{ slug: string }>(response);
 }
+
+// ─── Mesas ────────────────────────────────────────────────────────────────────
+
+export type MesaRow = {
+  id: string;
+  numero: string;
+  capacidade: number | null;
+  status: string;
+  ativa: boolean;
+};
+
+export async function listMesasAdmin(): Promise<MesaRow[]> {
+  const response = await fetch('/api/admin/zelomenu/mesas', {
+    headers: await authHeader(),
+    cache: 'no-store',
+  });
+  const body = await parseResponse<{ mesas: MesaRow[] }>(response);
+  return body.mesas;
+}
