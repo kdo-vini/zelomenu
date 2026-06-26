@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createHash, randomBytes } from 'node:crypto';
 import { getConfig, loadCatalogFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { getServiceSupabase, getEmpresaUserId } from './supabaseServer.js';
+import { getMesaContext } from './zelomenuMesaHandler.js';
 import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
 import {
   resolveModifierSelections,
@@ -956,9 +957,21 @@ export async function openPublicOrderCartSession(input: {
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
   observations?: string | null;
+  context?: 'public_order' | 'table_order';
+  mesa_id?: string;
+  comanda_id?: string;
 }): Promise<{ sessionId: string; orderingId: string; revision: number; token: string; path: string } | null> {
   const empresaId = await resolveEmpresaIdBySlug(input.slug);
   if (!empresaId) return null;
+
+  // If table_order context, validate comanda is still open
+  if (input.context === 'table_order') {
+    if (!input.mesa_id || !input.comanda_id) throw new Error('MISSING_TABLE_CONTEXT');
+
+    const mesaResult = await getMesaContext(input.mesa_id, empresaId);
+    if (!mesaResult.ok) throw new Error('COMANDA_CLOSED');
+    if (mesaResult.comanda_id !== input.comanda_id) throw new Error('TABLE_TAKEN_BY_OTHER_GROUP');
+  }
 
   const items = normalizeIncomingItems(input.items ?? []);
   if (items.length === 0) throw new Error('EMPTY_CART');
@@ -974,13 +987,15 @@ export async function openPublicOrderCartSession(input: {
     observations: input.observations,
   });
 
+  const sessionContext: ZeloMenuCartContext = input.context ?? 'public_order';
+  const normalizedSlug = normalizeZeloMenuSlug(input.slug);
   const sourceRef = `public:${randomUUID()}`;
   const now = new Date().toISOString();
   const { data, error } = await getServiceSupabase()
     .from('zelomenu_cart_sessions')
     .insert({
       empresa_id: empresaId,
-      context: 'public_order',
+      context: sessionContext,
       state: 'cart_open',
       source_ref: sourceRef,
       customer_snapshot: customer,
@@ -988,7 +1003,11 @@ export async function openPublicOrderCartSession(input: {
       fulfillment_snapshot: resolved.fulfillment,
       pricing_snapshot: resolved.pricing,
       payment_snapshot: resolved.payment,
-      metadata: { source: 'public_link', slug: normalizeZeloMenuSlug(input.slug) },
+      metadata: {
+        source: input.context === 'table_order' ? 'mesa' : 'public_link',
+        slug: normalizedSlug,
+        ...(input.context === 'table_order' ? { mesa_id: input.mesa_id, comanda_id: input.comanda_id } : {}),
+      },
       revision: 1,
       created_at: now,
       updated_at: now,

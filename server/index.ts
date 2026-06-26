@@ -45,6 +45,9 @@ app.post('/api/public/zelomenu/store/:slug/cart', async (req, res) => {
       fulfillment: req.body.fulfillment ?? null,
       paymentMethod: req.body.paymentMethod ?? null,
       observations: req.body.observations ?? null,
+      context: req.body.context ?? 'public_order',
+      mesa_id: req.body.mesa_id ?? undefined,
+      comanda_id: req.body.comanda_id ?? undefined,
     });
     if (!result) return res.status(404).json({ error: 'STORE_NOT_FOUND' });
     res.json(result);
@@ -57,6 +60,9 @@ app.post('/api/public/zelomenu/store/:slug/cart', async (req, res) => {
     if (message === 'PRODUCT_STOCK_EXCEEDED') return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
+    if (message === 'MISSING_TABLE_CONTEXT') return res.status(400).json({ error: 'MISSING_TABLE_CONTEXT' });
+    if (message === 'COMANDA_CLOSED') return res.status(409).json({ error: 'COMANDA_CLOSED' });
+    if (message === 'TABLE_TAKEN_BY_OTHER_GROUP') return res.status(409).json({ error: 'TABLE_TAKEN_BY_OTHER_GROUP' });
     res.status(500).json({ error: 'INTERNAL_ERROR' });
   }
 });
