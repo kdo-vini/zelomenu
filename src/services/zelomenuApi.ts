@@ -156,6 +156,20 @@ export type ZeloMenuPublicStoreResponse = {
   catalog: ZeloMenuCatalogGroup[];
 };
 
+// ─── Mesa types ────────────────────────────────────────────────────────────────
+
+export interface MesaContextResponse {
+  comanda_id?: string;
+  comanda_status?: string;
+  mesa_numero?: string;
+  error?: 'SEM_COMANDA' | 'MESA_NOT_FOUND';
+}
+
+export interface TableOrderContext {
+  mesa_id: string;
+  comanda_id: string;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -164,6 +178,16 @@ async function parseResponse<T>(response: Response): Promise<T> {
     throw new Error((body as { error?: string; message?: string }).error || (body as { error?: string; message?: string }).message || `HTTP ${response.status}`);
   }
   return body as T;
+}
+
+export async function getMesaContext(
+  slug: string,
+  mesaId: string,
+): Promise<MesaContextResponse> {
+  const response = await fetch(
+    `/api/public/zelomenu/mesa/${encodeURIComponent(mesaId)}?slug=${encodeURIComponent(slug)}`,
+  );
+  return parseResponse<MesaContextResponse>(response);
 }
 
 // ─── Endpoints ─────────────────────────────────────────────────────────────────
@@ -207,12 +231,22 @@ export async function startPublicOrder(
     customerName?: string | null;
     customerPhone?: string | null;
     items: ZeloMenuUpdateCartPayload['items'];
+    tableOrderContext?: TableOrderContext;
   },
 ): Promise<{ token: string; path: string; orderingId: string }> {
   const response = await fetch(`/api/public/zelomenu/store/${encodeURIComponent(slug)}/cart`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...payload,
+      ...(payload.tableOrderContext
+        ? {
+            context: 'table_order',
+            mesa_id: payload.tableOrderContext.mesa_id,
+            comanda_id: payload.tableOrderContext.comanda_id,
+          }
+        : {}),
+    }),
   });
   return parseResponse<{ token: string; path: string; orderingId: string }>(response);
 }
