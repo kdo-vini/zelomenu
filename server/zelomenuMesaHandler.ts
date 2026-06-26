@@ -18,16 +18,17 @@ export async function getMesaContext(
 ): Promise<MesaContextResult> {
   const db = getServiceSupabase()
 
-  const { data: mesa } = await db
+  const { data: mesa, error: mesaError } = await db
     .from('mesas')
     .select('id, numero, ativa')
     .eq('id', mesaId)
     .eq('id_usuario', empresaId)
     .maybeSingle()
 
-  if (!mesa) return { ok: false, error: 'MESA_NOT_FOUND' }
+  if (mesaError) throw mesaError
+  if (!mesa || !mesa.ativa) return { ok: false, error: 'MESA_NOT_FOUND' }
 
-  const { data: comanda } = await db
+  const { data: comanda, error: comandaError } = await db
     .from('comandas')
     .select('id, status')
     .eq('id_mesa', mesaId)
@@ -36,6 +37,8 @@ export async function getMesaContext(
     .order('aberta_em', { ascending: false })
     .limit(1)
     .maybeSingle()
+
+  if (comandaError) throw comandaError
 
   if (!comanda) return { ok: false, error: 'SEM_COMANDA' }
 
@@ -50,12 +53,13 @@ export async function getMesaContext(
 export async function listMesasForAdmin(empresaId: string): Promise<MesaRow[]> {
   const db = getServiceSupabase()
 
-  const { data } = await db
+  const { data, error } = await db
     .from('mesas')
     .select('id, numero, capacidade, status, ativa')
     .eq('id_usuario', empresaId)
     .eq('ativa', true)
     .order('numero', { ascending: true })
 
+  if (error) throw error
   return (data as MesaRow[] | null) ?? []
 }
