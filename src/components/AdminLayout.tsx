@@ -1,10 +1,10 @@
 import { type ReactNode, useState } from 'react';
-import { Menu, ShoppingBag, Globe2, LogOut, X } from 'lucide-react';
+import { Menu, ShoppingBag, Globe2, LayoutGrid, LogOut, X } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 
 // ─── Navigation definition ─────────────────────────────────────────────────
 
-export type NavSection = 'catalog' | 'publication';
+export type NavSection = 'catalog' | 'publication' | 'mesas';
 
 interface NavItem {
   id: NavSection;
@@ -15,6 +15,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'catalog', label: 'Cardápio', icon: ShoppingBag },
   { id: 'publication', label: 'Publicação', icon: Globe2 },
+  { id: 'mesas', label: 'Mesas', icon: LayoutGrid },
 ];
 
 // ─── Props ─────────────────────────────────────────────────────────────────
@@ -24,12 +25,17 @@ interface AdminLayoutProps {
   onNavigate: (section: NavSection) => void;
   catalogContent: ReactNode;
   publicationContent: ReactNode;
+  mesasContent?: ReactNode;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent }: AdminLayoutProps) {
+export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent, mesasContent }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => item.id !== 'mesas' || mesasContent !== undefined,
+  );
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -50,7 +56,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-4">
-          {NAV_ITEMS.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
             return (
@@ -109,7 +115,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-4">
-          {NAV_ITEMS.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
             return (
@@ -161,7 +167,9 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto">
-          {activeSection === 'catalog' ? catalogContent : publicationContent}
+          {activeSection === 'catalog' && catalogContent}
+          {activeSection === 'publication' && publicationContent}
+          {activeSection === 'mesas' && mesasContent}
         </main>
 
         {/* ── Mobile bottom nav ── */}
@@ -169,7 +177,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
           className="flex h-16 shrink-0 items-center border-t border-[var(--color-line)] bg-[var(--color-surface)] px-2 md:hidden"
           aria-label="Navegacao principal"
         >
-          {NAV_ITEMS.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
             return (

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
@@ -7,8 +7,10 @@ import { LoginForm } from '../components/LoginForm';
 import { NeutralState } from '../components/NeutralState';
 import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
 import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
+import { MesasAdminSection } from '../components/zelomenu/MesasAdminSection';
 import { AdminLayout, type NavSection } from '../components/AdminLayout';
 import { OnboardingWizard, ONBOARDING_KEY } from '../components/OnboardingWizard';
+import { getZeloMenuSlug } from '../services/zelomenuAdminApi';
 import { Settings } from 'lucide-react';
 
 // ─── Upsell ────────────────────────────────────────────────────────────────
@@ -71,6 +73,12 @@ export function AdminPage() {
   const catalogEnabled = !!session && entitlement.hasAccess;
   const catalog = useCatalog(session, { enabled: catalogEnabled });
 
+  const [slug, setSlug] = useState<string | null>(null);
+  useEffect(() => {
+    if (!session || !entitlement.hasAccess) return;
+    getZeloMenuSlug().then(({ slug: s }) => setSlug(s)).catch(() => undefined);
+  }, [session, entitlement.hasAccess]);
+
   // Loading
   if (authLoading || (session && entitlement.loading)) {
     return <NeutralState title="Carregando..." description="Verificando seu acesso ao ZeloMenu." />;
@@ -118,12 +126,16 @@ export function AdminPage() {
     />
   );
 
+  const showMesas =
+    entitlement.capabilities.mesas && entitlement.capabilities.menu_publication;
+
   return (
     <AdminLayout
       activeSection={activeSection}
       onNavigate={handleNavigate}
       catalogContent={catalogContent}
       publicationContent={<PublicationPage />}
+      mesasContent={showMesas && slug ? <MesasAdminSection slug={slug} /> : undefined}
     />
   );
 }
