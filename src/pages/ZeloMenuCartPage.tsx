@@ -367,6 +367,7 @@ export default function ZeloMenuCartPage() {
   const isStale = payload?.link.tokenStatus === 'stale';
   const isOpen = payload?.session.state === 'cart_open';
   const isPublicOrder = payload?.session.context === 'public_order';
+  const isTableOrder = payload?.session.context === 'table_order';
   const isConfirmed = payload?.session.state === 'confirmed_waiting_review' || payload?.session.state === 'confirmed_waiting_payment';
   const isWaitingPayment = payload?.session.state === 'confirmed_waiting_payment';
   const paymentSelection = draft?.paymentMethod && isKnownPaymentMethod(draft.paymentMethod)
@@ -473,12 +474,14 @@ export default function ZeloMenuCartPage() {
 
   const confirmCart = async () => {
     if (!draft || !payload || !isOpen || isStale) return;
-    const validationError = validateDetails();
-    if (validationError) {
-      setShowErrors(true);
-      setStep(1);
-      toast.error(validationError);
-      return;
+    if (payload.session.context !== 'table_order') {
+      const validationError = validateDetails();
+      if (validationError) {
+        setShowErrors(true);
+        setStep(1);
+        toast.error(validationError);
+        return;
+      }
     }
     try {
       setConfirming(true);
@@ -511,7 +514,9 @@ export default function ZeloMenuCartPage() {
         toast.success(
           next.confirmation.alreadyConfirmed
             ? 'Este pedido já estava confirmado.'
-            : 'Pedido confirmado! A loja recebeu o pedido.',
+            : payload.session.context === 'table_order'
+              ? 'Pedido enviado! Aguarde o garçom.'
+              : 'Pedido confirmado! A loja recebeu o pedido.',
         );
       } else if (finalIssues.length > 0) {
         // Toast específico já foi exibido acima.
@@ -592,6 +597,10 @@ export default function ZeloMenuCartPage() {
   };
 
   const goNext = () => {
+    if (isTableOrder) {
+      void confirmCart();
+      return;
+    }
     if (step === 1) {
       const validationError = validateDetails();
       if (validationError) {
@@ -680,26 +689,26 @@ export default function ZeloMenuCartPage() {
   const stepLabel1 = isDelivery ? 'Entrega' : 'Retirada';
   const itemCount = estimated.items.reduce((sum, item) => sum + item.quantity, 0);
 
-  const footValue = step === 0
+  const footValue = (isTableOrder || step === 0)
     ? toBRL(estimated.subtotal)
     : feeToConfirm
       ? `${toBRL(estimated.subtotal)} + entrega`
       : toBRL(estimated.total);
 
   let footSub = '';
-  if (step > 0) {
+  if (!isTableOrder && step > 0) {
     if (!isDelivery) footSub = 'Retirada · sem taxa';
     else if (feeToConfirm) footSub = '+ entrega a confirmar';
     else if (fee === 0) footSub = 'Entrega grátis';
     else footSub = `inclui ${toBRL(fee)} de entrega`;
   }
 
-  const ctaLabel = step < 2 ? 'Continuar' : confirming ? 'Confirmando…' : 'Confirmar pedido';
-  const ctaDisabled = step === 0
-    ? draft.items.length === 0
-    : step === 2
-      ? (!canConfirm || confirming)
-      : false;
+  const ctaLabel = isTableOrder
+    ? (confirming ? 'Enviando…' : 'Enviar pedido')
+    : step < 2 ? 'Continuar' : confirming ? 'Confirmando…' : 'Confirmar pedido';
+  const ctaDisabled = isTableOrder
+    ? (draft.items.length === 0 || confirming)
+    : step === 0 ? draft.items.length === 0 : step === 2 ? (!canConfirm || confirming) : false;
 
   const prettyDate = effectivePickupDate ? effectivePickupDate.split('-').reverse().join('/') : '';
   const whenLabel = scheduleMode === 'asap'
@@ -727,11 +736,15 @@ export default function ZeloMenuCartPage() {
               <div className="mb-3 flex h-[78px] w-[78px] items-center justify-center rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand)]">
                 <CheckCircle2 className="h-10 w-10" strokeWidth={1.8} />
               </div>
-              <h2 className="text-[20px] font-semibold tracking-tight">Pedido confirmado!</h2>
+              <h2 className="text-[20px] font-semibold tracking-tight">
+                {isTableOrder ? 'Pedido enviado!' : 'Pedido confirmado!'}
+              </h2>
               <p className="mt-1.5 max-w-[280px] text-[13.5px] leading-relaxed text-[var(--color-ink-muted)]">
-                {isWaitingPayment
-                  ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
-                  : 'A loja recebeu seu pedido e vai entrar em contato para acertar os detalhes.'}
+                {isTableOrder
+                  ? 'Seu pedido já está na fila da cozinha. Aguarde o garçom.'
+                  : isWaitingPayment
+                    ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
+                    : 'A loja recebeu seu pedido e vai entrar em contato para acertar os detalhes.'}
               </p>
               <div className="mt-5 w-full max-w-[300px] rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 text-left">
                 <div className="flex items-center justify-between">
@@ -740,11 +753,11 @@ export default function ZeloMenuCartPage() {
                     {feeToConfirm ? `${toBRL(estimated.subtotal)} + entrega` : toBRL(estimated.total)}
                   </span>
                 </div>
-                <p className="mt-1.5 text-[12px] text-[var(--color-ink-muted)]">{summaryMeta}</p>
+                {!isTableOrder && <p className="mt-1.5 text-[12px] text-[var(--color-ink-muted)]">{summaryMeta}</p>}
               </div>
               <span className="mt-5 inline-flex items-center gap-2 rounded-full bg-[var(--color-brand-soft)] px-3.5 py-2 text-[12px] font-semibold text-[var(--color-brand-deep)]">
                 <MessageCircle className="h-3.5 w-3.5" strokeWidth={2} />
-                Aguarde o contato da loja
+                {isTableOrder ? 'Aguarde o garçom' : 'Aguarde o contato da loja'}
               </span>
             </div>
           </div>
@@ -759,10 +772,12 @@ export default function ZeloMenuCartPage() {
                     : <ChevronLeft className="h-5 w-5" strokeWidth={1.9} />}
                 </button>
                 <div className="min-w-0 flex-1 text-center">
-                  <p className="truncate text-[15px] font-semibold leading-tight">{STEP_TITLES[step]}</p>
-                  {payload.business.name ? (
-                    <p className="truncate text-[11.5px] text-[var(--color-ink-muted)]">{payload.business.name}</p>
-                  ) : null}
+                  <p className="truncate text-[15px] font-semibold leading-tight">
+                    {isTableOrder ? 'Meu pedido' : STEP_TITLES[step]}
+                  </p>
+                  <p className="truncate text-[11.5px] text-[var(--color-ink-muted)]">
+                    {payload.business.name}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -776,8 +791,8 @@ export default function ZeloMenuCartPage() {
                 </button>
               </div>
 
-              {/* stepper */}
-              <div className="mt-3 flex gap-2">
+              {/* stepper — oculto no fluxo de mesa */}
+              {!isTableOrder && <div className="mt-3 flex gap-2">
                 {[
                   { n: '1', label: 'Sacola' },
                   { n: '2', label: stepLabel1 },
@@ -804,14 +819,14 @@ export default function ZeloMenuCartPage() {
                       </div>
                       <div className="h-[3px] overflow-hidden rounded-full bg-[var(--color-line)]">
                         <div
-                          className="h-full rounded-full bg-[var(--color-brand)] transition-[width] duration-[420ms] ease-out motion-reduce:transition-none"
-                          style={{ width: status === 'todo' ? '0%' : '100%' }}
+                          className="h-full rounded-full bg-[var(--color-brand)] origin-left transition-transform duration-[420ms] ease-out motion-reduce:transition-none"
+                          style={{ transform: `scaleX(${status === 'todo' ? 0 : 1})` }}
                         />
                       </div>
                     </div>
                   );
                 })}
-              </div>
+              </div>}
             </div>
 
             {/* link desatualizado */}
@@ -830,7 +845,7 @@ export default function ZeloMenuCartPage() {
             <div className="relative flex-1 overflow-hidden">
               <div
                 className="flex h-full w-[300%] transition-transform duration-[440ms] ease-[cubic-bezier(.22,.61,.36,1)] motion-reduce:transition-none"
-                style={{ transform: `translateX(-${step * (100 / 3)}%)` }}
+                style={{ transform: isTableOrder ? 'translateX(0)' : `translateX(-${step * (100 / 3)}%)` }}
               >
                 {/* PASSO 1 — sacola */}
                 <section inert={step !== 0} className="h-full w-1/3 overflow-y-auto">
@@ -908,6 +923,19 @@ export default function ZeloMenuCartPage() {
                           );
                         })}
                       </div>
+                    )}
+                    {isTableOrder && (
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Observações (opcional)</span>
+                        <textarea
+                          value={draft.observations}
+                          onChange={(event) => updateField('observations', event.target.value)}
+                          readOnly={!isOpen}
+                          placeholder="Ex: sem cebola, ponto da carne bem passado…"
+                          rows={3}
+                          className="w-full resize-none rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2.5 text-[14px] text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)]"
+                        />
+                      </label>
                     )}
                   </div>
                 </section>
@@ -1176,7 +1204,7 @@ export default function ZeloMenuCartPage() {
               </div>
               <div className="flex items-center gap-3">
                 <div className="flex flex-col leading-tight">
-                  <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">{step === 0 ? 'Subtotal' : 'Total'}</span>
+                  <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">{isTableOrder || step === 0 ? 'Subtotal' : 'Total'}</span>
                   <span className="text-[19px] font-bold tabular-nums tracking-tight">{footValue}</span>
                   {footSub ? <span className="text-[10.5px] text-[var(--color-ink-faint)]">{footSub}</span> : null}
                 </div>
@@ -1184,7 +1212,7 @@ export default function ZeloMenuCartPage() {
                   type="button"
                   onClick={goNext}
                   disabled={ctaDisabled}
-                  className={`flex h-[50px] flex-1 items-center justify-center gap-2 rounded-2xl text-[14.5px] font-semibold text-white transition-transform active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 ${step === 2 ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-ink)]'}`}
+                  className={`flex h-[50px] flex-1 items-center justify-center gap-2 rounded-2xl text-[14.5px] font-semibold text-white transition-transform active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 ${isTableOrder || step === 2 ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-ink)]'}`}
                 >
                   {confirming && step === 2 ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
                   {ctaLabel}
