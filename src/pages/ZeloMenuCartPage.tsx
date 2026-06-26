@@ -553,6 +553,11 @@ export default function ZeloMenuCartPage() {
     });
   };
 
+  const clearItems = () => {
+    setDraft((current) => current ? { ...current, items: [] } : current);
+    setQuantityDrafts({});
+  };
+
   const editItemQuantity = (itemKey: string, rawValue: string) => {
     if (!isOpen) return;
     const digits = rawValue.replace(/\D/g, '').slice(0, 4);
@@ -830,9 +835,22 @@ export default function ZeloMenuCartPage() {
                 {/* PASSO 1 — sacola */}
                 <section inert={step !== 0} className="h-full w-1/3 overflow-y-auto">
                   <div className="flex flex-col gap-3.5 p-4">
-                    <div className="flex items-center gap-2 text-[13px] font-semibold">
-                      <ShoppingCart className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
-                      Itens do pedido
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-[13px] font-semibold">
+                        <ShoppingCart className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+                        Itens do pedido
+                      </div>
+                      {draft.items.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={clearItems}
+                          className="flex items-center gap-1 text-[12px] text-[var(--color-ink-muted)] transition-colors hover:text-[var(--color-alert)] active:scale-95"
+                          aria-label="Limpar carrinho"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+                          Limpar
+                        </button>
+                      )}
                     </div>
                     {draft.items.length === 0 ? (
                       <div className="rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface-muted)] px-4 py-7 text-center">
