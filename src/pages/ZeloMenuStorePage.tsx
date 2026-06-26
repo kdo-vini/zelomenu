@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { AlertTriangle, Loader2, Minus, Plus, Search, ShoppingBag, X } from 'lucide-react';
 import {
   getPublicStore,
+  type TableOrderContext,
   type ZeloMenuCatalogGroup,
   type ZeloMenuCatalogProduct,
   type ZeloMenuPublicStoreResponse,
@@ -12,6 +13,13 @@ import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
 import { useStoreCart } from '../hooks/useStoreCart';
 
 type SelectedItem = ZeloMenuStoreCartItem;
+
+interface ZeloMenuStorePageProps {
+  slug?: string;
+  mesaBanner?: string;
+  mesaUnavailableMessage?: string;
+  tableOrderContext?: TableOrderContext;
+}
 
 function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -49,8 +57,14 @@ function getProductQty(productId: number, items: Record<string, SelectedItem>): 
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-export default function ZeloMenuStorePage() {
-  const { slug = '' } = useParams();
+export function ZeloMenuStorePage({
+  slug: slugProp,
+  mesaBanner,
+  mesaUnavailableMessage,
+  tableOrderContext,
+}: ZeloMenuStorePageProps = {}) {
+  const { slug: slugParam = '' } = useParams();
+  const slug = slugProp ?? slugParam;
 
   const [store, setStore] = useState<ZeloMenuPublicStoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,7 +72,7 @@ export default function ZeloMenuStorePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
 
-  const cart = useStoreCart(slug);
+  const cart = useStoreCart(slug, tableOrderContext);
 
   const tabsRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -188,6 +202,13 @@ export default function ZeloMenuStorePage() {
   return (
     <div className="min-h-screen bg-[var(--color-canvas)]" style={{ paddingBottom: 'max(7rem, calc(7rem + env(safe-area-inset-bottom)))' }}>
 
+      {/* ── Mesa banner ────────────────────────────────────────────────────── */}
+      {mesaBanner ? (
+        <div className="sticky top-0 z-30 bg-gray-900 px-4 py-2 text-center text-sm font-semibold text-white">
+          {mesaBanner} — Peça pelo app
+        </div>
+      ) : null}
+
       {/* ── Sticky header ──────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 border-b border-[var(--color-line)] bg-[var(--color-surface)]">
         <div className="mx-auto max-w-2xl">
@@ -280,6 +301,13 @@ export default function ZeloMenuStorePage() {
 
       {/* ── Catalog body ──────────────────────────────────────────────────── */}
       <main className="mx-auto max-w-2xl px-4 py-5">
+
+        {/* Mesa unavailability notice */}
+        {mesaUnavailableMessage ? (
+          <div className="mb-5 rounded-xl bg-amber-50 p-4 text-center text-sm text-amber-800">
+            {mesaUnavailableMessage}
+          </div>
+        ) : null}
 
         {outsideBusinessHours ? (
           <section className="mb-5 rounded-2xl border border-[var(--color-warn)] bg-[var(--color-warn-soft)] px-4 py-3">
@@ -387,8 +415,8 @@ export default function ZeloMenuStorePage() {
             <button
               type="button"
               onClick={() => void cart.continueToCart()}
-              disabled={cart.submitting}
-              className="flex w-full items-center justify-between rounded-2xl px-5 py-4 text-white shadow-2xl disabled:cursor-wait disabled:opacity-70"
+              disabled={cart.submitting || !!mesaUnavailableMessage}
+              className="flex w-full items-center justify-between rounded-2xl px-5 py-4 text-white shadow-2xl disabled:cursor-not-allowed disabled:opacity-50"
               style={{ background: 'var(--color-brand)' }}
             >
               <div className="flex items-center gap-3">
@@ -448,6 +476,8 @@ export default function ZeloMenuStorePage() {
     </div>
   );
 }
+
+export default ZeloMenuStorePage;
 
 // ─── ProductGrid ──────────────────────────────────────────────────────────────
 

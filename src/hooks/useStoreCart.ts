@@ -7,7 +7,7 @@ import {
   persistZeloMenuStoreCartCache,
   type ZeloMenuStoreCartItem,
 } from '../domain/zelomenuStoreCartCache';
-import { startPublicOrder, type ZeloMenuCatalogProduct } from '../services/zelomenuApi';
+import { startPublicOrder, type TableOrderContext, type ZeloMenuCatalogProduct } from '../services/zelomenuApi';
 import { useToast } from '../contexts/ToastContext';
 
 type SelectedItem = ZeloMenuStoreCartItem;
@@ -17,7 +17,7 @@ export type StoreCartPicker = {
   selections: Record<string, string[]>;
 };
 
-export function useStoreCart(slug: string) {
+export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext) {
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -113,10 +113,18 @@ export function useStoreCart(slug: string) {
           quantity: line.quantity,
           selectedOptions: line.selectedOptions,
         })),
+        tableOrderContext,
       });
       navigate(result.path);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Não consegui iniciar o pedido. Tente de novo.');
+      const msg = err instanceof Error ? err.message : '';
+      if (msg === 'TABLE_TAKEN_BY_OTHER_GROUP') {
+        toast.error('Esta mesa já tem um pedido em aberto por outro grupo. Peça ao garçom para liberar a comanda.');
+      } else if (msg === 'COMANDA_CLOSED') {
+        toast.error('Esta comanda já foi encerrada. Peça ao garçom para abrir uma nova comanda.');
+      } else {
+        toast.error(msg || 'Não consegui iniciar o pedido. Tente de novo.');
+      }
     } finally {
       setSubmitting(false);
     }
