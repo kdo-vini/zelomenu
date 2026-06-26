@@ -519,7 +519,14 @@ export default function ZeloMenuCartPage() {
         toast.info('Revise os avisos do carrinho antes de confirmar.');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Não consegui confirmar o pedido.');
+      const errMessage = err instanceof Error ? err.message : '';
+      if (errMessage === 'TABLE_TAKEN_BY_OTHER_GROUP') {
+        toast.error('Esta mesa está sendo atendida por outro grupo. Escaneie o QR novamente.');
+      } else if (errMessage === 'COMANDA_CLOSED') {
+        toast.error('Sessão encerrada. Peça ao garçom para abrir uma nova comanda.');
+      } else {
+        toast.error(errMessage || 'Não consegui confirmar o pedido.');
+      }
     } finally {
       setConfirming(false);
     }

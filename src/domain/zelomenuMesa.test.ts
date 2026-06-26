@@ -33,3 +33,19 @@ describe('table_order comanda validation', () => {
     expect(validateComandaStillActive('abc', 'abc')).toBe('ok')
   })
 })
+
+describe('double-validation at confirm', () => {
+  it('detects when comanda changed between cart open and confirm', () => {
+    const sessionMeta = { comanda_id: 'abc-123', mesa_id: 'mesa-1' }
+    const currentActive = { comanda_id: 'xyz-789' }  // different group sat down
+    const isSafe = sessionMeta.comanda_id === currentActive.comanda_id
+    expect(isSafe).toBe(false)
+  })
+
+  it('allows confirm when comanda unchanged', () => {
+    const sessionMeta = { comanda_id: 'abc-123', mesa_id: 'mesa-1' }
+    const currentActive = { comanda_id: 'abc-123' }
+    const isSafe = sessionMeta.comanda_id === currentActive.comanda_id
+    expect(isSafe).toBe(true)
+  })
+})

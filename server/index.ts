@@ -114,6 +114,9 @@ app.post('/api/public/zelomenu/cart/:token/confirm', async (req, res) => {
     if (message === 'STALE_CART_TOKEN') return res.status(409).json({ error: 'STALE_CART_TOKEN' });
     if (message === 'CART_ALREADY_CLOSED') return res.status(409).json({ error: 'CART_ALREADY_CLOSED' });
     if (message === 'CUSTOMER_DETAILS_REQUIRED') return res.status(400).json({ error: 'CUSTOMER_DETAILS_REQUIRED' });
+    if (message === 'COMANDA_CLOSED') return res.status(409).json({ error: 'COMANDA_CLOSED' });
+    if (message === 'TABLE_TAKEN_BY_OTHER_GROUP') return res.status(409).json({ error: 'TABLE_TAKEN_BY_OTHER_GROUP' });
+    if (message === 'PEDIDO_INSERT_FAILED') return res.status(500).json({ error: 'PEDIDO_INSERT_FAILED' });
     res.status(500).json({ error: 'INTERNAL_ERROR' });
   }
 });
