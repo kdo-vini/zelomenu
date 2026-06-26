@@ -7,11 +7,13 @@ export function ZeloMenuMesaPage() {
   const { slug, mesaId } = useParams<{ slug: string; mesaId: string }>();
   const [mesaCtx, setMesaCtx] = useState<MesaContextResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
 
   useEffect(() => {
     if (!slug || !mesaId) return;
     getMesaContext(slug, mesaId)
       .then(setMesaCtx)
+      .catch(() => setFetchError(true))
       .finally(() => setLoading(false));
   }, [slug, mesaId]);
 
@@ -21,6 +23,16 @@ export function ZeloMenuMesaPage() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <span className="text-sm text-gray-400">Carregando...</span>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <p className="text-center text-sm text-gray-500">
+          Não consegui verificar a mesa. Tente novamente.
+        </p>
       </div>
     );
   }
