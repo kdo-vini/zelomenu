@@ -14,7 +14,7 @@ export type MesaContextResult =
 
 export async function getMesaContext(
   mesaId: string,
-  empresaId: string,
+  ownerUserId: string,
 ): Promise<MesaContextResult> {
   const db = getServiceSupabase()
 
@@ -22,7 +22,7 @@ export async function getMesaContext(
     .from('mesas')
     .select('id, numero, ativa')
     .eq('id', mesaId)
-    .eq('id_usuario', empresaId)
+    .eq('id_usuario', ownerUserId)
     .maybeSingle()
 
   if (mesaError) throw mesaError
@@ -32,7 +32,7 @@ export async function getMesaContext(
     .from('comandas')
     .select('id, status')
     .eq('id_mesa', mesaId)
-    .eq('id_usuario', empresaId)
+    .eq('id_usuario', ownerUserId)
     .eq('status', 'aberta')
     .order('aberta_em', { ascending: false })
     .limit(1)
@@ -50,13 +50,13 @@ export async function getMesaContext(
   }
 }
 
-export async function listMesasForAdmin(empresaId: string): Promise<MesaRow[]> {
+export async function listMesasForAdmin(ownerUserId: string): Promise<MesaRow[]> {
   const db = getServiceSupabase()
 
   const { data, error } = await db
     .from('mesas')
     .select('id, numero, capacidade, status, ativa')
-    .eq('id_usuario', empresaId)
+    .eq('id_usuario', ownerUserId)
     .eq('ativa', true)
     .order('numero', { ascending: true })
 

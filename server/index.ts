@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug } from './zelomenuCartSessions.js';
-import { requireEmpresaId } from './supabaseServer.js';
+import { requireEmpresaId, getEmpresaUserId } from './supabaseServer.js';
 import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
 import type { Response } from 'express';
 
@@ -261,7 +261,9 @@ app.get('/api/public/zelomenu/mesa/:mesaId', async (req, res) => {
     if (!slug) return res.status(400).json({ error: 'MISSING_SLUG' })
     const empresaId = await resolveEmpresaIdBySlug(slug)
     if (!empresaId) return res.status(404).json({ error: 'STORE_NOT_FOUND' })
-    const result = await getMesaContext(req.params.mesaId, empresaId)
+    const ownerUserId = await getEmpresaUserId(empresaId)
+    if (!ownerUserId) return res.status(404).json({ error: 'STORE_NOT_FOUND' })
+    const result = await getMesaContext(req.params.mesaId, ownerUserId)
     if (!result.ok) return res.status(200).json({ error: result.error })
     res.json({
       comanda_id: result.comanda_id,
@@ -279,7 +281,9 @@ app.get('/api/public/zelomenu/mesa/:mesaId', async (req, res) => {
 app.get('/api/admin/zelomenu/mesas', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req)
-    const mesas = await listMesasForAdmin(empresaId)
+    const ownerUserId = await getEmpresaUserId(empresaId)
+    if (!ownerUserId) throw new Error('EMPRESA_NOT_FOUND')
+    const mesas = await listMesasForAdmin(ownerUserId)
     res.json({ mesas })
   } catch (error) {
     sendAdminError(res, error)

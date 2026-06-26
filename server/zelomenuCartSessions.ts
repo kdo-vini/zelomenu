@@ -794,44 +794,57 @@ async function createTableOrderPedido(params: {
 }): Promise<string> {
   const { empresaId, comandaId, cartSnapshot, customerName, observations } = params;
 
-  // Get next numero_pedido
-  const { data: numData, error: numError } = await getServiceSupabase()
-    .rpc('proximo_numero_pedido', { p_id_usuario: empresaId });
-  if (numError) throw new Error('PEDIDO_NUMBER_FAILED');
-  const numeroPedido = numData as number;
+  const ownerUserId = await getEmpresaUserId(empresaId);
+  if (!ownerUserId) throw new Error('PEDIDO_INSERT_FAILED');
 
-  // Insert pedido
-  const { data: pedido, error: pedidoError } = await getServiceSupabase()
-    .from('pedidos')
-    .insert({
-      id_usuario: empresaId,
-      origem: 'zelomenu',
-      id_comanda: comandaId,
-      status: 'aberto',
-      nome_cliente: customerName,
-      observacoes: observations,
-      numero_pedido: numeroPedido,
-    })
-    .select('id')
-    .single();
-  if (pedidoError || !pedido) throw new Error('PEDIDO_INSERT_FAILED');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Get next numero_pedido
+    const { data: numData, error: numError } = await getServiceSupabase()
+      .rpc('proximo_numero_pedido', { p_id_usuario: ownerUserId });
+    if (numError) throw new Error('PEDIDO_NUMBER_FAILED');
+    const numeroPedido = numData as number;
 
-  // Insert pedido_itens
-  const itens = cartSnapshot.items.map((item) => ({
-    id_pedido: (pedido as { id: string }).id,
-    id_produto: item.productId ? Number(item.productId) : null,
-    nome: item.productName,
-    preco_unitario: item.unitPrice,
-    quantidade: item.quantity,
-    subtotal: item.unitPrice * item.quantity,
-    enviado_cozinha: true,
-    status_cozinha: 'aguardando',
-  }));
+    // Insert pedido
+    const { data: pedido, error: pedidoError } = await getServiceSupabase()
+      .from('pedidos')
+      .insert({
+        id_usuario: ownerUserId,
+        origem: 'zelomenu',
+        id_comanda: comandaId,
+        status: 'aberto',
+        nome_cliente: customerName,
+        observacoes: observations,
+        numero_pedido: numeroPedido,
+      })
+      .select('id')
+      .single();
 
-  const { error: itensError } = await getServiceSupabase().from('pedido_itens').insert(itens);
-  if (itensError) throw new Error('PEDIDO_ITENS_INSERT_FAILED');
+    if (pedidoError) {
+      // Retry on unique constraint violation (23505) — proximo_numero_pedido is racy
+      if ((pedidoError as { code?: string }).code === '23505' && attempt < 2) continue;
+      throw new Error('PEDIDO_INSERT_FAILED');
+    }
+    if (!pedido) throw new Error('PEDIDO_INSERT_FAILED');
 
-  return (pedido as { id: string }).id;
+    // Insert pedido_itens
+    const itens = cartSnapshot.items.map((item) => ({
+      id_pedido: (pedido as { id: string }).id,
+      id_produto: item.productId ? Number(item.productId) : null,
+      nome: item.productName,
+      preco_unitario: item.unitPrice,
+      quantidade: item.quantity,
+      subtotal: item.unitPrice * item.quantity,
+      enviado_cozinha: true,
+      status_cozinha: 'aguardando',
+    }));
+
+    const { error: itensError } = await getServiceSupabase().from('pedido_itens').insert(itens);
+    if (itensError) throw new Error('PEDIDO_ITENS_INSERT_FAILED');
+
+    return (pedido as { id: string }).id;
+  }
+
+  throw new Error('PEDIDO_INSERT_FAILED');
 }
 
 // ─── Order materialization ────────────────────────────────────────────────────
@@ -1019,7 +1032,9 @@ export async function openPublicOrderCartSession(input: {
   if (input.context === 'table_order') {
     if (!input.mesa_id || !input.comanda_id) throw new Error('MISSING_TABLE_CONTEXT');
 
-    const mesaResult = await getMesaContext(input.mesa_id, empresaId);
+    const tableOwnerUserId = await getEmpresaUserId(empresaId);
+    if (!tableOwnerUserId) throw new Error('COMANDA_CLOSED');
+    const mesaResult = await getMesaContext(input.mesa_id, tableOwnerUserId);
     if (!mesaResult.ok) throw new Error('COMANDA_CLOSED');
     if (mesaResult.comanda_id !== input.comanda_id) throw new Error('TABLE_TAKEN_BY_OTHER_GROUP');
   }
@@ -1184,7 +1199,9 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
     const sessionComandaId = (parseMetadata(sessionRow.metadata) as Record<string, unknown>).comanda_id as string | undefined;
     if (!mesaId || !sessionComandaId) throw new Error('MISSING_TABLE_CONTEXT');
 
-    const mesaResult = await getMesaContext(mesaId, sessionRow.empresa_id);
+    const confirmOwnerUserId = await getEmpresaUserId(sessionRow.empresa_id);
+    if (!confirmOwnerUserId) throw new Error('COMANDA_CLOSED');
+    const mesaResult = await getMesaContext(mesaId, confirmOwnerUserId);
     if (!mesaResult.ok) throw new Error('COMANDA_CLOSED');
     if (mesaResult.comanda_id !== sessionComandaId) throw new Error('TABLE_TAKEN_BY_OTHER_GROUP');
 
@@ -1214,7 +1231,7 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
 
     const updatedRow = await findSessionById(sessionRow.id);
     const payload = await buildPublicResponse(normalized, updatedRow ?? sessionRow, tokenRow);
-    const customerMessage = `Pedido recebido! Número: #${sessionRow.ordering_id.slice(0, 8).toUpperCase()}. A loja já está preparando.`;
+    const customerMessage = 'Pedido enviado! Aguarde o garçom.';
     return { ...payload, confirmation: { confirmed: true, alreadyConfirmed: false, state: 'confirmed_waiting_review' as const, customerMessage } };
   }
 
