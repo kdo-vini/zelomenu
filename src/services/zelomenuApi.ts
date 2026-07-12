@@ -109,6 +109,7 @@ export type ZeloMenuPublicCartResponse = {
     tokenStatus: 'current' | 'stale';
   };
   revalidation: ZeloMenuCartRevalidation;
+  order: { id: string; status: string; revision: number } | null;
 };
 
 export type ZeloMenuConfirmCartResponse = ZeloMenuPublicCartResponse & {

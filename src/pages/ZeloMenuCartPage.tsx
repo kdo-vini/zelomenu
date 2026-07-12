@@ -380,6 +380,7 @@ export default function ZeloMenuCartPage() {
   const isTableOrder = payload?.session.context === 'table_order';
   const isConfirmed = payload?.session.state === 'confirmed_waiting_review' || payload?.session.state === 'confirmed_waiting_payment';
   const isWaitingPayment = payload?.session.state === 'confirmed_waiting_payment';
+  const orderStatus = payload?.order?.status ?? (isWaitingPayment ? 'pending_payment' : 'pending_review');
   const paymentSelection = draft?.paymentMethod && isKnownPaymentMethod(draft.paymentMethod)
     ? draft.paymentMethod
     : draft?.paymentMethod
@@ -539,6 +540,19 @@ export default function ZeloMenuCartPage() {
     revalidationToastShownRef.current = revalidationIssueSignature;
     toast.error(buildRevalidationToastMessage(revalidationIssues));
   }, [revalidationIssueSignature, revalidationIssues, toast]);
+
+  useEffect(() => {
+    if (!isConfirmed || isTableOrder) return;
+    const refreshStatus = () => {
+      if (document.visibilityState === 'visible') void load('refresh');
+    };
+    const timer = window.setInterval(refreshStatus, 30_000);
+    document.addEventListener('visibilitychange', refreshStatus);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshStatus);
+    };
+  }, [isConfirmed, isTableOrder, token]);
 
   const confirmCart = async () => {
     if (!draft || !payload || !isOpen || isStale) return;
@@ -830,14 +844,26 @@ export default function ZeloMenuCartPage() {
                 <CheckCircle2 className="h-10 w-10" strokeWidth={1.8} />
               </div>
               <h2 className="text-[20px] font-semibold tracking-tight">
-                {isTableOrder ? 'Pedido enviado!' : 'Pedido confirmado!'}
+                {isTableOrder ? 'Pedido enviado!' : orderStatus === 'rejected' ? 'Pedido não aceito' : orderStatus === 'cancelled' ? 'Pedido cancelado' : 'Pedido enviado!'}
               </h2>
               <p className="mt-1.5 max-w-[280px] text-[13.5px] leading-relaxed text-[var(--color-ink-muted)]">
                 {isTableOrder
                   ? 'Seu pedido já está na fila da cozinha. Aguarde o garçom.'
-                  : isWaitingPayment
+                  : orderStatus === 'pending_payment'
                     ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
-                    : 'A loja recebeu seu pedido e vai entrar em contato para acertar os detalhes.'}
+                    : orderStatus === 'pending_review'
+                      ? 'A loja recebeu seu pedido. Aguarde o aceite antes do preparo.'
+                      : orderStatus === 'accepted'
+                        ? 'Pedido aceito pela loja.'
+                        : orderStatus === 'preparing'
+                          ? 'Seu pedido está sendo preparado.'
+                          : orderStatus === 'ready'
+                            ? 'Seu pedido está pronto.'
+                            : orderStatus === 'out_for_delivery'
+                              ? 'Seu pedido saiu para entrega.'
+                              : orderStatus === 'delivered'
+                                ? 'Pedido concluído. Obrigado!'
+                                : 'A loja atualizou o seu pedido.'}
               </p>
               <div className="mt-5 w-full max-w-[300px] rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 text-left">
                 <div className="flex items-center justify-between">

@@ -27,6 +27,7 @@ import {
   isPickupInPast,
   parseBusinessTime,
 } from '../src/domain/zelomenuBusinessHours.js';
+import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
 
 // ─── Token helpers (node:crypto, backend only) ─────────────────────────────────
 
@@ -77,12 +78,6 @@ function computeCartPricing(
     deliveryFee: roundCurrency(fee),
     total: roundCurrency(subtotal + fee),
   };
-}
-
-function resolveConfirmedCartState(payment: Pick<ZeloMenuPaymentSnapshot, 'pixReceiptRequired' | 'pixReceiptApproved'>): 'confirmed_waiting_review' | 'confirmed_waiting_payment' {
-  return payment.pixReceiptRequired && !payment.pixReceiptApproved
-    ? 'confirmed_waiting_payment'
-    : 'confirmed_waiting_review';
 }
 
 // ─── Snapshot types ────────────────────────────────────────────────────────────
@@ -238,6 +233,7 @@ export type PublicCartResponse = {
   catalog: CatalogCategoriaGroup[];
   link: { path: string; tokenStatus: 'current' | 'stale' };
   revalidation: ZeloMenuCartRevalidation;
+  order: { id: string; status: string; revision: number } | null;
 };
 
 export type PublicCartConfirmResponse = PublicCartResponse & {
@@ -771,6 +767,21 @@ async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenR
   }
   session.metadata = publicMetadata;
 
+  let order: PublicCartResponse['order'] = null;
+  if (session.context === 'public_order' && session.state !== 'cart_open') {
+    const { data, error } = await getServiceSupabase()
+      .from('zelo_orders')
+      .select('id, status, revision')
+      .eq('zelomenu_session_id', session.id)
+      .maybeSingle();
+    if (error) throw error;
+    order = data ? {
+      id: String(data.id),
+      status: String(data.status),
+      revision: Number(data.revision),
+    } : null;
+  }
+
   return {
     session,
     business: {
@@ -787,116 +798,13 @@ async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenR
       tokenStatus: sessionRow.current_token_hash === tokenRow.token_hash && !tokenRow.revoked_at ? 'current' : 'stale',
     },
     revalidation,
+    order,
   };
 }
 
 // ─── Table order materialization ─────────────────────────────────────────────
 
-async function createTableOrderPedido(params: {
-  empresaId: string;
-  comandaId: string;
-  cartSnapshot: ZeloMenuCartSnapshot;
-  customerName: string | null;
-  observations: string | null;
-}): Promise<string> {
-  const { empresaId, comandaId, cartSnapshot, customerName, observations } = params;
-
-  const ownerUserId = await getEmpresaUserId(empresaId);
-  if (!ownerUserId) throw new Error('PEDIDO_INSERT_FAILED');
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    // Get next numero_pedido
-    const { data: numData, error: numError } = await getServiceSupabase()
-      .rpc('proximo_numero_pedido', { p_id_usuario: ownerUserId });
-    if (numError) throw new Error('PEDIDO_NUMBER_FAILED');
-    const numeroPedido = numData as number;
-
-    // Insert pedido
-    const { data: pedido, error: pedidoError } = await getServiceSupabase()
-      .from('pedidos')
-      .insert({
-        id_usuario: ownerUserId,
-        origem: 'zelomenu',
-        id_comanda: comandaId,
-        status: 'aberto',
-        nome_cliente: customerName,
-        observacoes: observations,
-        numero_pedido: numeroPedido,
-      })
-      .select('id')
-      .single();
-
-    if (pedidoError) {
-      // Retry on unique constraint violation (23505) — proximo_numero_pedido is racy
-      if ((pedidoError as { code?: string }).code === '23505' && attempt < 2) continue;
-      throw new Error('PEDIDO_INSERT_FAILED');
-    }
-    if (!pedido) throw new Error('PEDIDO_INSERT_FAILED');
-
-    // Insert pedido_itens
-    const itens = cartSnapshot.items.map((item) => ({
-      id_pedido: (pedido as { id: string }).id,
-      id_produto: item.productId ? Number(item.productId) : null,
-      nome: item.productName,
-      preco_unitario: item.unitPrice,
-      quantidade: item.quantity,
-      subtotal: item.unitPrice * item.quantity,
-      enviado_cozinha: true,
-      status_cozinha: 'aguardando',
-    }));
-
-    const { error: itensError } = await getServiceSupabase().from('pedido_itens').insert(itens);
-    if (itensError) throw new Error('PEDIDO_ITENS_INSERT_FAILED');
-
-    return (pedido as { id: string }).id;
-  }
-
-  throw new Error('PEDIDO_INSERT_FAILED');
-}
-
 // ─── Order materialization ────────────────────────────────────────────────────
-
-async function createAcceptedOrderRecord(input: {
-  empresaId: string;
-  customer: ZeloMenuCustomerSnapshot;
-  cart: ZeloMenuCartSnapshot;
-  fulfillment: ZeloMenuFulfillmentSnapshot;
-  pricing: ZeloMenuPricingSnapshot;
-  payment: ZeloMenuPaymentSnapshot;
-}): Promise<string> {
-  const { data, error } = await getServiceSupabase()
-    .from('zelochat_orders')
-    .insert({
-      empresa_id: input.empresaId,
-      customer_name: input.customer.name || 'Cliente',
-      customer_phone: input.customer.phone || null,
-      items: input.cart.items.map((item) => ({ product: formatModifierAwareCartItem(item), quantity: item.quantity })),
-      pickup_date: input.fulfillment.pickupDate || '',
-      pickup_time: input.fulfillment.pickupTime || '',
-      payment_method: input.payment.declaredMethod || null,
-      delivery_address: input.fulfillment.deliveryAddress || null,
-      delivery_neighborhood: input.fulfillment.deliveryNeighborhood || null,
-      delivery_fee: input.fulfillment.deliveryFee || null,
-      observations: input.cart.observations || null,
-      driver_id: null,
-      status: 'pending',
-      total: input.pricing.total,
-      source: 'whatsapp',
-    })
-    .select('id')
-    .single();
-  if (error) throw error;
-  return (data as { id: string }).id;
-}
-
-async function decrementAcceptedOrderStockBestEffort(empresaId: string, items: ZeloMenuCartSnapshot['items']): Promise<void> {
-  const userId = await getEmpresaUserId(empresaId);
-  if (!userId) return;
-  await getServiceSupabase().rpc('zelochat_decrement_stock', {
-    p_id_usuario: userId,
-    p_items: items.map((item) => ({ name: item.productName, qty: item.quantity })),
-  });
-}
 
 // ─── Slug resolution ──────────────────────────────────────────────────────────
 
@@ -1264,144 +1172,39 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
   }
 
   // ── table_order: write to ZeloPDV pedidos + double-validate comanda ──────────
-  const { data: confirmation, error: confirmationError } = await getServiceSupabase().rpc('confirm_zelomenu_cart', {
-    p_session_id: sessionRow.id,
-    p_token_hash: tokenRow.token_hash,
-    p_expected_revision: expectedRevision,
-    p_idempotency_key: idempotencyKey,
-  });
+  const confirmationRpc = usesCanonicalOrderEngine(sessionRow.context)
+    ? getServiceSupabase().rpc('create_zelo_order', {
+      p_session_id: sessionRow.id,
+      p_expected_revision: expectedRevision,
+      p_idempotency_key: idempotencyKey,
+      p_snapshots: buildCanonicalOrderSnapshots({
+        empresaId: sessionRow.empresa_id,
+        customer: current.customer,
+        cart: revalidation.previewCart,
+        fulfillment: current.fulfillment,
+        pricing: revalidation.previewPricing,
+        payment: revalidation.previewPayment,
+      }),
+    })
+    : getServiceSupabase().rpc('confirm_zelomenu_cart', {
+      p_session_id: sessionRow.id,
+      p_token_hash: tokenRow.token_hash,
+      p_expected_revision: expectedRevision,
+      p_idempotency_key: idempotencyKey,
+    });
+  const { data: confirmation, error: confirmationError } = await confirmationRpc;
   if (confirmationError) {
     const codes = ['CART_NOT_FOUND', 'STALE_CART_TOKEN', 'REVISION_CONFLICT', 'CART_ALREADY_CLOSED', 'IDEMPOTENCY_KEY_REQUIRED', 'TABLE_SESSION_EXPIRED', 'PRODUCT_STOCK_EXCEEDED', 'COMANDA_CLOSED'];
     throw new Error(codes.find((code) => confirmationError.message.includes(code)) || 'ORDER_MATERIALIZATION_FAILED');
   }
-  const atomic = confirmation as { state: ZeloMenuCartState; alreadyConfirmed: boolean };
+  const atomic = confirmation as { orderStatus?: string; sessionState?: ZeloMenuCartState; state?: ZeloMenuCartState; alreadyConfirmed?: boolean };
   const atomicRow = await findSessionById(sessionRow.id);
   if (!atomicRow) throw new Error('ORDER_MATERIALIZATION_FAILED');
   const atomicPayload = await buildPublicResponse(normalized, atomicRow, tokenRow);
-  return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed, state: atomic.state, customerMessage: atomicRow.context === 'table_order' ? 'Pedido enviado! Aguarde o garçom.' : `Pedido recebido! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}.` } };
+  return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed === true, state: atomic.sessionState ?? atomic.state ?? atomicRow.state, customerMessage: atomicRow.context === 'table_order' ? 'Pedido enviado! Aguarde o garçom.' : `Pedido enviado para a loja! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. Aguarde a confirmação.` } };
 
-  /* istanbul ignore next -- removed after the RPC rollout is complete */
-  const isTableOrder = sessionRow.context === 'table_order';
-  if (isTableOrder) {
-    const mesaId = (parseMetadata(sessionRow.metadata) as Record<string, unknown>).mesa_id as string | undefined;
-    const sessionComandaId = (parseMetadata(sessionRow.metadata) as Record<string, unknown>).comanda_id as string | undefined;
-    if (!mesaId || !sessionComandaId) throw new Error('MISSING_TABLE_CONTEXT');
-
-    const confirmOwnerUserId = await getEmpresaUserId(sessionRow.empresa_id);
-    if (!confirmOwnerUserId) throw new Error('COMANDA_CLOSED');
-    const mesaResult = await getMesaContext(mesaId, confirmOwnerUserId);
-    if (!mesaResult.ok) throw new Error('COMANDA_CLOSED');
-    if (mesaResult.comanda_id !== sessionComandaId) throw new Error('TABLE_TAKEN_BY_OTHER_GROUP');
-
-    const pedidoId = await createTableOrderPedido({
-      empresaId: sessionRow.empresa_id,
-      comandaId: sessionComandaId,
-      cartSnapshot: revalidation.previewCart,
-      customerName: current.customer.name ?? null,
-      observations: revalidation.previewCart.observations ?? null,
-    });
-
-    const now = new Date().toISOString();
-    await getServiceSupabase()
-      .from('zelomenu_cart_sessions')
-      .update({
-        state: 'confirmed_waiting_review',
-        cart_snapshot: revalidation.previewCart,
-        pricing_snapshot: revalidation.previewPricing,
-        payment_snapshot: revalidation.previewPayment,
-        last_revalidated_at: revalidation.checkedAt,
-        last_revalidation: revalidation,
-        confirmed_at: now,
-        updated_at: now,
-        metadata: { ...parseMetadata(sessionRow.metadata), productionPedidoId: pedidoId },
-      })
-      .eq('id', sessionRow.id);
-
-    const updatedRow = await findSessionById(sessionRow.id);
-    const payload = await buildPublicResponse(normalized, updatedRow ?? sessionRow, tokenRow);
-    const customerMessage = 'Pedido enviado! Aguarde o garçom.';
-    return { ...payload, confirmation: { confirmed: true, alreadyConfirmed: false, state: 'confirmed_waiting_review' as const, customerMessage } };
-  }
-
-  const nextState = resolveConfirmedCartState(revalidation.previewPayment);
-  const now = new Date().toISOString();
-  const { data, error } = await getServiceSupabase()
-    .from('zelomenu_cart_sessions')
-    .update({
-      state: nextState,
-      cart_snapshot: revalidation.previewCart,
-      pricing_snapshot: revalidation.previewPricing,
-      payment_snapshot: revalidation.previewPayment,
-      last_revalidated_at: revalidation.checkedAt,
-      last_revalidation: revalidation,
-      confirmed_at: now,
-      updated_at: now,
-    })
-    .eq('id', sessionRow.id)
-    .select(CART_SESSION_COLUMNS)
-    .single();
-  if (error) throw error;
-
-  const confirmedRow = data as SessionRow;
-  const customerMessage = `Pedido recebido! Número: #${confirmedRow.ordering_id.slice(0, 8).toUpperCase()}. A loja entrará em contato em breve.`;
-
-  if (confirmedRow.context === 'public_order') {
-    // Best-effort stock decrement (fire-and-forget, never blocks confirm)
-    void decrementAcceptedOrderStockBestEffort(confirmedRow.empresa_id, revalidation.previewCart.items)
-      .catch((err) => console.error('[ZeloMenu] stock decrement failed:', err));
-
-    // Materialize order into zelochat_orders with retry
-    let lastOrderErr: unknown;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const orderId = await createAcceptedOrderRecord({
-          empresaId: confirmedRow.empresa_id,
-          customer: current.customer,
-          cart: revalidation.previewCart,
-          fulfillment: current.fulfillment,
-          pricing: revalidation.previewPricing,
-          payment: revalidation.previewPayment,
-        });
-        await getServiceSupabase()
-          .from('zelomenu_cart_sessions')
-          .update({ metadata: { ...parseMetadata(confirmedRow.metadata), productionOrderId: orderId } })
-          .eq('id', confirmedRow.id);
-        lastOrderErr = undefined;
-        break;
-      } catch (err) {
-        lastOrderErr = err;
-        console.error(`[ZeloMenu] public_order: failed to materialize order (attempt ${attempt + 1}/3):`, err);
-        if (attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-      }
-    }
-
-    if (lastOrderErr) {
-      // Revert session back to cart_open so the customer can retry
-      const revertedAt = new Date().toISOString();
-      await getServiceSupabase()
-        .from('zelomenu_cart_sessions')
-        .update({
-          state: 'cart_open',
-          confirmed_at: null,
-          updated_at: revertedAt,
-          last_revalidation: {
-            checkedAt: revertedAt,
-            ok: false,
-            issues: [{ code: 'materialization_failed' as string, message: 'Erro ao registrar o pedido. Tente novamente.' }],
-            previewCart: null,
-            previewPricing: null,
-            previewPayment: null,
-          },
-        })
-        .eq('id', confirmedRow.id);
-      throw new Error('ORDER_MATERIALIZATION_FAILED');
-    }
-  }
-
-  const payload = await buildPublicResponse(normalized, confirmedRow, tokenRow);
-  return { ...payload, confirmation: { confirmed: true, alreadyConfirmed: false, state: nextState, customerMessage } };
+ const isTableOrder = sessionRow.context === 'table_order';
+ if (isTableOrder) {
 }
 
 export async function setEmpresaZeloMenuSlug(empresaId: string, rawSlug: string): Promise<string> {
