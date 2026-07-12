@@ -50,6 +50,7 @@ import {
   validateZeloMenuCheckoutDetails,
 } from '../domain/zelomenuCheckout';
 import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
+import { buildZeloMenuAutosaveSignature } from '../domain/zeloMenuAutosave';
 import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { useToast } from '../contexts/ToastContext';
@@ -75,6 +76,8 @@ type DraftState = {
   paymentMethod: string;
   observations: string;
 };
+
+type AutosaveResult = ZeloMenuPublicCartResponse | null;
 
 const PAYMENT_OPTIONS = ['Pix', 'Dinheiro', 'Cartão de débito', 'Cartão de crédito', 'Outro'] as const;
 
@@ -315,7 +318,7 @@ export default function ZeloMenuCartPage() {
   const revalidationToastShownRef = useRef('');
   const autosaveReadyRef = useRef(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const saveQueueRef = useRef<Promise<AutosaveResult>>(Promise.resolve(null));
   const saveVersionRef = useRef(0);
   const latestAutosaveRef = useRef<ZeloMenuUpdateCartPayload | null>(null);
   const loadRequestRef = useRef(0);
@@ -461,46 +464,54 @@ export default function ZeloMenuCartPage() {
     [draft, scheduleMode, payload?.session.revision],
   );
   const autosaveSignature = useMemo(
-    () => autosavePayload ? JSON.stringify(autosavePayload) : '',
+    () => buildZeloMenuAutosaveSignature(autosavePayload),
     [autosavePayload],
   );
 
-  const enqueueAutosave = useCallback((nextPayload: ZeloMenuUpdateCartPayload): Promise<void> => {
+  const enqueueAutosave = useCallback((nextPayload: ZeloMenuUpdateCartPayload): Promise<AutosaveResult> => {
     const version = ++saveVersionRef.current;
     setSaveStatus('saving');
     const queued = saveQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        const updated = await updatePublicCart(token, nextPayload);
+      .catch(() => null)
+      .then(async (previous) => {
+        const requestPayload = previous
+          ? { ...nextPayload, expectedRevision: previous.session.revision }
+          : nextPayload;
+        const updated = await updatePublicCart(token, requestPayload);
         syncStoreCacheFromResponse(updated);
-        if (version !== saveVersionRef.current) return;
+        if (version !== saveVersionRef.current) return updated;
         setPayload(updated);
         setSaveStatus('saved');
+        return updated;
       })
       .catch(async (error) => {
-        if (version !== saveVersionRef.current) return;
+        if (version !== saveVersionRef.current) return null;
         setSaveStatus('error');
         if (error instanceof ZeloMenuApiError && error.code === 'REVISION_CONFLICT') {
           toast.error(error.detail || 'O carrinho mudou em outra aba. Revise os dados atualizados.');
           await load('refresh');
         }
+        return null;
       });
     saveQueueRef.current = queued;
     return queued;
   }, [token, toast]);
 
-  const flushPendingAutosave = useCallback((): Promise<void> => {
+  const flushPendingAutosave = useCallback((): Promise<AutosaveResult> => {
     const latest = latestAutosaveRef.current;
     if (latest && autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
       return enqueueAutosave(latest);
     }
-    return saveQueueRef.current.catch(() => undefined);
+    return saveQueueRef.current.catch(() => null);
   }, [enqueueAutosave]);
 
   useEffect(() => {
     latestAutosaveRef.current = autosavePayload;
+  }, [autosavePayload]);
+
+  useEffect(() => {
     if (!autosavePayload || !isOpen || isStale) return;
     if (!autosaveReadyRef.current) {
       autosaveReadyRef.current = true;
@@ -511,7 +522,8 @@ export default function ZeloMenuCartPage() {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       autosaveTimerRef.current = null;
-      void enqueueAutosave(autosavePayload);
+      const latest = latestAutosaveRef.current;
+      if (latest) void enqueueAutosave(latest);
     }, 650);
 
     return () => {
@@ -520,7 +532,7 @@ export default function ZeloMenuCartPage() {
         autosaveTimerRef.current = null;
       }
     };
-  }, [autosavePayload, autosaveSignature, enqueueAutosave, isOpen, isStale]);
+  }, [autosaveSignature, enqueueAutosave, isOpen, isStale]);
 
   useEffect(() => {
     const flushAutosave = () => {
@@ -574,8 +586,9 @@ export default function ZeloMenuCartPage() {
     try {
       setConfirming(true);
       setError(null);
-      await flushPendingAutosave();
-      const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode, payload.session.revision));
+      const flushed = await flushPendingAutosave();
+      const latestPayload = flushed ?? payload;
+      const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode, latestPayload.session.revision));
       syncStoreCacheFromResponse(updated);
 
       const updateIssues = updated.revalidation.issues ?? [];
@@ -615,7 +628,12 @@ export default function ZeloMenuCartPage() {
       }
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : '';
-      if (errMessage === 'TABLE_TAKEN_BY_OTHER_GROUP') {
+      if (err instanceof ZeloMenuApiError && err.code === 'REVISION_CONFLICT') {
+        toast.error(err.detail || 'O carrinho foi atualizado. Revise os dados antes de confirmar.');
+        await load('refresh');
+      } else if (err instanceof ZeloMenuApiError && err.code === 'REQUEST_TIMEOUT') {
+        toast.error('A conexão demorou demais. Verifique a internet e tente confirmar novamente.');
+      } else if (errMessage === 'TABLE_TAKEN_BY_OTHER_GROUP') {
         toast.error('Esta mesa está sendo atendida por outro grupo. Escaneie o QR novamente.');
       } else if (errMessage === 'COMANDA_CLOSED') {
         toast.error('Sessão encerrada. Peça ao garçom para abrir uma nova comanda.');

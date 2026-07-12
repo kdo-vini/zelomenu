@@ -245,6 +245,14 @@ export type PublicCartConfirmResponse = PublicCartResponse & {
   };
 };
 
+type PublicStoreResponse = {
+  business: PublicCartResponse['business'];
+  catalog: CatalogCategoriaGroup[];
+};
+
+const publicStoreCache = new Map<string, { expiresAt: number; response: PublicStoreResponse }>();
+const PUBLIC_STORE_CACHE_MS = 15_000;
+
 // ─── Sanitizers ───────────────────────────────────────────────────────────────
 
 function sanitizeText(value: unknown, maxLength: number): string | null {
@@ -822,8 +830,13 @@ export async function resolveEmpresaIdBySlug(slug: string): Promise<string | nul
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export async function getPublicStoreBySlug(slug: string): Promise<{ business: PublicCartResponse['business']; catalog: CatalogCategoriaGroup[] } | null> {
-  const empresaId = await resolveEmpresaIdBySlug(slug);
+export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreResponse | null> {
+  const normalizedSlug = normalizeZeloMenuSlug(slug);
+  if (!normalizedSlug) return null;
+  const cached = publicStoreCache.get(normalizedSlug);
+  if (cached && cached.expiresAt > Date.now()) return cached.response;
+
+  const empresaId = await resolveEmpresaIdBySlug(normalizedSlug);
   if (!empresaId) return null;
 
   const [, perfilResult] = await Promise.all([
@@ -845,7 +858,7 @@ export async function getPublicStoreBySlug(slug: string): Promise<{ business: Pu
   const rawCatalog = filterVisibleCatalog(config.catalogHierarchy);
   const categoryOrder = Array.isArray(perfil?.zelomenu_category_order) ? (perfil.zelomenu_category_order as string[]) : [];
 
-  return {
+  const response: PublicStoreResponse = {
     business: {
       name: config.name,
       address: config.address,
@@ -860,6 +873,8 @@ export async function getPublicStoreBySlug(slug: string): Promise<{ business: Pu
     },
     catalog: applyCategoryOrder(rawCatalog, categoryOrder),
   };
+  publicStoreCache.set(normalizedSlug, { expiresAt: Date.now() + PUBLIC_STORE_CACHE_MS, response });
+  return response;
 }
 
 // ─── Store settings (admin) ─────────────────────────────────────────────────────

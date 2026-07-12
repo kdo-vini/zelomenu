@@ -34,6 +34,7 @@ app.get('/api/public/zelomenu/store/:slug', async (req, res) => {
   try {
     const result = await getPublicStoreBySlug(req.params.slug);
     if (!result) return res.status(404).json({ error: 'STORE_NOT_FOUND' });
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
     res.json(result);
   } catch (error) {
     console.error('[ZeloMenu] getPublicStoreBySlug error:', error);

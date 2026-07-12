@@ -250,7 +250,7 @@ export async function confirmPublicCart(token: string, expectedRevision: number,
 
 export async function getPublicStore(slug: string): Promise<ZeloMenuPublicStoreResponse> {
   const response = await fetchWithTimeout(`/api/public/zelomenu/store/${encodeURIComponent(slug)}`, {
-    cache: 'no-store',
+    cache: 'default',
   });
   return parseResponse<ZeloMenuPublicStoreResponse>(response);
 }
