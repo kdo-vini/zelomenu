@@ -1,0 +1,2 @@
+-- History placeholder for migration version 045, which is already applied to
+-- the linked production database. Intentionally empty: never replay remote DDL.
