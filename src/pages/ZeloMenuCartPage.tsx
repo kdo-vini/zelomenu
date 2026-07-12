@@ -397,7 +397,16 @@ export default function ZeloMenuCartPage() {
   const scheduleTimeError: string | null = useMemo(() => {
     const bh = payload?.business?.businessHours;
     if (!bh || !bh.configured || !bh.label) return null;
-    if (scheduleMode !== 'scheduled' || !draft) return null;
+
+    // "Pra já" — check if store is currently open
+    if (scheduleMode === 'asap') {
+      if (bh.openNow === false) {
+        return `Loja fechada agora (${bh.label}). Para pedir, selecione Agendar e escolha um horário de funcionamento.`;
+      }
+      return null;
+    }
+
+    if (!draft) return null;
     if (!draft.pickupTime || !draft.pickupDate) return null;
 
     // Parse label "HH:mm–HH:mm"
@@ -1260,6 +1269,15 @@ export default function ZeloMenuCartPage() {
                   </button>
                 ) : null}
               </div>
+              {scheduleTimeError ? (
+                <div className="mb-3 flex items-start gap-2 rounded-xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-[var(--color-alert)]" strokeWidth={1.8} />
+                  <div className="flex flex-col gap-1">
+                    <p className="text-[12px] font-semibold text-[var(--color-alert)]">Não é possível confirmar agora</p>
+                    <p className="text-[11.5px] leading-snug text-[var(--color-ink-soft)]">{scheduleTimeError}</p>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex items-center gap-3">
                 <div className="flex flex-col leading-tight">
                   <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">{isTableOrder || step === 0 ? 'Subtotal' : 'Total'}</span>
