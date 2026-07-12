@@ -874,7 +874,7 @@ async function createAcceptedOrderRecord(input: {
       driver_id: null,
       status: 'pending',
       total: input.pricing.total,
-      source: 'zelomenu',
+      source: 'whatsapp',
     })
     .select('id')
     .single();
