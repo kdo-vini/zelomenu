@@ -211,6 +211,7 @@ type PublicBusinessHoursStatus = {
   openNow: boolean;
   label: string | null;
   closedDays: string[];
+  timezone: string;
 };
 
 export type PublicCartResponse = {
@@ -449,7 +450,7 @@ function isPublicWindowOpen(nowMinutes: number, openMinutes: number, closeMinute
 function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): PublicBusinessHoursStatus {
   const openMinutes = parsePublicTime(config.openTime);
   const closeMinutes = parsePublicTime(config.closeTime);
-  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [] };
+  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone: config.timezone || 'America/Sao_Paulo' };
   const timezone = config.timezone || 'America/Sao_Paulo';
   const now = new Date();
   const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, weekday: 'short' }).format(now).toLowerCase().replace(/\./g, '');
@@ -466,6 +467,7 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
     openNow: !closedToday && isPublicWindowOpen(nowMinutes, openMinutes, closeMinutes),
     label: `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`,
     closedDays: config.closedDays ?? [],
+    timezone: timezone,
   };
 }
 
@@ -1216,14 +1218,21 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
       // Check if pickup date+time is in the past (in the store's timezone)
       if (typeof pickupDate === 'string' && pickupTime) {
         const now = new Date();
-        const pickup = new Date(`${pickupDate}T${pickupTime}:00`);
-        // Format both to ISO-like comparable string in the store's timezone
-        const toTzISO = (d: Date) => {
+        const toTzStr = (d: Date) => {
           const parts = new Intl.DateTimeFormat('pt-BR', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);
-          const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
-          return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
+          const g = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+          return `${g('year')}${g('month')}${g('day')}${g('hour')}${g('minute')}${g('second')}`;
         };
-        if (toTzISO(pickup) < toTzISO(now)) {
+        // Build a Date that represents pickupDate+pickupTime in the store's timezone
+        const [y, m, d] = pickupDate.split('-').map(Number);
+        const [ph, pm] = pickupTime.split(':').map(Number);
+        const baseUTC = Date.UTC(y, m - 1, d, 0, 0, 0);
+        const baseParts = new Intl.DateTimeFormat('pt-BR', { timeZone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new Date(baseUTC));
+        const baseG = (t: string) => Number(baseParts.find((p) => p.type === t)?.value ?? '0');
+        const baseHour = baseG('hour') === 24 ? 0 : baseG('hour');
+        const offsetMs = (baseHour * 3600 + baseG('minute') * 60 + baseG('second')) * 1000;
+        const pickupInTz = new Date(baseUTC - offsetMs + ph * 3600000 + pm * 60000);
+        if (toTzStr(pickupInTz) < toTzStr(now)) {
           throw new Error(
             'PICKUP_IN_PAST:Horário de retirada já passou. Escolha um horário futuro.'
           );

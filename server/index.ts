@@ -117,7 +117,14 @@ app.post('/api/public/zelomenu/cart/:token/confirm', async (req, res) => {
     if (message === 'COMANDA_CLOSED') return res.status(409).json({ error: 'COMANDA_CLOSED' });
     if (message === 'TABLE_TAKEN_BY_OTHER_GROUP') return res.status(409).json({ error: 'TABLE_TAKEN_BY_OTHER_GROUP' });
     if (message === 'PEDIDO_INSERT_FAILED') return res.status(500).json({ error: 'PEDIDO_INSERT_FAILED' });
-    res.status(500).json({ error: 'INTERNAL_ERROR' });
+    if (message.startsWith('STORE_CLOSED_ASAP:')) return res.status(400).json({ error: 'STORE_CLOSED_ASAP', detail: message.slice('STORE_CLOSED_ASAP:'.length) });
+    if (message.startsWith('PICKUP_OUTSIDE_HOURS:')) return res.status(400).json({ error: 'PICKUP_OUTSIDE_HOURS', detail: message.slice('PICKUP_OUTSIDE_HOURS:'.length) });
+    if (message.startsWith('PICKUP_CLOSED_DAY:')) return res.status(400).json({ error: 'PICKUP_CLOSED_DAY', detail: message.slice('PICKUP_CLOSED_DAY:'.length) });
+    if (message.startsWith('PICKUP_TIME_INVALID:')) return res.status(400).json({ error: 'PICKUP_TIME_INVALID', detail: message.slice('PICKUP_TIME_INVALID:'.length) });
+    if (message.startsWith('PICKUP_IN_PAST:')) return res.status(400).json({ error: 'PICKUP_IN_PAST', detail: message.slice('PICKUP_IN_PAST:'.length) });
+    // Fallback genérico — nunca expõe detalhes internos
+    console.error('[ZeloMenu] confirmPublicCartSession unhandled error:', message);
+    res.status(500).json({ error: 'ERRO_INTERNO:Ocorreu um erro inesperado. Tente novamente mais tarde.' });
   }
 });
 

@@ -43,6 +43,7 @@ export type ZeloMenuPublicBusinessHoursStatus = {
   openNow: boolean;
   label: string | null;
   closedDays?: string[];
+  timezone?: string;
 };
 
 // ─── Cart types ────────────────────────────────────────────────────────────────

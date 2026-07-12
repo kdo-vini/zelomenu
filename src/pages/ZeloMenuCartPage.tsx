@@ -420,16 +420,36 @@ export default function ZeloMenuCartPage() {
       return `Horário fora do funcionamento da loja (${bh.label}).`;
     }
 
-    // Validate pickup date+time is not in the past
-    const pickup = new Date(`${draft.pickupDate}T${draft.pickupTime}:00`);
-    if (pickup < new Date()) {
+    // Validate pickup date+time is not in the past (using store's timezone)
+    const storeTz = bh.timezone || 'America/Sao_Paulo';
+    const toTzStr = (d: Date) => {
+      const parts = new Intl.DateTimeFormat('pt-BR', { timeZone: storeTz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);
+      const g = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+      return `${g('year')}${g('month')}${g('day')}${g('hour')}${g('minute')}${g('second')}`;
+    };
+    // Build a Date that represents pickupDate+pickupTime in the store's timezone
+    // Use Date.UTC to create a base, then adjust by the timezone offset
+    const [y, m, d] = draft.pickupDate.split('-').map(Number);
+    const [h, min] = draft.pickupTime.split(':').map(Number);
+    // Start with UTC midnight of that date, then find the offset to store timezone
+    const baseUTC = Date.UTC(y, m - 1, d, 0, 0, 0);
+    const baseParts = new Intl.DateTimeFormat('pt-BR', { timeZone: storeTz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new Date(baseUTC));
+    const baseG = (t: string) => Number(baseParts.find((p) => p.type === t)?.value ?? '0');
+    const baseHour = baseG('hour') === 24 ? 0 : baseG('hour');
+    const baseMin = baseG('minute');
+    const baseSec = baseG('second');
+    // The offset from UTC midnight to "noon in store tz" tells us the timezone offset
+    // We want the timestamp where storeTz shows h:min:00
+    const offsetMs = (baseHour * 3600 + baseMin * 60 + baseSec) * 1000;
+    const pickupInStoreTz = new Date(baseUTC - offsetMs + h * 3600000 + min * 60000);
+    if (toTzStr(pickupInStoreTz) < toTzStr(new Date())) {
       return 'Horário de retirada já passou. Escolha um horário futuro.';
     }
 
-    // Validate pickup date is not a closed day
+    // Validate pickup date is not a closed day (using store's timezone)
     const closedDays = bh.closedDays;
     if (closedDays && closedDays.length > 0) {
-      const weekday = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' }).format(pickup).toLowerCase().replace(/\./g, '');
+      const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: storeTz, weekday: 'short' }).format(pickupInStoreTz).toLowerCase().replace(/\./g, '');
       const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
       const mapped = dayMap[weekday];
       if (mapped && closedDays.includes(mapped)) {
@@ -438,7 +458,7 @@ export default function ZeloMenuCartPage() {
     }
 
     return null;
-  }, [payload?.business?.businessHours, scheduleMode, draft?.pickupTime, draft?.pickupDate]);
+  }, [payload?.business?.businessHours, scheduleMode, draft?.pickupTime, draft?.pickupDate, payload?.business?.businessHours?.timezone]);
 
   const canConfirm = isOpen && !isStale && (draft?.items.length ?? 0) > 0 && !scheduleTimeError;
 
@@ -598,8 +618,14 @@ export default function ZeloMenuCartPage() {
         toast.error('Erro ao registrar o pedido. Tente novamente.');
       } else if (errMessage.startsWith('PICKUP_TIME_INVALID:')) {
         toast.error(errMessage.slice('PICKUP_TIME_INVALID:'.length));
+      } else if (errMessage.startsWith('PICKUP_IN_PAST:')) {
+        toast.error(errMessage.slice('PICKUP_IN_PAST:'.length));
+      } else if (errMessage.startsWith('INTERNAL_ERROR:')) {
+        toast.error(errMessage.slice('INTERNAL_ERROR:'.length));
+      } else if (errMessage === 'INTERNAL_ERROR') {
+        toast.error('Ocorreu um erro inesperado. Tente novamente mais tarde.');
       } else {
-        toast.error(errMessage || 'Não consegui confirmar o pedido.');
+        toast.error('Não consegui confirmar o pedido. Tente novamente.');
       }
     } finally {
       setConfirming(false);
@@ -1151,6 +1177,7 @@ export default function ZeloMenuCartPage() {
                               onChange={(event) => updateField('pickupDate', event.target.value)}
                               readOnly={!isOpen}
                               required
+                              min={todayISOdate()}
                               aria-invalid={showErrors && Boolean(detailErrors.pickupDate)}
                               className={`${inputCls} ${showErrors && detailErrors.pickupDate ? invalidInputCls : ''}`}
                             />
