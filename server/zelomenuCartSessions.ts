@@ -210,6 +210,7 @@ type PublicBusinessHoursStatus = {
   configured: boolean;
   openNow: boolean;
   label: string | null;
+  closedDays: string[];
 };
 
 export type PublicCartResponse = {
@@ -448,7 +449,7 @@ function isPublicWindowOpen(nowMinutes: number, openMinutes: number, closeMinute
 function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): PublicBusinessHoursStatus {
   const openMinutes = parsePublicTime(config.openTime);
   const closeMinutes = parsePublicTime(config.closeTime);
-  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null };
+  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [] };
   const timezone = config.timezone || 'America/Sao_Paulo';
   const now = new Date();
   const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, weekday: 'short' }).format(now).toLowerCase().replace(/\./g, '');
@@ -464,6 +465,7 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
     configured: true,
     openNow: !closedToday && isPublicWindowOpen(nowMinutes, openMinutes, closeMinutes),
     label: `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`,
+    closedDays: config.closedDays ?? [],
   };
 }
 
@@ -1209,6 +1211,23 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
 
       if (pickupMinutes === null) {
         throw new Error('PICKUP_TIME_INVALID:Horário de retirada inválido.');
+      }
+
+      // Check if pickup date+time is in the past (in the store's timezone)
+      if (typeof pickupDate === 'string' && pickupTime) {
+        const now = new Date();
+        const pickup = new Date(`${pickupDate}T${pickupTime}:00`);
+        // Format both to ISO-like comparable string in the store's timezone
+        const toTzISO = (d: Date) => {
+          const parts = new Intl.DateTimeFormat('pt-BR', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);
+          const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+          return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
+        };
+        if (toTzISO(pickup) < toTzISO(now)) {
+          throw new Error(
+            'PICKUP_IN_PAST:Horário de retirada já passou. Escolha um horário futuro.'
+          );
+        }
       }
 
       if (!isPublicWindowOpen(pickupMinutes, openMinutes, closeMinutes)) {

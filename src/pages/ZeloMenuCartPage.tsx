@@ -420,6 +420,23 @@ export default function ZeloMenuCartPage() {
       return `Horário fora do funcionamento da loja (${bh.label}).`;
     }
 
+    // Validate pickup date+time is not in the past
+    const pickup = new Date(`${draft.pickupDate}T${draft.pickupTime}:00`);
+    if (pickup < new Date()) {
+      return 'Horário de retirada já passou. Escolha um horário futuro.';
+    }
+
+    // Validate pickup date is not a closed day
+    const closedDays = bh.closedDays;
+    if (closedDays && closedDays.length > 0) {
+      const weekday = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' }).format(pickup).toLowerCase().replace(/\./g, '');
+      const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
+      const mapped = dayMap[weekday];
+      if (mapped && closedDays.includes(mapped)) {
+        return `A loja não funciona aos ${mapped.toLowerCase() === 'dom' ? 'domingos' : mapped.toLowerCase() + 's'}. Escolha outro dia.`;
+      }
+    }
+
     return null;
   }, [payload?.business?.businessHours, scheduleMode, draft?.pickupTime, draft?.pickupDate]);
 
