@@ -21,6 +21,12 @@ import type {
 import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDelivery.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
+import {
+  businessDayLabel,
+  isBusinessWindowOpen,
+  isPickupInPast,
+  parseBusinessTime,
+} from '../src/domain/zelomenuBusinessHours.js';
 
 // ─── Token helpers (node:crypto, backend only) ─────────────────────────────────
 
@@ -158,6 +164,7 @@ type TokenRow = {
   revoked_at: string | null;
   created_at: string;
   last_seen_at: string | null;
+  expires_at: string | null;
 };
 
 const CART_SESSION_COLUMNS = `
@@ -425,31 +432,15 @@ function mapSessionRow(row: SessionRow): PublicCartSession {
 
 const PUBLIC_DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-function parsePublicTime(value: unknown): number | null {
-  if (typeof value !== 'string') return null;
-  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-  return hour * 60 + minute;
-}
-
 function publicMinutesLabel(minutes: number): string {
   const hour = Math.floor(minutes / 60);
   const minute = minutes % 60;
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function isPublicWindowOpen(nowMinutes: number, openMinutes: number, closeMinutes: number): boolean {
-  if (openMinutes <= closeMinutes) return nowMinutes >= openMinutes && nowMinutes <= closeMinutes;
-  return nowMinutes >= openMinutes || nowMinutes <= closeMinutes;
-}
-
 function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): PublicBusinessHoursStatus {
-  const openMinutes = parsePublicTime(config.openTime);
-  const closeMinutes = parsePublicTime(config.closeTime);
+  const openMinutes = parseBusinessTime(config.openTime);
+  const closeMinutes = parseBusinessTime(config.closeTime);
   if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone: config.timezone || 'America/Sao_Paulo' };
   const timezone = config.timezone || 'America/Sao_Paulo';
   const now = new Date();
@@ -464,7 +455,7 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
   const closedToday = config.closedDays.includes(day);
   return {
     configured: true,
-    openNow: !closedToday && isPublicWindowOpen(nowMinutes, openMinutes, closeMinutes),
+    openNow: !closedToday && isBusinessWindowOpen(nowMinutes, openMinutes, closeMinutes),
     label: `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`,
     closedDays: config.closedDays ?? [],
     timezone: timezone,
@@ -520,13 +511,14 @@ function normalizeIncomingModifierSelections(value: unknown): ZeloMenuModifierSe
 
 function normalizeIncomingItems(items: unknown): ZeloMenuCartItemInput[] {
   if (!Array.isArray(items)) return [];
+  if (items.length > 50) throw new Error('CART_LINE_LIMIT_EXCEEDED');
   return items.flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
     const typed = item as { productId?: unknown; productName?: unknown; quantity?: unknown; notes?: unknown; selectedOptions?: unknown };
     const productName = sanitizeText(typed.productName, 120);
     const productId = typed.productId == null ? null : Number(typed.productId);
     const quantity = normalizePositiveInt(typed.quantity);
-    if (!productName || quantity === null) return [];
+    if (!productName || quantity === null || quantity > 999 || !Number.isSafeInteger(quantity)) throw new Error('INVALID_QUANTITY');
     return [{
       productId: Number.isFinite(productId) ? productId : null,
       productName,
@@ -534,7 +526,7 @@ function normalizeIncomingItems(items: unknown): ZeloMenuCartItemInput[] {
       notes: sanitizeText(typed.notes, 200),
       selectedOptions: normalizeIncomingModifierSelections(typed.selectedOptions),
     }];
-  }).slice(0, 50);
+  });
 }
 
 function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
@@ -572,13 +564,18 @@ async function resolveSnapshots(
   const config = getConfig(empresaId);
   const resolvedItems: ZeloMenuCartItemSnapshot[] = [];
 
+  const aggregated = new Map<number, number>();
+  for (const item of params.items) {
+    if (item.productId != null) aggregated.set(item.productId, (aggregated.get(item.productId) ?? 0) + item.quantity);
+  }
+
   for (const item of params.items) {
     const product = findCatalogProduct(config.products, { productId: item.productId ?? null, productName: item.productName });
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
     if (!product.available) throw new Error('PRODUCT_UNAVAILABLE');
     if (product.stockControlled) {
       const stockQuantity = Number(product.stockQuantity ?? 0);
-      if (item.quantity > stockQuantity) throw new Error('PRODUCT_STOCK_EXCEEDED');
+      if ((item.productId != null ? aggregated.get(item.productId) ?? item.quantity : item.quantity) > stockQuantity) throw new Error('PRODUCT_STOCK_EXCEEDED');
     }
     const modifierResolution = resolveModifierSelections(product.modifierGroups, item.selectedOptions ?? []);
     if (modifierResolution.ok === false) throw new Error(`MODIFIER_INVALID:${modifierResolution.message}`);
@@ -624,6 +621,7 @@ async function resolveSnapshots(
     deliveryFeeToConfirm,
   };
   const pricing = computeCartPricing(resolvedItems, deliveryFee);
+  if (!Number.isFinite(pricing.total) || pricing.total < 0 || pricing.total > Number(process.env.ZELOMENU_MAX_ORDER_TOTAL || 100000)) throw new Error('ORDER_TOTAL_LIMIT_EXCEEDED');
   const declaredMethod = sanitizeText(params.paymentMethod, 40);
   const payment: ZeloMenuPaymentSnapshot = {
     declaredMethod,
@@ -640,11 +638,13 @@ async function findTokenRowByHash(token: string): Promise<TokenRow | null> {
   if (!normalized) return null;
   const { data, error } = await getServiceSupabase()
     .from('zelomenu_cart_tokens')
-    .select('id, session_id, token_hash, token_last4, issued_for_revision, revoked_at, created_at, last_seen_at')
+    .select('id, session_id, token_hash, token_last4, issued_for_revision, revoked_at, created_at, last_seen_at, expires_at')
     .eq('token_hash', hashPublicCartToken(normalized))
     .maybeSingle();
   if (error) throw error;
-  return (data as TokenRow | null) ?? null;
+  const row = (data as TokenRow | null) ?? null;
+  if (row?.expires_at && Date.parse(row.expires_at) <= Date.now()) throw new Error('CART_TOKEN_EXPIRED');
+  return row;
 }
 
 async function findSessionById(sessionId: string): Promise<SessionRow | null> {
@@ -674,7 +674,7 @@ async function issueFreshCartToken(
   await getServiceSupabase().from('zelomenu_cart_tokens').update({ revoked_at: now }).eq('session_id', sessionId).is('revoked_at', null);
   const { error: tokenError } = await getServiceSupabase()
     .from('zelomenu_cart_tokens')
-    .insert({ session_id: sessionId, token_hash: tokenData.tokenHash, token_last4: tokenData.tokenLast4, issued_for_revision: revision, created_at: now });
+    .insert({ session_id: sessionId, token_hash: tokenData.tokenHash, token_last4: tokenData.tokenLast4, issued_for_revision: revision, created_at: now, expires_at: new Date(Date.parse(now) + 24 * 60 * 60 * 1000).toISOString() });
   if (tokenError) throw tokenError;
   const { error: sessionTokenError } = await getServiceSupabase()
     .from('zelomenu_cart_sessions')
@@ -750,12 +750,15 @@ async function persistRevalidation(sessionId: string, revalidation: ZeloMenuCart
   if (error) throw error;
 }
 
-async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenRow: TokenRow): Promise<PublicCartResponse> {
+async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenRow: TokenRow, persistAccess = true): Promise<PublicCartResponse> {
   const session = mapSessionRow(sessionRow);
   const sessionForRevalidation = { ...session, metadata: { ...session.metadata, empresaId: sessionRow.empresa_id } };
   const revalidation = await runRevalidation(sessionForRevalidation);
-  await persistRevalidation(session.id, revalidation);
-  await touchToken(tokenRow.id);
+  if (persistAccess) {
+    await persistRevalidation(session.id, revalidation);
+    // Sample access writes to avoid turning every public GET into two UPDATEs.
+    if (!tokenRow.last_seen_at || Date.now() - Date.parse(tokenRow.last_seen_at) > 15 * 60 * 1000) await touchToken(tokenRow.id);
+  }
   await loadCatalogFromDb(sessionRow.empresa_id);
   const config = getConfig(sessionRow.empresa_id);
   session.lastRevalidatedAt = revalidation.checkedAt;
@@ -1103,12 +1106,13 @@ export async function getPublicCartSession(token: string): Promise<PublicCartRes
   if (!tokenRow) return null;
   const sessionRow = await findSessionById(tokenRow.session_id);
   if (!sessionRow || sessionRow.archived_at) return null;
-  return buildPublicResponse(normalized, sessionRow, tokenRow);
+  return buildPublicResponse(normalized, sessionRow, tokenRow, false);
 }
 
 export async function updatePublicCartSession(
   token: string,
   patch: {
+    expectedRevision?: number;
     customerName?: string | null;
     customerPhone?: string | null;
     items?: ZeloMenuCartItemInput[];
@@ -1125,6 +1129,9 @@ export async function updatePublicCartSession(
   if (!sessionRow || sessionRow.archived_at) return null;
   if (sessionRow.current_token_hash !== tokenRow.token_hash || tokenRow.revoked_at) throw new Error('STALE_CART_TOKEN');
   if (sessionRow.state !== 'cart_open') throw new Error('CART_ALREADY_CONFIRMED');
+  if (!Number.isSafeInteger(patch.expectedRevision) || patch.expectedRevision !== sessionRow.revision) {
+    throw new Error('REVISION_CONFLICT');
+  }
 
   const current = mapSessionRow(sessionRow);
   const customer: ZeloMenuCustomerSnapshot = {
@@ -1153,13 +1160,17 @@ export async function updatePublicCartSession(
       updated_at: now,
     })
     .eq('id', sessionRow.id)
+    .eq('revision', patch.expectedRevision)
+    .eq('state', 'cart_open')
+    .eq('current_token_hash', tokenRow.token_hash)
     .select(CART_SESSION_COLUMNS)
-    .single();
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('REVISION_CONFLICT');
   return buildPublicResponse(normalized, data as SessionRow, tokenRow);
 }
 
-export async function confirmPublicCartSession(token: string): Promise<PublicCartConfirmResponse | null> {
+export async function confirmPublicCartSession(token: string, expectedRevision: number, idempotencyKey: string): Promise<PublicCartConfirmResponse | null> {
   const normalized = normalizePublicCartToken(token);
   if (!normalized) return null;
   const tokenRow = await findTokenRowByHash(normalized);
@@ -1167,6 +1178,8 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
   const sessionRow = await findSessionById(tokenRow.session_id);
   if (!sessionRow || sessionRow.archived_at) return null;
   if (sessionRow.current_token_hash !== tokenRow.token_hash || tokenRow.revoked_at) throw new Error('STALE_CART_TOKEN');
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== sessionRow.revision) throw new Error('REVISION_CONFLICT');
+  if (!/^[A-Za-z0-9_-]{16,120}$/.test(idempotencyKey)) throw new Error('IDEMPOTENCY_KEY_REQUIRED');
 
   if (sessionRow.state !== 'cart_open') {
     const isAlreadyConfirmed = sessionRow.state === 'confirmed_waiting_review' || sessionRow.state === 'confirmed_waiting_payment' || sessionRow.state === 'accepted';
@@ -1191,8 +1204,8 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
   // ── Business hours validation ──────────────────────────────────────────────
   await loadCatalogFromDb(sessionRow.empresa_id);
   const config = getConfig(sessionRow.empresa_id);
-  const openMinutes = parsePublicTime(config.openTime);
-  const closeMinutes = parsePublicTime(config.closeTime);
+  const openMinutes = parseBusinessTime(config.openTime);
+  const closeMinutes = parseBusinessTime(config.closeTime);
   if (openMinutes !== null && closeMinutes !== null) {
     const closedDays = Array.isArray(config.closedDays) ? config.closedDays : [];
     const timezone = config.timezone || 'America/Sao_Paulo';
@@ -1209,7 +1222,7 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
       // Agendado — validate pickup time against business hours
       const pickupTime = current.fulfillment.pickupTime;
       const pickupDate = current.fulfillment.pickupDate;
-      const pickupMinutes = parsePublicTime(pickupTime);
+      const pickupMinutes = parseBusinessTime(pickupTime);
 
       if (pickupMinutes === null) {
         throw new Error('PICKUP_TIME_INVALID:Horário de retirada inválido.');
@@ -1217,42 +1230,22 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
 
       // Check if pickup date+time is in the past (in the store's timezone)
       if (typeof pickupDate === 'string' && pickupTime) {
-        const now = new Date();
-        const toTzStr = (d: Date) => {
-          const parts = new Intl.DateTimeFormat('pt-BR', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);
-          const g = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
-          return `${g('year')}${g('month')}${g('day')}${g('hour')}${g('minute')}${g('second')}`;
-        };
-        // Build a Date that represents pickupDate+pickupTime in the store's timezone
-        const [y, m, d] = pickupDate.split('-').map(Number);
-        const [ph, pm] = pickupTime.split(':').map(Number);
-        const baseUTC = Date.UTC(y, m - 1, d, 0, 0, 0);
-        const baseParts = new Intl.DateTimeFormat('pt-BR', { timeZone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new Date(baseUTC));
-        const baseG = (t: string) => Number(baseParts.find((p) => p.type === t)?.value ?? '0');
-        const baseHour = baseG('hour') === 24 ? 0 : baseG('hour');
-        const offsetMs = (baseHour * 3600 + baseG('minute') * 60 + baseG('second')) * 1000;
-        const pickupInTz = new Date(baseUTC - offsetMs + ph * 3600000 + pm * 60000);
-        if (toTzStr(pickupInTz) < toTzStr(now)) {
+        if (isPickupInPast(pickupDate, pickupTime, timezone)) {
           throw new Error(
             'PICKUP_IN_PAST:Horário de retirada já passou. Escolha um horário futuro.'
           );
         }
       }
 
-      if (!isPublicWindowOpen(pickupMinutes, openMinutes, closeMinutes)) {
+      if (!isBusinessWindowOpen(pickupMinutes, openMinutes, closeMinutes)) {
         throw new Error(
           'PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.'
         );
       }
 
-      // Check if pickup date falls on a closed day (only if the date is today — for
-      // future dates we cannot know if it's a holiday; for today the current state is known)
+      // Weekly closed days apply to the selected civil date.
       if (typeof pickupDate === 'string') {
-        const dateWeekday = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, weekday: 'short' }).format(
-          new Date(pickupDate + 'T12:00:00')
-        ).toLowerCase().replace(/\./g, '');
-        const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
-        const mapped = dayMap[dateWeekday] || '';
+        const mapped = businessDayLabel(pickupDate);
         if (mapped && closedDays.includes(mapped)) {
           throw new Error(
             'PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.'
@@ -1271,6 +1264,23 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
   }
 
   // ── table_order: write to ZeloPDV pedidos + double-validate comanda ──────────
+  const { data: confirmation, error: confirmationError } = await getServiceSupabase().rpc('confirm_zelomenu_cart', {
+    p_session_id: sessionRow.id,
+    p_token_hash: tokenRow.token_hash,
+    p_expected_revision: expectedRevision,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (confirmationError) {
+    const codes = ['CART_NOT_FOUND', 'STALE_CART_TOKEN', 'REVISION_CONFLICT', 'CART_ALREADY_CLOSED', 'IDEMPOTENCY_KEY_REQUIRED', 'TABLE_SESSION_EXPIRED', 'PRODUCT_STOCK_EXCEEDED', 'COMANDA_CLOSED'];
+    throw new Error(codes.find((code) => confirmationError.message.includes(code)) || 'ORDER_MATERIALIZATION_FAILED');
+  }
+  const atomic = confirmation as { state: ZeloMenuCartState; alreadyConfirmed: boolean };
+  const atomicRow = await findSessionById(sessionRow.id);
+  if (!atomicRow) throw new Error('ORDER_MATERIALIZATION_FAILED');
+  const atomicPayload = await buildPublicResponse(normalized, atomicRow, tokenRow);
+  return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed, state: atomic.state, customerMessage: atomicRow.context === 'table_order' ? 'Pedido enviado! Aguarde o garçom.' : `Pedido recebido! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}.` } };
+
+  /* istanbul ignore next -- removed after the RPC rollout is complete */
   const isTableOrder = sessionRow.context === 'table_order';
   if (isTableOrder) {
     const mesaId = (parseMetadata(sessionRow.metadata) as Record<string, unknown>).mesa_id as string | undefined;

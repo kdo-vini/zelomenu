@@ -121,6 +121,7 @@ export type ZeloMenuConfirmCartResponse = ZeloMenuPublicCartResponse & {
 };
 
 export type ZeloMenuUpdateCartPayload = {
+  expectedRevision: number;
   customerName?: string | null;
   customerPhone?: string | null;
   items?: Array<{
@@ -174,19 +175,43 @@ export interface TableOrderContext {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
+export class ZeloMenuApiError extends Error {
+  constructor(public readonly status: number, public readonly code: string, public readonly detail?: string, public readonly requestId?: string) {
+    super(detail ? `${code}:${detail}` : code);
+    this.name = 'ZeloMenuApiError';
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error((body as { error?: string; message?: string }).error || (body as { error?: string; message?: string }).message || `HTTP ${response.status}`);
+    const errorBody = body as { error?: string; detail?: string; message?: string; requestId?: string };
+    const code = errorBody.error || errorBody.message || `HTTP ${response.status}`;
+    throw new ZeloMenuApiError(response.status, code, errorBody.detail, errorBody.requestId);
   }
   return body as T;
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 12_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ZeloMenuApiError(408, 'REQUEST_TIMEOUT', 'A conexão demorou demais. Tente novamente.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export async function getMesaContext(
   slug: string,
   mesaId: string,
 ): Promise<MesaContextResponse> {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `/api/public/zelomenu/mesa/${encodeURIComponent(mesaId)}?slug=${encodeURIComponent(slug)}`,
   );
   return parseResponse<MesaContextResponse>(response);
@@ -195,7 +220,7 @@ export async function getMesaContext(
 // ─── Endpoints ─────────────────────────────────────────────────────────────────
 
 export async function getPublicCart(token: string): Promise<ZeloMenuPublicCartResponse> {
-  const response = await fetch(`/api/public/zelomenu/cart/${encodeURIComponent(token)}`, {
+  const response = await fetchWithTimeout(`/api/public/zelomenu/cart/${encodeURIComponent(token)}`, {
     cache: 'no-store',
   });
   return parseResponse<ZeloMenuPublicCartResponse>(response);
@@ -205,7 +230,7 @@ export async function updatePublicCart(
   token: string,
   payload: ZeloMenuUpdateCartPayload,
 ): Promise<ZeloMenuPublicCartResponse> {
-  const response = await fetch(`/api/public/zelomenu/cart/${encodeURIComponent(token)}`, {
+  const response = await fetchWithTimeout(`/api/public/zelomenu/cart/${encodeURIComponent(token)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -213,15 +238,17 @@ export async function updatePublicCart(
   return parseResponse<ZeloMenuPublicCartResponse>(response);
 }
 
-export async function confirmPublicCart(token: string): Promise<ZeloMenuConfirmCartResponse> {
-  const response = await fetch(`/api/public/zelomenu/cart/${encodeURIComponent(token)}/confirm`, {
+export async function confirmPublicCart(token: string, expectedRevision: number, idempotencyKey: string): Promise<ZeloMenuConfirmCartResponse> {
+  const response = await fetchWithTimeout(`/api/public/zelomenu/cart/${encodeURIComponent(token)}/confirm`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedRevision, idempotencyKey }),
   });
   return parseResponse<ZeloMenuConfirmCartResponse>(response);
 }
 
 export async function getPublicStore(slug: string): Promise<ZeloMenuPublicStoreResponse> {
-  const response = await fetch(`/api/public/zelomenu/store/${encodeURIComponent(slug)}`, {
+  const response = await fetchWithTimeout(`/api/public/zelomenu/store/${encodeURIComponent(slug)}`, {
     cache: 'no-store',
   });
   return parseResponse<ZeloMenuPublicStoreResponse>(response);

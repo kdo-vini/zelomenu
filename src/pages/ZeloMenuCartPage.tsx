@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   confirmPublicCart,
+  ZeloMenuApiError,
   getPublicCart,
   updatePublicCart,
   type ZeloMenuCatalogGroup,
@@ -38,6 +39,12 @@ import {
   type ZeloMenuSelectedModifierGroup,
 } from '../domain/zelomenuModifiers';
 import { resolveDeliveryFeeForNeighborhood } from '../domain/zelomenuDelivery';
+import {
+  businessDayLabel,
+  isBusinessWindowOpen,
+  isPickupInPast,
+  parseBusinessTime,
+} from '../domain/zelomenuBusinessHours';
 import {
   firstZeloMenuCheckoutError,
   validateZeloMenuCheckoutDetails,
@@ -252,10 +259,12 @@ function buildRevalidationToastMessage(issues: ZeloMenuCartRevalidationIssue[]):
 function buildCartUpdatePayload(
   draft: DraftState,
   scheduleMode: 'asap' | 'scheduled',
+  expectedRevision: number,
 ): ZeloMenuUpdateCartPayload {
   const pickupDate = scheduleMode === 'asap' ? todayISOdate() : draft.pickupDate;
   const pickupTime = scheduleMode === 'asap' ? nowTimeBR() : draft.pickupTime;
   return {
+    expectedRevision,
     customerName: draft.customerName || null,
     customerPhone: normalizePhoneNumber(draft.customerPhone).slice(0, 11) || null,
     items: draft.items.map((item) => ({
@@ -415,43 +424,27 @@ export default function ZeloMenuCartPage() {
     const [openStr, closeStr] = parts.map((s: string) => s.trim());
     if (!openStr || !closeStr) return null;
 
-    // Validate pickup time is within [open, close]
-    if (draft.pickupTime < openStr || draft.pickupTime > closeStr) {
+    const pickupMinutes = parseBusinessTime(draft.pickupTime);
+    const openMinutes = parseBusinessTime(openStr);
+    const closeMinutes = parseBusinessTime(closeStr);
+    if (
+      pickupMinutes === null
+      || openMinutes === null
+      || closeMinutes === null
+      || !isBusinessWindowOpen(pickupMinutes, openMinutes, closeMinutes)
+    ) {
       return `Horário fora do funcionamento da loja (${bh.label}).`;
     }
 
-    // Validate pickup date+time is not in the past (using store's timezone)
     const storeTz = bh.timezone || 'America/Sao_Paulo';
-    const toTzStr = (d: Date) => {
-      const parts = new Intl.DateTimeFormat('pt-BR', { timeZone: storeTz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);
-      const g = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
-      return `${g('year')}${g('month')}${g('day')}${g('hour')}${g('minute')}${g('second')}`;
-    };
-    // Build a Date that represents pickupDate+pickupTime in the store's timezone
-    // Use Date.UTC to create a base, then adjust by the timezone offset
-    const [y, m, d] = draft.pickupDate.split('-').map(Number);
-    const [h, min] = draft.pickupTime.split(':').map(Number);
-    // Start with UTC midnight of that date, then find the offset to store timezone
-    const baseUTC = Date.UTC(y, m - 1, d, 0, 0, 0);
-    const baseParts = new Intl.DateTimeFormat('pt-BR', { timeZone: storeTz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new Date(baseUTC));
-    const baseG = (t: string) => Number(baseParts.find((p) => p.type === t)?.value ?? '0');
-    const baseHour = baseG('hour') === 24 ? 0 : baseG('hour');
-    const baseMin = baseG('minute');
-    const baseSec = baseG('second');
-    // The offset from UTC midnight to "noon in store tz" tells us the timezone offset
-    // We want the timestamp where storeTz shows h:min:00
-    const offsetMs = (baseHour * 3600 + baseMin * 60 + baseSec) * 1000;
-    const pickupInStoreTz = new Date(baseUTC - offsetMs + h * 3600000 + min * 60000);
-    if (toTzStr(pickupInStoreTz) < toTzStr(new Date())) {
+    if (isPickupInPast(draft.pickupDate, draft.pickupTime, storeTz)) {
       return 'Horário de retirada já passou. Escolha um horário futuro.';
     }
 
-    // Validate pickup date is not a closed day (using store's timezone)
+    // Weekly closed days apply to the selected civil date.
     const closedDays = bh.closedDays;
     if (closedDays && closedDays.length > 0) {
-      const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: storeTz, weekday: 'short' }).format(pickupInStoreTz).toLowerCase().replace(/\./g, '');
-      const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
-      const mapped = dayMap[weekday];
+      const mapped = businessDayLabel(draft.pickupDate);
       if (mapped && closedDays.includes(mapped)) {
         return `A loja não funciona aos ${mapped.toLowerCase() === 'dom' ? 'domingos' : mapped.toLowerCase() + 's'}. Escolha outro dia.`;
       }
@@ -463,8 +456,8 @@ export default function ZeloMenuCartPage() {
   const canConfirm = isOpen && !isStale && (draft?.items.length ?? 0) > 0 && !scheduleTimeError;
 
   const autosavePayload = useMemo(
-    () => draft ? buildCartUpdatePayload(draft, scheduleMode) : null,
-    [draft, scheduleMode],
+    () => draft && payload ? buildCartUpdatePayload(draft, scheduleMode, payload.session.revision) : null,
+    [draft, scheduleMode, payload?.session.revision],
   );
   const autosaveSignature = useMemo(
     () => autosavePayload ? JSON.stringify(autosavePayload) : '',
@@ -483,12 +476,17 @@ export default function ZeloMenuCartPage() {
         setPayload(updated);
         setSaveStatus('saved');
       })
-      .catch(() => {
-        if (version === saveVersionRef.current) setSaveStatus('error');
+      .catch(async (error) => {
+        if (version !== saveVersionRef.current) return;
+        setSaveStatus('error');
+        if (error instanceof ZeloMenuApiError && error.code === 'REVISION_CONFLICT') {
+          toast.error(error.detail || 'O carrinho mudou em outra aba. Revise os dados atualizados.');
+          await load('refresh');
+        }
       });
     saveQueueRef.current = queued;
     return queued;
-  }, [token]);
+  }, [token, toast]);
 
   const flushPendingAutosave = useCallback((): Promise<void> => {
     const latest = latestAutosaveRef.current;
@@ -563,7 +561,7 @@ export default function ZeloMenuCartPage() {
       setConfirming(true);
       setError(null);
       await flushPendingAutosave();
-      const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode));
+      const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode, payload.session.revision));
       syncStoreCacheFromResponse(updated);
 
       const updateIssues = updated.revalidation.issues ?? [];
@@ -577,7 +575,7 @@ export default function ZeloMenuCartPage() {
         return;
       }
 
-      const next = await confirmPublicCart(token);
+      const next = await confirmPublicCart(token, updated.session.revision, crypto.randomUUID());
       syncStoreCacheFromResponse(next);
       const finalIssues = next.revalidation.issues ?? [];
       if (!next.confirmation.confirmed && finalIssues.length > 0) {

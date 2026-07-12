@@ -5,3 +5,7 @@ dist
 .env.*.local
 *.log
 .DS_Store
+.claude/
+.impeccable/
+skills-lock.json
+supabase/.temp/

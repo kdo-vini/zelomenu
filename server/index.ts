@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug } from './zelomenuCartSessions.js';
 import { requireEmpresaId, getEmpresaUserId } from './supabaseServer.js';
@@ -16,6 +17,13 @@ const PORT = Number(process.env.PORT) || 3101;
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+app.use((req, res, next) => {
+  const requestId = req.header('x-request-id')?.slice(0, 100) || randomUUID();
+  res.locals.requestId = requestId;
+  res.setHeader('x-request-id', requestId);
+  next();
+});
 
 // Trust proxy headers when behind a reverse proxy
 app.set('trust proxy', 1);
@@ -75,6 +83,8 @@ app.get('/api/public/zelomenu/cart/:token', async (req, res) => {
     if (!result) return res.status(404).json({ error: 'CART_NOT_FOUND' });
     res.json(result);
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === 'CART_TOKEN_EXPIRED') return res.status(410).json({ error: 'CART_TOKEN_EXPIRED', requestId: res.locals.requestId });
     console.error('[ZeloMenu] getPublicCartSession error:', error);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
   }
@@ -90,12 +100,15 @@ app.patch('/api/public/zelomenu/cart/:token', async (req, res) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[ZeloMenu] updatePublicCartSession error:', error);
-    if (message === 'STALE_CART_TOKEN') return res.status(409).json({ error: 'STALE_CART_TOKEN' });
+    if (message === 'STALE_CART_TOKEN') return res.status(409).json({ error: 'STALE_CART_TOKEN', requestId: res.locals.requestId });
+    if (message === 'CART_TOKEN_EXPIRED') return res.status(410).json({ error: 'CART_TOKEN_EXPIRED', requestId: res.locals.requestId });
+    if (message === 'REVISION_CONFLICT') return res.status(409).json({ error: 'REVISION_CONFLICT', detail: 'O carrinho foi alterado em outra aba. Revise os dados atualizados.', requestId: res.locals.requestId });
     if (message === 'CART_ALREADY_CONFIRMED') return res.status(409).json({ error: 'CART_ALREADY_CONFIRMED' });
     if (message === 'PRODUCT_NOT_FOUND') return res.status(400).json({ error: 'PRODUCT_NOT_FOUND' });
     if (message === 'PRODUCT_UNAVAILABLE') return res.status(400).json({ error: 'PRODUCT_UNAVAILABLE' });
     if (message === 'PRODUCT_STOCK_EXCEEDED') return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
+    if (message === 'INVALID_QUANTITY' || message === 'CART_LINE_LIMIT_EXCEEDED' || message === 'ORDER_TOTAL_LIMIT_EXCEEDED') return res.status(400).json({ error: message, requestId: res.locals.requestId });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
     res.status(500).json({ error: 'INTERNAL_ERROR' });
   }
@@ -105,7 +118,7 @@ app.patch('/api/public/zelomenu/cart/:token', async (req, res) => {
 
 app.post('/api/public/zelomenu/cart/:token/confirm', async (req, res) => {
   try {
-    const result = await confirmPublicCartSession(req.params.token);
+    const result = await confirmPublicCartSession(req.params.token, req.body.expectedRevision, req.body.idempotencyKey);
     if (!result) return res.status(404).json({ error: 'CART_NOT_FOUND' });
     res.json(result);
   } catch (error) {
@@ -113,6 +126,10 @@ app.post('/api/public/zelomenu/cart/:token/confirm', async (req, res) => {
     console.error('[ZeloMenu] confirmPublicCartSession error:', error);
     if (message === 'STALE_CART_TOKEN') return res.status(409).json({ error: 'STALE_CART_TOKEN' });
     if (message === 'CART_ALREADY_CLOSED') return res.status(409).json({ error: 'CART_ALREADY_CLOSED' });
+    if (message === 'REVISION_CONFLICT') return res.status(409).json({ error: 'REVISION_CONFLICT', requestId: res.locals.requestId });
+    if (message === 'IDEMPOTENCY_KEY_REQUIRED') return res.status(400).json({ error: 'IDEMPOTENCY_KEY_REQUIRED', requestId: res.locals.requestId });
+    if (message === 'TABLE_SESSION_EXPIRED') return res.status(410).json({ error: 'TABLE_SESSION_EXPIRED', requestId: res.locals.requestId });
+    if (message === 'ORDER_MATERIALIZATION_FAILED') return res.status(500).json({ error: 'ORDER_MATERIALIZATION_FAILED', requestId: res.locals.requestId });
     if (message === 'CUSTOMER_DETAILS_REQUIRED') return res.status(400).json({ error: 'CUSTOMER_DETAILS_REQUIRED' });
     if (message === 'COMANDA_CLOSED') return res.status(409).json({ error: 'COMANDA_CLOSED' });
     if (message === 'TABLE_TAKEN_BY_OTHER_GROUP') return res.status(409).json({ error: 'TABLE_TAKEN_BY_OTHER_GROUP' });
@@ -124,7 +141,10 @@ app.post('/api/public/zelomenu/cart/:token/confirm', async (req, res) => {
     if (message.startsWith('PICKUP_IN_PAST:')) return res.status(400).json({ error: 'PICKUP_IN_PAST', detail: message.slice('PICKUP_IN_PAST:'.length) });
     // Fallback genérico — nunca expõe detalhes internos
     console.error('[ZeloMenu] confirmPublicCartSession unhandled error:', message);
-    res.status(500).json({ error: 'ERRO_INTERNO:Ocorreu um erro inesperado. Tente novamente mais tarde.' });
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      detail: 'Ocorreu um erro inesperado. Tente novamente mais tarde.',
+    });
   }
 });
 
