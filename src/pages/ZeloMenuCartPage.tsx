@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Banknote,
@@ -43,6 +43,7 @@ import {
   validateZeloMenuCheckoutDetails,
 } from '../domain/zelomenuCheckout';
 import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
+import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { useToast } from '../contexts/ToastContext';
 
@@ -377,7 +378,6 @@ export default function ZeloMenuCartPage() {
       : '';
   const revalidationIssues = payload?.revalidation.issues ?? [];
   const revalidationIssueSignature = revalidationSignature(revalidationIssues);
-  const canConfirm = isOpen && !isStale && (draft?.items.length ?? 0) > 0;
   const effectivePickupDate = scheduleMode === 'asap' ? todayISOdate() : (draft?.pickupDate ?? '');
   const effectivePickupTime = scheduleMode === 'asap' ? nowTimeBR() : (draft?.pickupTime ?? '');
   const detailErrors = draft && isPublicOrder
@@ -392,6 +392,30 @@ export default function ZeloMenuCartPage() {
     : {};
 
   const validateDetails = (): string | null => firstZeloMenuCheckoutError(detailErrors);
+
+  // ── Business hours validation (frontend) ──────────────────────────────────
+  const scheduleTimeError: string | null = useMemo(() => {
+    const bh = payload?.business?.businessHours;
+    if (!bh || !bh.configured || !bh.label) return null;
+    if (scheduleMode !== 'scheduled' || !draft) return null;
+    if (!draft.pickupTime || !draft.pickupDate) return null;
+
+    // Parse label "HH:mm–HH:mm"
+    const parts = bh.label.split('–');
+    if (parts.length !== 2) return null;
+    const [openStr, closeStr] = parts.map((s: string) => s.trim());
+    if (!openStr || !closeStr) return null;
+
+    // Validate pickup time is within [open, close]
+    if (draft.pickupTime < openStr || draft.pickupTime > closeStr) {
+      return `Horário fora do funcionamento da loja (${bh.label}).`;
+    }
+
+    return null;
+  }, [payload?.business?.businessHours, scheduleMode, draft?.pickupTime, draft?.pickupDate]);
+
+  const canConfirm = isOpen && !isStale && (draft?.items.length ?? 0) > 0 && !scheduleTimeError;
+
   const autosavePayload = useMemo(
     () => draft ? buildCartUpdatePayload(draft, scheduleMode) : null,
     [draft, scheduleMode],
@@ -483,6 +507,12 @@ export default function ZeloMenuCartPage() {
         return;
       }
     }
+    if (scheduleTimeError) {
+      setShowErrors(true);
+      setStep(1);
+      toast.error(scheduleTimeError);
+      return;
+    }
     try {
       setConfirming(true);
       setError(null);
@@ -531,6 +561,17 @@ export default function ZeloMenuCartPage() {
         toast.error('Esta mesa está sendo atendida por outro grupo. Escaneie o QR novamente.');
       } else if (errMessage === 'COMANDA_CLOSED') {
         toast.error('Sessão encerrada. Peça ao garçom para abrir uma nova comanda.');
+      } else if (errMessage.startsWith('STORE_CLOSED_ASAP:')) {
+        // Show just the user-friendly part after the prefix
+        toast.error(errMessage.slice('STORE_CLOSED_ASAP:'.length));
+      } else if (errMessage.startsWith('PICKUP_OUTSIDE_HOURS:')) {
+        toast.error(errMessage.slice('PICKUP_OUTSIDE_HOURS:'.length));
+      } else if (errMessage.startsWith('PICKUP_CLOSED_DAY:')) {
+        toast.error(errMessage.slice('PICKUP_CLOSED_DAY:'.length));
+      } else if (errMessage === 'ORDER_MATERIALIZATION_FAILED') {
+        toast.error('Erro ao registrar o pedido. Tente novamente.');
+      } else if (errMessage.startsWith('PICKUP_TIME_INVALID:')) {
+        toast.error(errMessage.slice('PICKUP_TIME_INVALID:'.length));
       } else {
         toast.error(errMessage || 'Não consegui confirmar o pedido.');
       }
@@ -761,6 +802,18 @@ export default function ZeloMenuCartPage() {
                 <MessageCircle className="h-3.5 w-3.5" strokeWidth={2} />
                 {isTableOrder ? 'Aguarde o garçom' : 'Aguarde o contato da loja'}
               </span>
+              {!isTableOrder && (() => {
+                const slug = payload?.session?.metadata?.slug;
+                const storeSlug = typeof slug === 'string' ? slug : null;
+                return storeSlug ? (
+                  <Link
+                    to={buildPublicStorePath(storeSlug)}
+                    className="mt-6 inline-flex h-11 items-center justify-center rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-6 text-[14px] font-semibold text-[var(--color-brand)] transition-colors hover:bg-[var(--color-brand-soft)] active:scale-90"
+                  >
+                    Voltar ao cardápio
+                  </Link>
+                ) : null;
+              })()}
             </div>
           </div>
         ) : (
@@ -1086,10 +1139,13 @@ export default function ZeloMenuCartPage() {
                               onChange={(event) => updateField('pickupTime', event.target.value)}
                               readOnly={!isOpen}
                               required
-                              aria-invalid={showErrors && Boolean(detailErrors.pickupTime)}
-                              className={`${inputCls} ${showErrors && detailErrors.pickupTime ? invalidInputCls : ''}`}
+                              aria-invalid={Boolean((showErrors && detailErrors.pickupTime) || scheduleTimeError)}
+                              className={`${inputCls} ${(showErrors && detailErrors.pickupTime) || scheduleTimeError ? invalidInputCls : ''}`}
                             />
                             {fieldError(detailErrors.pickupTime)}
+                            {scheduleTimeError ? (
+                              <span role="alert" className="text-[11px] text-[var(--color-alert)]">{scheduleTimeError}</span>
+                            ) : null}
                           </label>
                         </div>
                       )}

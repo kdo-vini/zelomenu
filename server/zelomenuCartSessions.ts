@@ -864,8 +864,8 @@ async function createAcceptedOrderRecord(input: {
       customer_name: input.customer.name || 'Cliente',
       customer_phone: input.customer.phone || null,
       items: input.cart.items.map((item) => ({ product: formatModifierAwareCartItem(item), quantity: item.quantity })),
-      pickup_date: input.fulfillment.pickupDate,
-      pickup_time: input.fulfillment.pickupTime,
+      pickup_date: input.fulfillment.pickupDate || '',
+      pickup_time: input.fulfillment.pickupTime || '',
       payment_method: input.payment.declaredMethod || null,
       delivery_address: input.fulfillment.deliveryAddress || null,
       delivery_neighborhood: input.fulfillment.deliveryNeighborhood || null,
@@ -1184,6 +1184,56 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
     if (detailError) throw new Error('CUSTOMER_DETAILS_REQUIRED');
   }
 
+  // ── Business hours validation ──────────────────────────────────────────────
+  await loadCatalogFromDb(sessionRow.empresa_id);
+  const config = getConfig(sessionRow.empresa_id);
+  const openMinutes = parsePublicTime(config.openTime);
+  const closeMinutes = parsePublicTime(config.closeTime);
+  if (openMinutes !== null && closeMinutes !== null) {
+    const closedDays = Array.isArray(config.closedDays) ? config.closedDays : [];
+    const timezone = config.timezone || 'America/Sao_Paulo';
+
+    if (current.fulfillment.asap === true) {
+      // "Pra já" — check if store is currently open
+      const hoursStatus = buildPublicBusinessHoursStatus(config);
+      if (hoursStatus.openNow === false) {
+        throw new Error(
+          'STORE_CLOSED_ASAP:Loja fechada agora. Você pode montar o pedido e agendar para um horário de funcionamento disponível.'
+        );
+      }
+    } else {
+      // Agendado — validate pickup time against business hours
+      const pickupTime = current.fulfillment.pickupTime;
+      const pickupDate = current.fulfillment.pickupDate;
+      const pickupMinutes = parsePublicTime(pickupTime);
+
+      if (pickupMinutes === null) {
+        throw new Error('PICKUP_TIME_INVALID:Horário de retirada inválido.');
+      }
+
+      if (!isPublicWindowOpen(pickupMinutes, openMinutes, closeMinutes)) {
+        throw new Error(
+          'PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.'
+        );
+      }
+
+      // Check if pickup date falls on a closed day (only if the date is today — for
+      // future dates we cannot know if it's a holiday; for today the current state is known)
+      if (typeof pickupDate === 'string') {
+        const dateWeekday = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, weekday: 'short' }).format(
+          new Date(pickupDate + 'T12:00:00')
+        ).toLowerCase().replace(/\./g, '');
+        const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
+        const mapped = dayMap[dateWeekday] || '';
+        if (mapped && closedDays.includes(mapped)) {
+          throw new Error(
+            'PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.'
+          );
+        }
+      }
+    }
+  }
+
   const revalidation = await runRevalidation({ ...current, metadata: { ...current.metadata, empresaId: sessionRow.empresa_id } });
 
   if (!revalidation.ok || !revalidation.previewCart || !revalidation.previewPricing || !revalidation.previewPayment) {
@@ -1258,23 +1308,57 @@ export async function confirmPublicCartSession(token: string): Promise<PublicCar
   const customerMessage = `Pedido recebido! Número: #${confirmedRow.ordering_id.slice(0, 8).toUpperCase()}. A loja entrará em contato em breve.`;
 
   if (confirmedRow.context === 'public_order') {
-    try {
-      const orderId = await createAcceptedOrderRecord({
-        empresaId: confirmedRow.empresa_id,
-        customer: current.customer,
-        cart: revalidation.previewCart,
-        fulfillment: current.fulfillment,
-        pricing: revalidation.previewPricing,
-        payment: revalidation.previewPayment,
-      });
+    // Best-effort stock decrement (fire-and-forget, never blocks confirm)
+    void decrementAcceptedOrderStockBestEffort(confirmedRow.empresa_id, revalidation.previewCart.items)
+      .catch((err) => console.error('[ZeloMenu] stock decrement failed:', err));
+
+    // Materialize order into zelochat_orders with retry
+    let lastOrderErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const orderId = await createAcceptedOrderRecord({
+          empresaId: confirmedRow.empresa_id,
+          customer: current.customer,
+          cart: revalidation.previewCart,
+          fulfillment: current.fulfillment,
+          pricing: revalidation.previewPricing,
+          payment: revalidation.previewPayment,
+        });
+        await getServiceSupabase()
+          .from('zelomenu_cart_sessions')
+          .update({ metadata: { ...parseMetadata(confirmedRow.metadata), productionOrderId: orderId } })
+          .eq('id', confirmedRow.id);
+        lastOrderErr = undefined;
+        break;
+      } catch (err) {
+        lastOrderErr = err;
+        console.error(`[ZeloMenu] public_order: failed to materialize order (attempt ${attempt + 1}/3):`, err);
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    }
+
+    if (lastOrderErr) {
+      // Revert session back to cart_open so the customer can retry
+      const revertedAt = new Date().toISOString();
       await getServiceSupabase()
         .from('zelomenu_cart_sessions')
-        .update({ metadata: { ...parseMetadata(confirmedRow.metadata), productionOrderId: orderId } })
+        .update({
+          state: 'cart_open',
+          confirmed_at: null,
+          updated_at: revertedAt,
+          last_revalidation: {
+            checkedAt: revertedAt,
+            ok: false,
+            issues: [{ code: 'materialization_failed' as string, message: 'Erro ao registrar o pedido. Tente novamente.' }],
+            previewCart: null,
+            previewPricing: null,
+            previewPayment: null,
+          },
+        })
         .eq('id', confirmedRow.id);
-      void decrementAcceptedOrderStockBestEffort(confirmedRow.empresa_id, revalidation.previewCart.items)
-        .catch((err) => console.error('[ZeloMenu] stock decrement failed:', err));
-    } catch (orderErr) {
-      console.error('[ZeloMenu] public_order: failed to materialize order on confirm:', orderErr);
+      throw new Error('ORDER_MATERIALIZATION_FAILED');
     }
   }
 
