@@ -119,6 +119,14 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
   };
 }
 
+function deriveScheduleMode(payload: ZeloMenuPublicCartResponse): 'asap' | 'scheduled' {
+  const f = payload.session.fulfillment;
+  const scheduled = f.asap === true
+    ? false
+    : Boolean(f.pickupTime) || (Boolean(f.pickupDate) && f.pickupDate !== todayISOdate());
+  return scheduled ? 'scheduled' : 'asap';
+}
+
 function catalogProductMap(groups: ZeloMenuCatalogGroup[]): Map<number, ZeloMenuCatalogProduct> {
   const next = new Map<number, ZeloMenuCatalogProduct>();
   for (const group of groups) {
@@ -313,6 +321,7 @@ export default function ZeloMenuCartPage() {
       if (mode === 'refresh') revalidationToastShownRef.current = '';
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
+      setScheduleMode(deriveScheduleMode(next));
       document.title = next.business.name ? `${next.business.name} | Revisar pedido` : 'Revisar pedido';
     } catch (err) {
       if (requestId !== loadRequestRef.current) return;
@@ -349,15 +358,6 @@ export default function ZeloMenuCartPage() {
       document.title = 'ZeloMenu';
     };
   }, [token]);
-
-  useEffect(() => {
-    if (!payload) return;
-    const f = payload.session.fulfillment;
-    const scheduled = f.asap === true
-      ? false
-      : Boolean(f.pickupTime) || (Boolean(f.pickupDate) && f.pickupDate !== todayISOdate());
-    setScheduleMode(scheduled ? 'scheduled' : 'asap');
-  }, [payload]);
 
   const estimated = useMemo(() => {
     if (!payload || !draft) return null;
@@ -496,6 +496,7 @@ export default function ZeloMenuCartPage() {
         revalidationToastShownRef.current = signature;
         setPayload(updated);
         setDraft(buildDraftFromPayload(updated));
+        setScheduleMode(deriveScheduleMode(updated));
         toast.error(buildRevalidationToastMessage(updateIssues));
         return;
       }
@@ -510,6 +511,7 @@ export default function ZeloMenuCartPage() {
       }
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
+      setScheduleMode(deriveScheduleMode(next));
       if (next.confirmation.confirmed) {
         toast.success(
           next.confirmation.alreadyConfirmed
