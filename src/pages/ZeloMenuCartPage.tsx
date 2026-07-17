@@ -53,6 +53,7 @@ import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
 import { buildZeloMenuAutosaveSignature } from '../domain/zeloMenuAutosave';
 import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
+import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
 import { useToast } from '../contexts/ToastContext';
 
 type DraftState = {
@@ -899,14 +900,53 @@ export default function ZeloMenuCartPage() {
               {!isTableOrder && (() => {
                 const slug = payload?.session?.metadata?.slug;
                 const storeSlug = typeof slug === 'string' ? slug : null;
-                return storeSlug ? (
-                  <Link
-                    to={buildPublicStorePath(storeSlug)}
-                    className="mt-6 inline-flex h-11 items-center justify-center rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-6 text-[14px] font-semibold text-[var(--color-brand)] transition-colors hover:bg-[var(--color-brand-soft)] active:scale-90"
-                  >
-                    Voltar ao cardápio
-                  </Link>
-                ) : null;
+                const whatsapp = payload?.business.whatsapp ?? null;
+                const whatsappHref = isPublicOrder && whatsapp
+                  ? buildWhatsAppOrderLink(
+                      whatsapp,
+                      buildWhatsAppOrderMessage({
+                        orderId: payload?.session.orderingId ?? '',
+                        customerName: draft.customerName || null,
+                        items: estimated.items.map((item) => ({
+                          name: item.productName,
+                          quantity: item.quantity,
+                          lineTotal: item.lineTotal,
+                        })),
+                        subtotal: estimated.subtotal,
+                        total: estimated.total,
+                        feeToConfirm,
+                        isDelivery,
+                        whenLabel,
+                        deliveryAddress: isDelivery ? (draft.deliveryAddress || null) : null,
+                        deliveryNeighborhood: isDelivery ? (draft.deliveryNeighborhood || null) : null,
+                        observations: draft.observations || null,
+                      }),
+                    )
+                  : null;
+                if (!whatsappHref && !storeSlug) return null;
+                return (
+                  <div className="mt-6 flex w-full max-w-[300px] flex-col gap-2.5">
+                    {whatsappHref && (
+                      <a
+                        href={whatsappHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--color-brand)] px-6 text-[14px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
+                      >
+                        <MessageCircle className="h-4 w-4" strokeWidth={2} />
+                        Enviar pedido no WhatsApp
+                      </a>
+                    )}
+                    {storeSlug && (
+                      <Link
+                        to={buildPublicStorePath(storeSlug)}
+                        className="inline-flex h-11 items-center justify-center rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-6 text-[14px] font-semibold text-[var(--color-brand)] transition-colors hover:bg-[var(--color-brand-soft)] active:scale-90"
+                      >
+                        Voltar ao cardápio
+                      </Link>
+                    )}
+                  </div>
+                );
               })()}
             </div>
           </div>

@@ -101,6 +101,7 @@ export type ZeloMenuPublicCartResponse = {
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    whatsapp?: string | null;
     businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
   catalog: ZeloMenuCatalogGroup[];
