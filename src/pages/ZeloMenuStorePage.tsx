@@ -11,6 +11,7 @@ import {
 import { resolveModifierSelections } from '../domain/zelomenuModifiers';
 import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
 import { useStoreCart } from '../hooks/useStoreCart';
+import { PublicFooter } from '../components/zelomenu/PublicFooter';
 
 type SelectedItem = ZeloMenuStoreCartItem;
 
@@ -404,6 +405,8 @@ export function ZeloMenuStorePage({
           </div>
         )}
       </main>
+
+      <PublicFooter />
 
       {/* ── Floating cart bar ────────────────────────────────────────────── */}
       {cart.lines.length > 0 ? (

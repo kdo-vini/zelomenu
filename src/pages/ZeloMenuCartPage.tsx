@@ -54,6 +54,7 @@ import { buildZeloMenuAutosaveSignature } from '../domain/zeloMenuAutosave';
 import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
+import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { useToast } from '../contexts/ToastContext';
 
 type DraftState = {
@@ -949,6 +950,7 @@ export default function ZeloMenuCartPage() {
                 );
               })()}
             </div>
+            <PublicFooter />
           </div>
         ) : (
           <div className="flex h-full flex-col">
