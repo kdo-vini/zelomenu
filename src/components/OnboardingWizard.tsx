@@ -70,6 +70,7 @@ function StepWelcomeText({
   onChange,
   onGenerate,
   generating,
+  error,
   onNext,
   onSkip,
 }: {
@@ -77,6 +78,7 @@ function StepWelcomeText({
   onChange: (v: string) => void;
   onGenerate: () => void;
   generating: boolean;
+  error: string | null;
   onNext: () => void;
   onSkip: () => void;
 }) {
@@ -124,6 +126,9 @@ function StepWelcomeText({
           )}
           {generating ? 'Gerando…' : 'Gerar com IA'}
         </button>
+        {error && (
+          <p className="text-xs text-[var(--color-alert)] px-1 mt-1">{error}</p>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -329,6 +334,7 @@ export function OnboardingWizard({ onComplete }: Props) {
   // Step 1
   const [welcomeText, setWelcomeText] = useState('');
   const [generatingWelcome, setGeneratingWelcome] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   // Step 2
   const [slug, setSlug] = useState('');
@@ -417,14 +423,15 @@ export function OnboardingWizard({ onComplete }: Props) {
   async function handleGenerate() {
     try {
       setGeneratingWelcome(true);
+      setGenerateError(null);
       const text = await generateZeloMenuWelcome({
         companyName: storeName,
         companySpecialty: storeSpecialty,
         categories: storeCategories,
       });
       setWelcomeText(text);
-    } catch {
-      // silencioso
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : 'Não foi possível gerar. Tente de novo.');
     } finally {
       setGeneratingWelcome(false);
     }
@@ -531,6 +538,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                 onChange={setWelcomeText}
                 onGenerate={handleGenerate}
                 generating={generatingWelcome}
+                error={generateError}
                 onNext={handleWelcomeNext}
                 onSkip={() => go(2)}
               />
