@@ -1218,8 +1218,6 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
   const atomicPayload = await buildPublicResponse(normalized, atomicRow, tokenRow);
   return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed === true, state: atomic.sessionState ?? atomic.state ?? atomicRow.state, customerMessage: atomicRow.context === 'table_order' ? 'Pedido enviado! Aguarde o garçom.' : `Pedido enviado para a loja! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. Aguarde a confirmação.` } };
 
- const isTableOrder = sessionRow.context === 'table_order';
- if (isTableOrder) {
 }
 
 export async function setEmpresaZeloMenuSlug(empresaId: string, rawSlug: string): Promise<string> {
