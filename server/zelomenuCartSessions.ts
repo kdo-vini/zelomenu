@@ -20,6 +20,7 @@ import type {
 } from '../src/domain/zelomenuCartSchema.js';
 import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDelivery.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
+import { toWhatsAppNumber } from '../src/domain/whatsappOrder.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
 import {
   businessDayLabel,
@@ -221,6 +222,7 @@ export type PublicCartResponse = {
   business: {
     name: string;
     address: string;
+    whatsapp: string | null;
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
@@ -795,6 +797,7 @@ async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenR
     business: {
       name: config.name,
       address: config.address,
+      whatsapp: toWhatsAppNumber(config.contato),
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
       deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
@@ -862,6 +865,7 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
     business: {
       name: config.name,
       address: config.address,
+      whatsapp: toWhatsAppNumber(config.contato),
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
       deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],

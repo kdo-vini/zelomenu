@@ -43,6 +43,7 @@ export type CatalogCategoriaGroup = {
 export type BusinessConfig = {
   name: string;
   address: string;
+  contato: string | null;
   openTime?: string;
   closeTime?: string;
   closedDays: string[];
@@ -56,6 +57,7 @@ export type BusinessConfig = {
 const DEFAULT_CONFIG: BusinessConfig = {
   name: '',
   address: '',
+  contato: null,
   closedDays: [],
   deliveryConfig: null,
   pixReceiptConfig: null,
@@ -313,7 +315,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
 
   const { data: perfilData, error: perfilError } = await supabase
     .from('empresa_perfil')
-    .select('user_id, nome_exibicao, endereco, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+    .select('user_id, nome_exibicao, endereco, contato, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone')
     .eq('id', empresaId)
     .maybeSingle();
   if (perfilError) throw perfilError;
@@ -323,6 +325,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     user_id?: string | null;
     nome_exibicao?: string | null;
     endereco?: string | null;
+    contato?: string | null;
     delivery_config?: unknown;
     pix_receipt_config?: unknown;
     horario_abertura?: string | null;
@@ -427,6 +430,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
   configMap.set(empresaId, {
     name: normalizeText(row.nome_exibicao) || 'Loja',
     address: normalizeText(row.endereco),
+    contato: normalizeText(row.contato) || null,
     openTime: normalizeText(row.horario_abertura) || undefined,
     closeTime: normalizeText(row.horario_fechamento) || undefined,
     closedDays,
