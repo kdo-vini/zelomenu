@@ -9,3 +9,5 @@ dist
 .impeccable/
 skills-lock.json
 supabase/.temp/
+e2e/test-results/
+e2e/playwright-report/
