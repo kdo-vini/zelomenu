@@ -213,7 +213,7 @@ export function ZeloMenuStorePage({
 
       {/* ── Sticky header ──────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 border-b border-[var(--color-line)] bg-[var(--color-surface)]">
-        <div className="mx-auto max-w-2xl">
+        <div className="mx-auto max-w-5xl">
 
           {/* Store identity row */}
           <div className="flex items-center gap-3 px-4 pt-4 pb-3">
@@ -302,7 +302,7 @@ export function ZeloMenuStorePage({
       </header>
 
       {/* ── Catalog body ──────────────────────────────────────────────────── */}
-      <main className="mx-auto max-w-2xl px-4 py-5">
+      <main className="mx-auto max-w-5xl px-4 py-5">
 
         {/* Mesa unavailability notice */}
         {mesaUnavailableMessage ? (
@@ -343,10 +343,13 @@ export function ZeloMenuStorePage({
           return (
             <div className="mb-8">
               <h2 className="mb-3 text-[15px] font-bold text-[var(--color-ink)]">Destaques</h2>
-              <div className="grid grid-cols-2 gap-3">
+              <div
+                className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1"
+                style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } as CSSProperties}
+              >
                 {featured.map((p) => (
-                  <div key={`featured-${p.id}`}>
-                    <PhotoCard product={p} items={cart.items} onAdd={() => cart.onAddProduct(p)} onChangeQty={cart.changeQty} onSetQty={cart.setQty} />
+                  <div key={`featured-${p.id}`} className="shrink-0">
+                    <FeaturedCard product={p} items={cart.items} onAdd={() => cart.onAddProduct(p)} onChangeQty={cart.changeQty} onSetQty={cart.setQty} />
                   </div>
                 ))}
               </div>
@@ -416,7 +419,7 @@ export function ZeloMenuStorePage({
           className="fixed inset-x-0 bottom-0 z-30 px-4"
           style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
         >
-          <div className="mx-auto max-w-2xl">
+          <div className="mx-auto max-w-md">
             <button
               type="button"
               onClick={() => void cart.continueToCart()}
@@ -503,11 +506,9 @@ function ProductGrid({
 }) {
   if (hasPhotos) {
     return (
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {products.map((p) => (
-          <div key={p.id} className="h-full">
-            <PhotoCard product={p} items={items} onAdd={() => onAdd(p)} onChangeQty={onChangeQty} onSetQty={onSetQty} />
-          </div>
+          <PhotoRow key={p.id} product={p} items={items} onAdd={() => onAdd(p)} onChangeQty={onChangeQty} onSetQty={onSetQty} />
         ))}
       </div>
     );
@@ -530,9 +531,104 @@ function ProductGrid({
   );
 }
 
-// ─── PhotoCard ────────────────────────────────────────────────────────────────
+// ─── QtyControl ───────────────────────────────────────────────────────────────
+// Shared add/stepper control used by every card variant below.
 
-function PhotoCard({
+function QtyControl({
+  product,
+  qty,
+  hasModifiers,
+  isUnit,
+  onAdd,
+  onChangeQty,
+  onSetQty,
+  size = 'md',
+}: {
+  product: ZeloMenuCatalogProduct;
+  qty: number;
+  hasModifiers: boolean;
+  isUnit: boolean;
+  onAdd: () => void;
+  onChangeQty: (key: string, delta: number) => void;
+  onSetQty: (key: string, qty: number) => void;
+  size?: 'sm' | 'md';
+}) {
+  const plainKey = `${product.id}::plain`;
+  const stepBtn = size === 'sm' ? 'h-7 w-7' : 'h-8 w-8';
+  const stepIcon = size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5';
+  const addBtn = size === 'sm' ? 'h-8 w-8' : 'h-9 w-9';
+  const addIcon = size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4';
+
+  if (qty > 0 && !hasModifiers) {
+    if (isUnit) {
+      return (
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onSetQty(plainKey, 0)}
+            className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--color-line)]`}
+            aria-label="Remover"
+          >
+            <X className={stepIcon} strokeWidth={2.5} />
+          </button>
+          <button
+            type="button"
+            onClick={onAdd}
+            className={`flex ${stepBtn} min-w-fit items-center justify-center rounded-full px-2.5 text-[13px] font-bold text-white`}
+            style={{ background: 'var(--color-brand)' }}
+            aria-label={`Editar quantidade de ${product.name}`}
+          >
+            {qty}
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onChangeQty(plainKey, -1)}
+          className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--color-line)]`}
+          aria-label="Diminuir"
+        >
+          <Minus className={stepIcon} strokeWidth={2.5} />
+        </button>
+        <span className="w-5 text-center text-[13px] font-bold tabular-nums">{qty}</span>
+        <button
+          type="button"
+          onClick={() => onChangeQty(plainKey, 1)}
+          className={`flex ${stepBtn} items-center justify-center rounded-full text-white`}
+          style={{ background: 'var(--color-brand)' }}
+          aria-label="Aumentar"
+        >
+          <Plus className={stepIcon} strokeWidth={2.5} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onAdd}
+      className={`flex ${addBtn} items-center justify-center rounded-full text-white`}
+      style={{ background: 'var(--color-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
+      onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
+      onMouseUp={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
+      aria-label={`Adicionar ${product.name}`}
+    >
+      <Plus className={addIcon} strokeWidth={2.5} />
+    </button>
+  );
+}
+
+// ─── PhotoRow ─────────────────────────────────────────────────────────────────
+// Horizontal card: name/description/price on the left, a fixed-size thumbnail
+// on the right so photos stay a supporting detail instead of the dominant
+// element (previously a full-bleed square that scaled with the grid column).
+
+function PhotoRow({
   product,
   items,
   onAdd,
@@ -546,109 +642,126 @@ function PhotoCard({
   onSetQty: (key: string, qty: number) => void;
 }) {
   const qty = getProductQty(product.id, items);
-  const plainKey = `${product.id}::plain`;
   const hasModifiers = product.modifierGroups.length > 0;
   const isUnit = product.unitBased === true;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
-      {/* Photo */}
-      <div
-        className="relative flex aspect-square items-center justify-center overflow-hidden bg-[var(--color-canvas)] p-3"
-      >
+    <div className="flex gap-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <p className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[var(--color-ink)]">
+          {product.name}
+        </p>
+        {product.description ? (
+          <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--color-ink-muted)]">
+            {product.description}
+          </p>
+        ) : null}
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
+          <p className="text-[13px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
+            {toBRL(product.basePrice)}
+          </p>
+          <QtyControl
+            product={product}
+            qty={qty}
+            hasModifiers={hasModifiers}
+            isUnit={isUnit}
+            onAdd={onAdd}
+            onChangeQty={onChangeQty}
+            onSetQty={onSetQty}
+            size="sm"
+          />
+        </div>
+      </div>
+
+      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-[var(--color-canvas)]">
         {product.photoUrl ? (
           <img
             src={product.photoUrl}
             alt={product.name}
             loading="lazy"
-            className="h-full w-full object-contain"
+            className="h-full w-full object-cover"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
-            <ShoppingBag className="h-8 w-8 text-[var(--color-line-strong)]" strokeWidth={1.5} />
+            <ShoppingBag className="h-6 w-6 text-[var(--color-line-strong)]" strokeWidth={1.5} />
           </div>
         )}
         {qty > 0 ? (
           <span
-            className="absolute right-2 top-2 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white"
+            className="absolute right-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white"
             style={{ background: 'var(--color-brand)' }}
           >
             {qty}
           </span>
         ) : null}
       </div>
+    </div>
+  );
+}
 
-      {/* Info + action */}
-      <div className="flex min-h-[108px] flex-1 flex-col gap-1 p-3">
-        <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-[var(--color-ink)]">
+// ─── FeaturedCard ─────────────────────────────────────────────────────────────
+// Compact vertical card for the "Destaques" horizontal-scroll rail — fixed
+// width so the photo never grows past a small, appetizing preview.
+
+function FeaturedCard({
+  product,
+  items,
+  onAdd,
+  onChangeQty,
+  onSetQty,
+}: {
+  product: ZeloMenuCatalogProduct;
+  items: Record<string, SelectedItem>;
+  onAdd: () => void;
+  onChangeQty: (key: string, delta: number) => void;
+  onSetQty: (key: string, qty: number) => void;
+}) {
+  const qty = getProductQty(product.id, items);
+  const hasModifiers = product.modifierGroups.length > 0;
+  const isUnit = product.unitBased === true;
+
+  return (
+    <div className="flex h-full w-[148px] flex-col overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
+      <div className="relative h-[110px] w-full overflow-hidden bg-[var(--color-canvas)]">
+        {product.photoUrl ? (
+          <img
+            src={product.photoUrl}
+            alt={product.name}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <ShoppingBag className="h-7 w-7 text-[var(--color-line-strong)]" strokeWidth={1.5} />
+          </div>
+        )}
+        {qty > 0 ? (
+          <span
+            className="absolute right-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white"
+            style={{ background: 'var(--color-brand)' }}
+          >
+            {qty}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex flex-1 flex-col gap-1 p-2.5">
+        <p className="line-clamp-2 text-[12.5px] font-semibold leading-snug text-[var(--color-ink)]">
           {product.name}
         </p>
-        {product.description ? (
-          <p className="line-clamp-2 text-[11px] leading-snug text-[var(--color-ink-muted)]">
-            {product.description}
-          </p>
-        ) : null}
-        <div className="mt-auto flex items-center justify-between pt-2">
-          <p className="text-[13px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
+        <div className="mt-auto flex items-center justify-between gap-1 pt-1.5">
+          <p className="text-[12.5px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
             {toBRL(product.basePrice)}
           </p>
-          {qty > 0 && !hasModifiers ? (
-            isUnit ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => onSetQty(plainKey, 0)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)]"
-                  aria-label="Remover"
-                >
-                  <X className="h-3 w-3" strokeWidth={2.5} />
-                </button>
-                <button
-                  type="button"
-                  onClick={onAdd}
-                  className="flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[12px] font-bold text-white"
-                  style={{ background: 'var(--color-brand)' }}
-                  aria-label={`Editar quantidade de ${product.name}`}
-                >
-                  {qty}
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => onChangeQty(plainKey, -1)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-line)]"
-                  aria-label="Diminuir"
-                >
-                  <Minus className="h-3 w-3" strokeWidth={2.5} />
-                </button>
-                <span className="w-4 text-center text-[13px] font-bold">{qty}</span>
-                <button
-                  type="button"
-                  onClick={() => onChangeQty(plainKey, 1)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full text-white"
-                  style={{ background: 'var(--color-brand)' }}
-                  aria-label="Aumentar"
-                >
-                  <Plus className="h-3 w-3" strokeWidth={2.5} />
-                </button>
-              </div>
-            )
-          ) : (
-            <button
-              type="button"
-              onClick={onAdd}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-white"
-              style={{ background: 'var(--color-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
-              onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
-              onMouseUp={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
-              aria-label={`Adicionar ${product.name}`}
-            >
-              <Plus className="h-4 w-4" strokeWidth={2.5} />
-            </button>
-          )}
+          <QtyControl
+            product={product}
+            qty={qty}
+            hasModifiers={hasModifiers}
+            isUnit={isUnit}
+            onAdd={onAdd}
+            onChangeQty={onChangeQty}
+            onSetQty={onSetQty}
+            size="sm"
+          />
         </div>
       </div>
     </div>
@@ -673,7 +786,6 @@ function ListRow({
   divider: boolean;
 }) {
   const qty = getProductQty(product.id, items);
-  const plainKey = `${product.id}::plain`;
   const hasModifiers = product.modifierGroups.length > 0;
   const isUnit = product.unitBased === true;
 
@@ -703,63 +815,16 @@ function ListRow({
         </p>
       </div>
       <div className="shrink-0">
-        {qty > 0 && !hasModifiers ? (
-          isUnit ? (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => onSetQty(plainKey, 0)}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-line)]"
-                aria-label="Remover"
-              >
-                <X className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
-              <button
-                type="button"
-                onClick={onAdd}
-                className="flex h-8 min-w-8 items-center justify-center rounded-full px-2.5 text-[13px] font-bold text-white"
-                style={{ background: 'var(--color-brand)' }}
-                aria-label={`Editar quantidade de ${product.name}`}
-              >
-                {qty}
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => onChangeQty(plainKey, -1)}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-line)]"
-                aria-label="Diminuir"
-              >
-                <Minus className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
-              <span className="w-5 text-center text-[14px] font-bold tabular-nums">{qty}</span>
-              <button
-                type="button"
-                onClick={() => onChangeQty(plainKey, 1)}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-white"
-                style={{ background: 'var(--color-brand)' }}
-                aria-label="Aumentar"
-              >
-                <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
-            </div>
-          )
-        ) : (
-          <button
-            type="button"
-            onClick={onAdd}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-white"
-            style={{ background: 'var(--color-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
-            onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
-            onMouseUp={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
-            aria-label={`Adicionar ${product.name}`}
-          >
-            <Plus className="h-4 w-4" strokeWidth={2.5} />
-          </button>
-        )}
+        <QtyControl
+          product={product}
+          qty={qty}
+          hasModifiers={hasModifiers}
+          isUnit={isUnit}
+          onAdd={onAdd}
+          onChangeQty={onChangeQty}
+          onSetQty={onSetQty}
+          size="md"
+        />
       </div>
     </div>
   );
