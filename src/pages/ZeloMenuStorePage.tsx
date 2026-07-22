@@ -12,7 +12,7 @@ import {
 import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
 import { useStoreCart } from '../hooks/useStoreCart';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
-import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
+import { ProductAddModal } from '../components/zelomenu/ZeloMenuProductAddModal';
 
 type SelectedItem = ZeloMenuStoreCartItem;
 
@@ -445,42 +445,21 @@ export function ZeloMenuStorePage({
         </div>
       ) : null}
 
-      {/* ── Unit quantity modal ──────────────────────────────────────────── */}
-      {cart.unitPicker ? (
-        <UnitPickerModal
-          product={cart.unitPicker}
-          currentQty={getProductQty(cart.unitPicker.id, cart.items)}
-          onClose={() => cart.setUnitPicker(null)}
-          onConfirm={(qty) => {
-            cart.addPlainProduct(cart.unitPicker!, qty);
-            cart.setUnitPicker(null);
-          }}
-        />
-      ) : null}
-
-      {/* ── Modifier picker modal ─────────────────────────────────────────── */}
-      {cart.picker ? (
-        <ModifierModal
-          product={cart.picker.product}
-          selections={cart.picker.selections}
-          onClose={() => cart.setPicker(null)}
-          onToggle={(groupId, optionId) => {
-            cart.setPicker((cur) => {
-              if (!cur) return cur;
-              const group = cur.product.modifierGroups.find((g) => g.id === groupId);
-              if (!group) return cur;
-              const current = cur.selections[groupId] ?? [];
-              const has = current.includes(optionId);
-              let next: string[];
-              if (has) next = current.filter((id) => id !== optionId);
-              else if (group.maxSelections === 1) next = [optionId];
-              else next = [...current, optionId];
-              return { ...cur, selections: { ...cur.selections, [groupId]: next } };
-            });
-          }}
-          onConfirm={cart.confirmPicker}
-        />
-      ) : null}
+      {/* ── Card de produto (foto, observação, quantidade e complementos) ── */}
+      {cart.sheetProduct ? (() => {
+        const product = cart.sheetProduct;
+        const plainKey = `${product.id}::plain`;
+        const existing = product.modifierGroups.length === 0 ? cart.items[plainKey] : undefined;
+        return (
+          <ProductAddModal
+            product={product}
+            initialQuantity={existing?.quantity ?? 0}
+            initialNotes={existing?.notes ?? ''}
+            onClose={() => cart.setSheetProduct(null)}
+            onConfirm={(quantity, notes, selections) => cart.confirmSheet(product, quantity, notes, selections)}
+          />
+        );
+      })() : null}
     </div>
   );
 }
@@ -830,100 +809,4 @@ function ListRow({
   );
 }
 
-// ─── UnitPickerModal ──────────────────────────────────────────────────────────
-
-function UnitPickerModal({
-  product,
-  currentQty,
-  onClose,
-  onConfirm,
-}: {
-  product: ZeloMenuCatalogProduct;
-  currentQty: number;
-  onClose: () => void;
-  onConfirm: (qty: number) => void;
-}) {
-  const [draft, setDraft] = useState(currentQty > 0 ? String(currentQty) : '');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
-
-  function confirm() {
-    const n = parseInt(draft, 10);
-    if (!isNaN(n) && n > 0) onConfirm(n);
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50">
-      <div className="w-full max-w-2xl rounded-t-3xl bg-[var(--color-surface)] shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--color-line)] px-5 py-4">
-          <div>
-            <h3 className="text-[17px] font-bold text-[var(--color-ink)]">{product.name}</h3>
-            <p className="mt-0.5 text-[13px] text-[var(--color-ink-muted)]">Quantas unidades?</p>
-          </div>
-          <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-canvas)]">
-            <X className="h-4 w-4 text-[var(--color-ink-soft)]" strokeWidth={2} />
-          </button>
-        </div>
-        <div className="px-5 py-6" style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-          <div className="mb-5 flex items-center justify-center gap-4">
-            <button
-              type="button"
-              onClick={() => setDraft((v) => String(Math.max(1, (parseInt(v, 10) || 0) - 1)))}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-line)]"
-              aria-label="Diminuir"
-            >
-              <Minus className="h-4 w-4" strokeWidth={2.5} />
-            </button>
-            <input
-              ref={inputRef}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onFocus={(e) => e.currentTarget.select()}
-              onKeyDown={(e) => { if (e.key === 'Enter') confirm(); }}
-              className="h-14 w-24 rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] text-center text-[22px] font-bold tabular-nums outline-none focus:border-[var(--color-brand)]"
-              style={{ transition: 'border-color 0.15s' }}
-              aria-label="Quantidade"
-            />
-            <button
-              type="button"
-              onClick={() => setDraft((v) => String((parseInt(v, 10) || 0) + 1))}
-              className="flex h-11 w-11 items-center justify-center rounded-full text-white"
-              style={{ background: 'var(--color-brand)' }}
-              aria-label="Aumentar"
-            >
-              <Plus className="h-4 w-4" strokeWidth={2.5} />
-            </button>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[14px] font-bold text-[var(--color-ink)]">
-              {!isNaN(parseInt(draft, 10)) && parseInt(draft, 10) > 0
-                ? toBRL(product.basePrice * parseInt(draft, 10))
-                : '—'}
-            </p>
-            <button
-              type="button"
-              onClick={confirm}
-              disabled={isNaN(parseInt(draft, 10)) || parseInt(draft, 10) < 1}
-              className="inline-flex h-11 items-center gap-2 rounded-xl px-6 text-[14px] font-bold text-white disabled:opacity-40"
-              style={{ background: 'var(--color-brand)' }}
-            >
-              <Plus className="h-4 w-4" strokeWidth={2.5} />
-              {currentQty > 0 ? 'Atualizar' : 'Adicionar'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 

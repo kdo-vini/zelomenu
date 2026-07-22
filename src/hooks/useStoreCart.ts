@@ -12,11 +12,6 @@ import { useToast } from '../contexts/ToastContext';
 
 type SelectedItem = ZeloMenuStoreCartItem;
 
-export type StoreCartPicker = {
-  product: ZeloMenuCatalogProduct;
-  selections: Record<string, string[]>;
-};
-
 export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext) {
   const navigate = useNavigate();
   const toast = useToast();
@@ -24,27 +19,11 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
   const restored = useMemo(() => loadZeloMenuStoreCartCache(slug), [slug]);
   const [items, setItems] = useState<Record<string, SelectedItem>>(restored.items);
   const [submitting, setSubmitting] = useState(false);
-  const [unitPicker, setUnitPicker] = useState<ZeloMenuCatalogProduct | null>(null);
-  const [picker, setPicker] = useState<StoreCartPicker | null>(null);
+  const [sheetProduct, setSheetProduct] = useState<ZeloMenuCatalogProduct | null>(null);
 
   useEffect(() => {
     persistZeloMenuStoreCartCache(slug, { items });
   }, [slug, items]);
-
-  function addPlainProduct(product: ZeloMenuCatalogProduct, qty = 1) {
-    const key = `${product.id}::plain`;
-    setItems((prev) => ({
-      ...prev,
-      [key]: {
-        key,
-        productId: product.id,
-        productName: product.name,
-        quantity: qty,
-        selectedOptions: [],
-        unitPrice: product.basePrice,
-      },
-    }));
-  }
 
   function changeQty(key: string, delta: number) {
     setItems((prev) => {
@@ -72,35 +51,36 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
   }
 
   function onAddProduct(product: ZeloMenuCatalogProduct) {
-    if (product.modifierGroups.length > 0) {
-      setPicker({ product, selections: {} });
-    } else if (product.unitBased) {
-      setUnitPicker(product);
-    } else {
-      addPlainProduct(product);
-    }
+    setSheetProduct(product);
   }
 
-  function confirmPicker() {
-    if (!picker) return;
-    const selectedOptions = Object.keys(picker.selections)
-      .map((groupId) => ({ groupId, optionIds: picker.selections[groupId] ?? [] }))
+  function confirmSheet(
+    product: ZeloMenuCatalogProduct,
+    quantity: number,
+    notes: string,
+    selections: Record<string, string[]>,
+  ) {
+    if (quantity <= 0) return;
+    const selectedOptions = Object.keys(selections)
+      .map((groupId) => ({ groupId, optionIds: selections[groupId] ?? [] }))
       .filter((sel) => sel.optionIds.length > 0);
-    const resolved = resolveModifierSelections(picker.product.modifierGroups, selectedOptions);
+    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions);
     if (!resolved.ok) return;
-    const key = buildCartItemKey(picker.product.id, selectedOptions);
+    const key = product.modifierGroups.length > 0 ? buildCartItemKey(product.id, selectedOptions) : `${product.id}::plain`;
+    const trimmedNotes = notes.trim();
     setItems((prev) => ({
       ...prev,
       [key]: {
         key,
-        productId: picker.product.id,
-        productName: picker.product.name,
-        quantity: (prev[key]?.quantity ?? 0) + 1,
+        productId: product.id,
+        productName: product.name,
+        quantity,
         selectedOptions,
-        unitPrice: Number((picker.product.basePrice + resolved.deltaTotal).toFixed(2)),
+        unitPrice: Number((product.basePrice + resolved.deltaTotal).toFixed(2)),
+        notes: trimmedNotes ? trimmedNotes : null,
       },
     }));
-    setPicker(null);
+    setSheetProduct(null);
   }
 
   async function continueToCart() {
@@ -112,6 +92,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
           productName: line.productName,
           quantity: line.quantity,
           selectedOptions: line.selectedOptions,
+          notes: line.notes ?? null,
         })),
         tableOrderContext,
       });
@@ -137,15 +118,12 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
   return {
     items,
     submitting,
-    unitPicker,
-    setUnitPicker,
-    picker,
-    setPicker,
-    addPlainProduct,
+    sheetProduct,
+    setSheetProduct,
     changeQty,
     setQty,
     onAddProduct,
-    confirmPicker,
+    confirmSheet,
     continueToCart,
     lines,
     subtotal,

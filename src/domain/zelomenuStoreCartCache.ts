@@ -10,6 +10,7 @@ export type ZeloMenuStoreCartItem = {
   quantity: number;
   selectedOptions: ZeloMenuModifierSelectionInput[];
   unitPrice: number;
+  notes?: string | null;
 };
 
 export type ZeloMenuStoreCartCache = {
@@ -65,6 +66,7 @@ export function syncZeloMenuStoreCartCache(input: {
     productName: string;
     quantity: number;
     unitPrice: number;
+    notes?: string | null;
     selectedModifiers: Array<{
       groupId: string;
       selectedOptions: Array<{ optionId: string }>;
@@ -92,6 +94,7 @@ export function syncZeloMenuStoreCartCache(input: {
         quantity: item.quantity,
         selectedOptions,
         unitPrice: item.unitPrice,
+        notes: item.notes ?? null,
       } satisfies ZeloMenuStoreCartItem]];
     }),
   );
