@@ -47,6 +47,7 @@ async function authHeader(): Promise<Record<string, string>> {
 // Map the server's machine `error` codes to friendly PT-BR copy where useful.
 // Anything not in the table falls through to the raw code / HTTP status.
 const ERROR_MESSAGES: Record<string, string> = {
+  INTERNAL_ERROR: 'NÃ£o foi possÃ­vel salvar as configuraÃ§Ãµes. Tente novamente.',
   SLUG_TAKEN: 'Esse link já está em uso.',
   INVALID_SLUG: 'Link inválido.',
   RESERVED_SLUG: 'Esse link é reservado.',

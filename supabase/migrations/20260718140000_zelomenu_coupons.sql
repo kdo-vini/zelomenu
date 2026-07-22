@@ -14,7 +14,6 @@ create table if not exists public.zelomenu_coupons (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
 
-  constraint zelomenu_coupons_user_code_unique unique (id_usuario, lower(code)),
   constraint zelomenu_coupons_code_format check (code ~ '^[A-Z0-9-]{3,30}$'),
   constraint zelomenu_coupons_min_order_non_negative check (min_order_value is null or min_order_value >= 0),
   constraint zelomenu_coupons_valor_requires_value
@@ -26,6 +25,9 @@ create table if not exists public.zelomenu_coupons (
   constraint zelomenu_coupons_window_order
     check (starts_at is null or expires_at is null or starts_at <= expires_at)
 );
+
+create unique index if not exists zelomenu_coupons_user_code_unique
+  on public.zelomenu_coupons (id_usuario, lower(code));
 
 comment on table public.zelomenu_coupons is
   'Cupons de desconto do ZeloMenu público (pedido inteiro). Não vale para mesa/QR nem PDV.';

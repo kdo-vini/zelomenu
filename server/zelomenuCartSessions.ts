@@ -275,6 +275,62 @@ type PublicStoreResponse = {
 const publicStoreCache = new Map<string, { expiresAt: number; response: PublicStoreResponse }>();
 const PUBLIC_STORE_CACHE_MS = 15_000;
 
+type ZeloMenuProfileRow = {
+  logo_url?: string | null;
+  zelomenu_welcome_text?: string | null;
+  zelomenu_featured_enabled?: boolean;
+  zelomenu_featured_product_ids?: unknown;
+  zelomenu_category_order?: unknown;
+  zelomenu_recommendations_enabled?: boolean;
+  zelomenu_recommendation_product_ids?: unknown;
+};
+
+const ZELOMENU_PROFILE_CORE_COLUMNS =
+  'logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_category_order';
+const ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS =
+  'zelomenu_recommendations_enabled, zelomenu_recommendation_product_ids';
+const ZELOMENU_PROFILE_ALL_COLUMNS =
+  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}`;
+
+function isMissingZeloMenuRecommendationColumn(
+  error: { code?: string; message?: string } | null,
+): boolean {
+  if (!error) return false;
+  if (error.code === '42703') return true;
+  const message = error.message ?? '';
+  return message.includes('zelomenu_recommendations_enabled')
+    || message.includes('zelomenu_recommendation_product_ids');
+}
+
+/**
+ * Keep recommendation settings isolated from the original store settings.
+ * That way a migration lag cannot hide the restaurant/catalog data or block
+ * saving the welcome text.
+ */
+async function loadZeloMenuProfile(empresaId: string): Promise<ZeloMenuProfileRow> {
+  const supabase = getServiceSupabase();
+  const profileResult = await supabase
+    .from('empresa_perfil')
+    .select(ZELOMENU_PROFILE_ALL_COLUMNS)
+    .eq('id', empresaId)
+    .maybeSingle();
+  if (!profileResult.error) {
+    return (profileResult.data as ZeloMenuProfileRow | null) ?? {};
+  }
+  if (!isMissingZeloMenuRecommendationColumn(profileResult.error)) {
+    throw profileResult.error;
+  }
+
+  console.warn('[ZeloMenu] recommendation columns are not available yet; using defaults until the migration is applied.');
+  const coreResult = await supabase
+    .from('empresa_perfil')
+    .select(ZELOMENU_PROFILE_CORE_COLUMNS)
+    .eq('id', empresaId)
+    .maybeSingle();
+  if (coreResult.error) throw coreResult.error;
+  return (coreResult.data as ZeloMenuProfileRow | null) ?? {};
+}
+
 // ─── Sanitizers ───────────────────────────────────────────────────────────────
 
 function sanitizeText(value: unknown, maxLength: number): string | null {
@@ -884,12 +940,7 @@ async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenR
     } : null;
   }
 
-  // Fetch empresa_perfil for recommendations
-  const { data: perfilData } = await getServiceSupabase()
-    .from('empresa_perfil')
-    .select('zelomenu_recommendations_enabled, zelomenu_recommendation_product_ids, zelomenu_featured_enabled, zelomenu_featured_product_ids')
-    .eq('id', sessionRow.empresa_id)
-    .maybeSingle();
+  const perfilData = await loadZeloMenuProfile(sessionRow.empresa_id);
 
   return {
     session,
@@ -945,23 +996,10 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
   const empresaId = await resolveEmpresaIdBySlug(normalizedSlug);
   if (!empresaId) return null;
 
-  const [, perfilResult] = await Promise.all([
+  const [, perfil] = await Promise.all([
     loadCatalogFromDb(empresaId),
-    getServiceSupabase()
-      .from('empresa_perfil')
-      .select('logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_recommendations_enabled, zelomenu_recommendation_product_ids, zelomenu_category_order')
-      .eq('id', empresaId)
-      .maybeSingle(),
+    loadZeloMenuProfile(empresaId),
   ]);
-  const perfil = perfilResult.data as {
-    logo_url?: string | null;
-    zelomenu_welcome_text?: string | null;
-    zelomenu_featured_enabled?: boolean;
-    zelomenu_featured_product_ids?: unknown;
-    zelomenu_recommendations_enabled?: boolean;
-    zelomenu_recommendation_product_ids?: unknown;
-    zelomenu_category_order?: unknown;
-  } | null;
   const config = getConfig(empresaId);
   const rawCatalog = filterVisibleCatalog(config.catalogHierarchy);
   const categoryOrder = Array.isArray(perfil?.zelomenu_category_order) ? (perfil.zelomenu_category_order as string[]) : [];
@@ -1005,23 +1043,10 @@ export type ZeloMenuStoreSettings = {
 };
 
 export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
-  const [, perfilResult] = await Promise.all([
+  const [, perfil] = await Promise.all([
     loadCatalogFromDb(empresaId),
-    getServiceSupabase()
-      .from('empresa_perfil')
-      .select('logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_recommendations_enabled, zelomenu_recommendation_product_ids, zelomenu_category_order')
-      .eq('id', empresaId)
-      .maybeSingle(),
+    loadZeloMenuProfile(empresaId),
   ]);
-  const perfil = perfilResult.data as {
-    logo_url?: string | null;
-    zelomenu_welcome_text?: string | null;
-    zelomenu_featured_enabled?: boolean;
-    zelomenu_featured_product_ids?: unknown;
-    zelomenu_recommendations_enabled?: boolean;
-    zelomenu_recommendation_product_ids?: unknown;
-    zelomenu_category_order?: unknown;
-  } | null;
   const config = getConfig(empresaId);
   const catalog = filterVisibleCatalog(config.catalogHierarchy);
 
@@ -1050,16 +1075,28 @@ export async function updateZeloMenuStoreSettings(
   empresaId: string,
   patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categoryOrder'>>,
 ): Promise<void> {
-  const update: Record<string, unknown> = {};
-  if ('welcomeText' in patch) update.zelomenu_welcome_text = patch.welcomeText ?? null;
-  if ('featuredEnabled' in patch) update.zelomenu_featured_enabled = patch.featuredEnabled;
-  if ('featuredProductIds' in patch) update.zelomenu_featured_product_ids = patch.featuredProductIds;
-  if ('recommendationsEnabled' in patch) update.zelomenu_recommendations_enabled = patch.recommendationsEnabled;
-  if ('recommendationProductIds' in patch) update.zelomenu_recommendation_product_ids = patch.recommendationProductIds;
-  if ('categoryOrder' in patch) update.zelomenu_category_order = patch.categoryOrder;
+  const coreUpdate: Record<string, unknown> = {};
+  const recommendationUpdate: Record<string, unknown> = {};
+  if ('welcomeText' in patch) coreUpdate.zelomenu_welcome_text = patch.welcomeText ?? null;
+  if ('featuredEnabled' in patch) coreUpdate.zelomenu_featured_enabled = patch.featuredEnabled;
+  if ('featuredProductIds' in patch) coreUpdate.zelomenu_featured_product_ids = patch.featuredProductIds;
+  if ('categoryOrder' in patch) coreUpdate.zelomenu_category_order = patch.categoryOrder;
+  if ('recommendationsEnabled' in patch) recommendationUpdate.zelomenu_recommendations_enabled = patch.recommendationsEnabled;
+  if ('recommendationProductIds' in patch) recommendationUpdate.zelomenu_recommendation_product_ids = patch.recommendationProductIds;
+
+  const supabase = getServiceSupabase();
+  const update = { ...coreUpdate, ...recommendationUpdate };
   if (Object.keys(update).length === 0) return;
-  const { error } = await getServiceSupabase().from('empresa_perfil').update(update).eq('id', empresaId);
-  if (error) throw error;
+
+  const { error } = await supabase.from('empresa_perfil').update(update).eq('id', empresaId);
+  if (!error) return;
+  if (!isMissingZeloMenuRecommendationColumn(error)) throw error;
+
+  if (Object.keys(coreUpdate).length > 0) {
+    const { error: coreError } = await supabase.from('empresa_perfil').update(coreUpdate).eq('id', empresaId);
+    if (coreError) throw coreError;
+  }
+  console.warn('[ZeloMenu] recommendation settings were not persisted because their migration is not applied yet.');
 }
 
 export async function openPublicOrderCartSession(input: {
