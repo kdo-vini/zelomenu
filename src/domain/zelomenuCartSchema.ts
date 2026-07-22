@@ -22,6 +22,14 @@ export type ZeloMenuCartSnapshot = {
 export type ZeloMenuPricingSnapshot = {
   subtotal: number;
   deliveryFee: number;
+  discount: number;
+  couponCode: string | null;
+  // Detalhes da regra do cupom aplicado, ecoados pelo servidor para o
+  // cliente poder recalcular a MESMA estimativa localmente (via applyCoupon)
+  // entre um autosave e outro, sem esperar round-trip. Ambos null quando
+  // couponCode é null.
+  couponDiscountType: 'valor' | 'percentual' | 'frete_gratis' | null;
+  couponDiscountValue: number | null;
   total: number;
 };
 
@@ -38,7 +46,11 @@ export type ZeloMenuCartRevalidationIssue = {
     | 'stock_insufficient'
     | 'price_changed'
     | 'schedule_unavailable'
-    | 'modifier_invalid';
+    | 'modifier_invalid'
+    | 'coupon_invalid'
+    | 'coupon_expired'
+    | 'coupon_min_not_met'
+    | 'coupon_already_used';
   message: string;
   productName?: string;
   requestedQuantity?: number;

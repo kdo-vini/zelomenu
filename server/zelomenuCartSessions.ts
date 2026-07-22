@@ -19,6 +19,7 @@ import type {
   ZeloMenuCartRevalidation,
 } from '../src/domain/zelomenuCartSchema.js';
 import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDelivery.js';
+import { normalizeCouponCode, validateCouponRule, applyCoupon } from '../src/domain/zelomenuCoupon.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { toWhatsAppNumber } from '../src/domain/whatsappOrder.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
@@ -29,6 +30,8 @@ import {
   parseBusinessTime,
 } from '../src/domain/zelomenuBusinessHours.js';
 import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
+import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
+import { normalizePhoneNumber } from '../src/domain/chat.js';
 
 // ─── Token helpers (node:crypto, backend only) ─────────────────────────────────
 
@@ -71,13 +74,21 @@ function roundCurrency(value: number): number {
 function computeCartPricing(
   items: Array<{ lineTotal: number }>,
   deliveryFee = 0,
+  discount = 0,
+  coupon: { code: string; discountType: 'valor' | 'percentual' | 'frete_gratis'; discountValue: number | null } | null = null,
 ): ZeloMenuPricingSnapshot {
   const fee = Number.isFinite(deliveryFee) ? Number(deliveryFee) : 0;
   const subtotal = items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+  const cap = roundCurrency(subtotal) + roundCurrency(fee);
+  const clampedDiscount = Math.max(0, Math.min(Number(discount) || 0, cap));
   return {
     subtotal: roundCurrency(subtotal),
     deliveryFee: roundCurrency(fee),
-    total: roundCurrency(subtotal + fee),
+    discount: roundCurrency(clampedDiscount),
+    couponCode: coupon?.code ?? null,
+    couponDiscountType: coupon?.discountType ?? null,
+    couponDiscountValue: coupon?.discountValue ?? null,
+    total: roundCurrency(subtotal + fee - clampedDiscount),
   };
 }
 
@@ -375,11 +386,22 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
 }
 
 function parsePricingSnapshot(value: unknown): ZeloMenuPricingSnapshot {
-  if (!value || typeof value !== 'object') return { subtotal: 0, deliveryFee: 0, total: 0 };
-  const row = value as { subtotal?: unknown; deliveryFee?: unknown; total?: unknown };
+  if (!value || typeof value !== 'object') {
+    return { subtotal: 0, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 0 };
+  }
+  const row = value as {
+    subtotal?: unknown; deliveryFee?: unknown; discount?: unknown;
+    couponCode?: unknown; couponDiscountType?: unknown; couponDiscountValue?: unknown; total?: unknown;
+  };
   return {
     subtotal: Number.isFinite(Number(row.subtotal)) ? Number(row.subtotal) : 0,
     deliveryFee: Number.isFinite(Number(row.deliveryFee)) ? Number(row.deliveryFee) : 0,
+    discount: Number.isFinite(Number(row.discount)) ? Number(row.discount) : 0,
+    couponCode: typeof row.couponCode === 'string' ? row.couponCode : null,
+    couponDiscountType: row.couponDiscountType === 'valor' || row.couponDiscountType === 'percentual' || row.couponDiscountType === 'frete_gratis'
+      ? row.couponDiscountType
+      : null,
+    couponDiscountValue: Number.isFinite(Number(row.couponDiscountValue)) ? Number(row.couponDiscountValue) : null,
     total: Number.isFinite(Number(row.total)) ? Number(row.total) : 0,
   };
 }
@@ -564,6 +586,8 @@ async function resolveSnapshots(
     fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
     paymentMethod?: string | null;
     observations?: string | null;
+    context: ZeloMenuCartContext;
+    couponCode?: string | null;
   },
 ): Promise<ResolvedCart> {
   await loadCatalogFromDb(empresaId);
@@ -626,7 +650,31 @@ async function resolveSnapshots(
     deliveryFee,
     deliveryFeeToConfirm,
   };
-  const pricing = computeCartPricing(resolvedItems, deliveryFee);
+
+  // ── Coupon validation ────────────────────────────────────────────────────
+  let discount = 0;
+  let appliedCoupon: { code: string; discountType: 'valor' | 'percentual' | 'frete_gratis'; discountValue: number | null } | null = null;
+  if (params.context === 'public_order' && params.couponCode) {
+    const normalizedCode = normalizeCouponCode(params.couponCode);
+    const ownerUserId = normalizedCode ? await getEmpresaUserId(empresaId) : null;
+    const coupon = normalizedCode && ownerUserId
+      ? await findActiveCouponByCode(ownerUserId, normalizedCode)
+      : null;
+    const subtotalSoFar = roundCurrency(resolvedItems.reduce((sum, item) => sum + item.lineTotal, 0));
+    const validation = validateCouponRule(coupon, { subtotal: subtotalSoFar });
+    if (!validation.ok) {
+      throw new Error(
+        validation.code === 'coupon_min_not_met' ? 'COUPON_MIN_NOT_MET'
+        : validation.code === 'coupon_expired' ? 'COUPON_EXPIRED'
+        : 'COUPON_INVALID',
+      );
+    }
+    const applied = applyCoupon(subtotalSoFar, deliveryFee, coupon!);
+    discount = applied.discount;
+    appliedCoupon = { code: coupon!.code, discountType: coupon!.discountType, discountValue: coupon!.discountValue };
+  }
+
+  const pricing = computeCartPricing(resolvedItems, deliveryFee, discount, appliedCoupon);
   if (!Number.isFinite(pricing.total) || pricing.total < 0 || pricing.total > Number(process.env.ZELOMENU_MAX_ORDER_TOTAL || 100000)) throw new Error('ORDER_TOTAL_LIMIT_EXCEEDED');
   const declaredMethod = sanitizeText(params.paymentMethod, 40);
   const payment: ZeloMenuPaymentSnapshot = {
@@ -698,6 +746,9 @@ function cartIssueFromError(message: string): ZeloMenuCartRevalidationIssue | nu
   if (message === 'PRODUCT_STOCK_EXCEEDED') return { code: 'stock_insufficient', message: 'A quantidade de um item ultrapassa o estoque atual.' };
   if (message === 'DELIVERY_DISABLED') return { code: 'schedule_unavailable', message: 'A entrega precisa ser revista antes da confirmação.' };
   if (message.startsWith('MODIFIER_INVALID:')) return { code: 'modifier_invalid', message: message.slice('MODIFIER_INVALID:'.length) };
+  if (message === 'COUPON_INVALID') return { code: 'coupon_invalid', message: 'Este cupom não é válido para esta loja.' };
+  if (message === 'COUPON_EXPIRED') return { code: 'coupon_expired', message: 'Este cupom não está mais válido.' };
+  if (message === 'COUPON_MIN_NOT_MET') return { code: 'coupon_min_not_met', message: 'O pedido ainda não atingiu o valor mínimo para este cupom.' };
   return null;
 }
 
@@ -714,6 +765,8 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
       fulfillment: session.fulfillment,
       paymentMethod: session.payment.declaredMethod,
       observations: session.cart.observations,
+      context: session.context,
+      couponCode: session.pricing.couponCode,
     });
     previewCart = resolved.cart;
     previewPricing = resolved.pricing;
@@ -980,14 +1033,14 @@ export async function openPublicOrderCartSession(input: {
     name: sanitizeText(input.customerName, 120),
     phone: sanitizeText(input.customerPhone, 40),
   };
+  const sessionContext: ZeloMenuCartContext = input.context ?? 'public_order';
   const resolved = await resolveSnapshots(empresaId, {
     items,
     fulfillment: input.fulfillment,
     paymentMethod: input.paymentMethod,
     observations: input.observations,
+    context: input.context ?? 'public_order',
   });
-
-  const sessionContext: ZeloMenuCartContext = input.context ?? 'public_order';
   const normalizedSlug = normalizeZeloMenuSlug(input.slug);
   const sourceRef = `public:${randomUUID()}`;
   const now = new Date().toISOString();
@@ -1065,11 +1118,17 @@ export async function updatePublicCartSession(
     name: patch.customerName === undefined ? current.customer.name : sanitizeText(patch.customerName, 120),
     phone: patch.customerPhone === undefined ? current.customer.phone : sanitizeText(patch.customerPhone, 40),
   };
+  const nextCouponCode = 'couponCode' in patch
+    ? (patch.couponCode || null)
+    : current.pricing.couponCode;
+
   const resolved = await resolveSnapshots(sessionRow.empresa_id, {
     items: patch.items === undefined ? toCartItemInputs(current.cart) : normalizeIncomingItems(patch.items),
     fulfillment: patch.fulfillment === undefined ? current.fulfillment : patch.fulfillment,
     paymentMethod: patch.paymentMethod === undefined ? current.payment.declaredMethod : patch.paymentMethod,
     observations: patch.observations === undefined ? current.cart.observations : patch.observations,
+    context: sessionRow.context,
+    couponCode: nextCouponCode,
   });
   const nextRevision = current.revision + 1;
   const now = new Date().toISOString();
@@ -1190,6 +1249,43 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: null } };
   }
 
+  // ── Coupon redemption: reserve antes de materializar (só public_order) ──
+  let couponRedemptionId: string | undefined;
+  if (sessionRow.context === 'public_order' && current.pricing.couponCode) {
+    const ownerUserId = await getEmpresaUserId(sessionRow.empresa_id);
+    const couponRow = await findActiveCouponByCode(ownerUserId, current.pricing.couponCode);
+    if (!couponRow) {
+      // cupom sumiu desde a última revalidação — injeta um coupon_invalid
+      const staleRevalidation: ZeloMenuCartRevalidation = {
+        checkedAt: new Date().toISOString(), ok: false, issues: [
+          { code: 'coupon_invalid', message: 'Este cupom não é mais válido.' },
+        ], previewCart: revalidation.previewCart, previewPricing: revalidation.previewPricing, previewPayment: revalidation.previewPayment,
+      };
+      await persistRevalidation(current.id, staleRevalidation);
+      const payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
+      return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: null } };
+    }
+    const customerPhone = normalizePhoneNumber(current.customer.phone ?? '');
+    const reservation = await reserveCouponRedemption({
+      couponId: couponRow.id,
+      ownerUserId,
+      customerPhone,
+    });
+    if (reservation.ok) {
+      couponRedemptionId = reservation.redemptionId;
+    } else {
+      // Já usado por este telefone — coupon_already_used
+      const alreadyUsedRevalidation: ZeloMenuCartRevalidation = {
+        checkedAt: new Date().toISOString(), ok: false, issues: [
+          { code: 'coupon_already_used', message: 'Este cupom já foi usado por este telefone.' },
+        ], previewCart: revalidation.previewCart, previewPricing: revalidation.previewPricing, previewPayment: revalidation.previewPayment,
+      };
+      await persistRevalidation(current.id, alreadyUsedRevalidation);
+      const payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
+      return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: null } };
+    }
+  }
+
   // ── table_order: write to ZeloPDV pedidos + double-validate comanda ──────────
   const confirmationRpc = usesCanonicalOrderEngine(sessionRow.context)
     ? getServiceSupabase().rpc('create_zelo_order', {
@@ -1213,12 +1309,23 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     });
   const { data: confirmation, error: confirmationError } = await confirmationRpc;
   if (confirmationError) {
+    // Rollback da reserva do cupom se houve
+    if (couponRedemptionId) void releaseCouponRedemption(couponRedemptionId).catch(() => {});
     const codes = ['CART_NOT_FOUND', 'STALE_CART_TOKEN', 'REVISION_CONFLICT', 'CART_ALREADY_CLOSED', 'IDEMPOTENCY_KEY_REQUIRED', 'TABLE_SESSION_EXPIRED', 'PRODUCT_STOCK_EXCEEDED', 'COMANDA_CLOSED'];
     throw new Error(codes.find((code) => confirmationError.message.includes(code)) || 'ORDER_MATERIALIZATION_FAILED');
   }
   const atomic = confirmation as { orderStatus?: string; sessionState?: ZeloMenuCartState; state?: ZeloMenuCartState; alreadyConfirmed?: boolean };
   const atomicRow = await findSessionById(sessionRow.id);
-  if (!atomicRow) throw new Error('ORDER_MATERIALIZATION_FAILED');
+  if (!atomicRow) {
+    if (couponRedemptionId) void releaseCouponRedemption(couponRedemptionId).catch(() => {});
+    throw new Error('ORDER_MATERIALIZATION_FAILED');
+  }
+
+  // Se a confirmação foi bem-sucedida e temos reserva, attach order_id
+  if (couponRedemptionId && atomicRow.ordering_id) {
+    void attachOrderToRedemption(couponRedemptionId, atomicRow.ordering_id).catch(() => {});
+  }
+
   const atomicPayload = await buildPublicResponse(normalized, atomicRow, tokenRow);
   return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed === true, state: atomic.sessionState ?? atomic.state ?? atomicRow.state, customerMessage: atomicRow.context === 'table_order' ? 'Pedido enviado! Aguarde o garçom.' : `Pedido enviado para a loja! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. Aguarde a confirmação.` } };
 

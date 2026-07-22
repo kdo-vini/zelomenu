@@ -47,6 +47,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_SLUG: 'Link inválido.',
   RESERVED_SLUG: 'Esse link é reservado.',
   AI_UNAVAILABLE: 'A geração com IA está indisponível no momento. Tente de novo mais tarde.',
+  COUPON_CODE_TAKEN: 'Este código já está em uso.',
+  COUPON_INVALID_CODE: 'Código inválido. Use letras, números e hífen (3 a 30 caracteres).',
+  COUPON_INVALID_DISCOUNT_VALUE: 'Valor de desconto inválido para o tipo escolhido.',
+  COUPON_NOT_FOUND: 'Cupom não encontrado.',
 };
 
 // Parse a Response into JSON, throwing a friendly Error (mapped where possible)
@@ -144,4 +148,40 @@ export async function listMesasAdmin(): Promise<MesaRow[]> {
   });
   const body = await parseResponse<{ mesas: MesaRow[] }>(response);
   return body.mesas;
+}
+
+// ─── Coupons ────────────────────────────────────────────────────────────────
+
+export type ZeloMenuCoupon = {
+  id: string;
+  code: string;
+  discountType: 'valor' | 'percentual' | 'frete_gratis';
+  discountValue: number | null;
+  minOrderValue: number | null;
+  startsAt: string | null;
+  expiresAt: string | null;
+  active: boolean;
+};
+
+export type ZeloMenuCouponInput = Omit<ZeloMenuCoupon, 'id'>;
+
+export async function listZeloMenuCouponsAdmin(): Promise<ZeloMenuCoupon[]> {
+  const response = await fetch('/api/admin/zelomenu/coupons', { headers: await authHeader(), cache: 'no-store' });
+  const body = await parseResponse<{ coupons: ZeloMenuCoupon[] }>(response);
+  return body.coupons;
+}
+
+export async function createZeloMenuCouponAdmin(input: ZeloMenuCouponInput): Promise<ZeloMenuCoupon> {
+  const response = await fetch('/api/admin/zelomenu/coupons', { method: 'POST', headers: await authHeader(), body: JSON.stringify(input) });
+  return parseResponse<ZeloMenuCoupon>(response);
+}
+
+export async function updateZeloMenuCouponAdmin(id: string, patch: Partial<ZeloMenuCouponInput>): Promise<ZeloMenuCoupon> {
+  const response = await fetch(`/api/admin/zelomenu/coupons/${encodeURIComponent(id)}`, { method: 'PATCH', headers: await authHeader(), body: JSON.stringify(patch) });
+  return parseResponse<ZeloMenuCoupon>(response);
+}
+
+export async function deleteZeloMenuCouponAdmin(id: string): Promise<{ ok: true }> {
+  const response = await fetch(`/api/admin/zelomenu/coupons/${encodeURIComponent(id)}`, { method: 'DELETE', headers: await authHeader() });
+  return parseResponse<{ ok: true }>(response);
 }

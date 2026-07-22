@@ -53,6 +53,7 @@ import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
 import { buildZeloMenuAutosaveSignature } from '../domain/zeloMenuAutosave';
 import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
+import { loadZeloMenuCustomerCache, saveZeloMenuCustomerCache } from '../domain/zelomenuCustomerCache';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { useToast } from '../contexts/ToastContext';
@@ -77,6 +78,7 @@ type DraftState = {
   deliveryNeighborhood: string;
   paymentMethod: string;
   observations: string;
+  couponCode: string;
 };
 
 type AutosaveResult = ZeloMenuPublicCartResponse | null;
@@ -129,6 +131,7 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
     deliveryNeighborhood: payload.session.fulfillment.deliveryNeighborhood ?? '',
     paymentMethod: payload.session.payment.declaredMethod ?? '',
     observations: payload.session.cart.observations ?? '',
+    couponCode: payload.session.pricing.couponCode ?? '',
   };
 }
 
@@ -197,8 +200,11 @@ function estimateDraftTotals(
     deliveryFee,
     deliveryFeeToConfirm,
     total: subtotal + deliveryFee,
+    discount: 0,
+    couponLabel: null as string | null,
   };
 }
+
 
 function isKnownPaymentMethod(value: string): boolean {
   return PAYMENT_OPTIONS.some((option) => option === value);
@@ -255,6 +261,12 @@ function buildRevalidationToastMessage(issues: ZeloMenuCartRevalidationIssue[]):
   if (priceIssue) {
     return `${priceIssue.message} Confira o novo total e toque em Confirmar pedido novamente.`;
   }
+  const couponIssue = issues.find((issue) =>
+    issue.code === 'coupon_invalid' || issue.code === 'coupon_expired' || issue.code === 'coupon_min_not_met' || issue.code === 'coupon_already_used',
+  );
+  if (couponIssue) {
+    return `${couponIssue.message} Remova ou troque o cupom e tente novamente.`;
+  }
   const [firstIssue] = issues;
   const detail = firstIssue?.message ? ` ${firstIssue.message}` : '';
   const suffix = issues.length > 1 ? ` Há mais ${issues.length - 1} ajuste(s) no carrinho.` : '';
@@ -288,6 +300,7 @@ function buildCartUpdatePayload(
       deliveryNeighborhood: draft.fulfillmentType === 'delivery' ? (draft.deliveryNeighborhood || null) : null,
     },
     paymentMethod: draft.paymentMethod || null,
+    couponCode: draft.couponCode || null,
     observations: draft.observations || null,
   };
 }
@@ -335,7 +348,24 @@ export default function ZeloMenuCartPage() {
       if (requestId !== loadRequestRef.current) return;
       if (mode === 'refresh') revalidationToastShownRef.current = '';
       setPayload(next);
-      setDraft(buildDraftFromPayload(next));
+      setDraft((prev) => {
+        const fresh = buildDraftFromPayload(next);
+        // Autofill: preenche dados do cliente do cache se o payload está vazio
+        const slug = typeof next.session.metadata.slug === 'string' ? next.session.metadata.slug : null;
+        if (slug && !next.session.customer.name && !next.session.customer.phone) {
+          const cached = loadZeloMenuCustomerCache(slug);
+          if (cached) {
+            return {
+              ...fresh,
+              customerName: cached.name || fresh.customerName,
+              customerPhone: cached.phone || fresh.customerPhone,
+              deliveryAddress: cached.deliveryAddress || fresh.deliveryAddress,
+              deliveryNeighborhood: cached.deliveryNeighborhood || fresh.deliveryNeighborhood,
+            };
+          }
+        }
+        return prev ?? fresh;
+      });
       setScheduleMode(deriveScheduleMode(next));
       document.title = next.business.name ? `${next.business.name} | Revisar pedido` : 'Revisar pedido';
     } catch (err) {
@@ -615,6 +645,18 @@ export default function ZeloMenuCartPage() {
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
       setScheduleMode(deriveScheduleMode(next));
+      // Autofill: salva dados do cliente no cache local após confirmação
+      if (next.confirmation.confirmed && isPublicOrder) {
+        const slug = typeof next.session.metadata.slug === 'string' ? next.session.metadata.slug : null;
+        if (slug && (draft.customerName || draft.customerPhone)) {
+          saveZeloMenuCustomerCache(slug, {
+            name: draft.customerName,
+            phone: normalizePhoneNumber(draft.customerPhone).slice(0, 11),
+            deliveryAddress: draft.deliveryAddress,
+            deliveryNeighborhood: draft.deliveryNeighborhood,
+          });
+        }
+      }
       if (next.confirmation.confirmed) {
         toast.success(
           next.confirmation.alreadyConfirmed
@@ -816,18 +858,22 @@ export default function ZeloMenuCartPage() {
   const stepLabel1 = isDelivery ? 'Entrega' : 'Retirada';
   const itemCount = estimated.items.reduce((sum, item) => sum + item.quantity, 0);
 
-  const footValue = (isTableOrder || step === 0)
-    ? toBRL(estimated.subtotal)
-    : feeToConfirm
-      ? `${toBRL(estimated.subtotal)} + entrega`
-      : toBRL(estimated.total);
+  const footPricing = (isTableOrder || step === 0) ? estimated.subtotal
+    : feeToConfirm ? estimated.subtotal
+    : payload.session.pricing.discount > 0 ? payload.session.pricing.total
+    : estimated.total;
+  const footValue = feeToConfirm ? `${toBRL(footPricing)} + entrega` : toBRL(footPricing);
 
+  const liveDiscount = payload.session.pricing.discount || 0;
   let footSub = '';
   if (!isTableOrder && step > 0) {
-    if (!isDelivery) footSub = 'Retirada · sem taxa';
-    else if (feeToConfirm) footSub = '+ entrega a confirmar';
-    else if (fee === 0) footSub = 'Entrega grátis';
-    else footSub = `inclui ${toBRL(fee)} de entrega`;
+    const parts: string[] = [];
+    if (!isDelivery) parts.push('Retirada · sem taxa');
+    else if (feeToConfirm) parts.push('+ entrega a confirmar');
+    else if (fee === 0) parts.push('Entrega grátis');
+    else parts.push(`inclui ${toBRL(fee)} de entrega`);
+    if (liveDiscount > 0) parts.push(`-${toBRL(liveDiscount)} de desconto`);
+    footSub = parts.join('\u00A0·\u00A0');
   }
 
   const ctaLabel = isTableOrder
@@ -1351,6 +1397,33 @@ export default function ZeloMenuCartPage() {
                       />
                     </label>
 
+                    {/* Coupon input */}
+                    <label className="block">
+                      <span className="mb-1 block text-[12px] font-medium text-[var(--color-ink-muted)]">
+                        Cupom de desconto
+                      </span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={draft.couponCode}
+                          onChange={(e) => setDraft((prev) => prev ? { ...prev, couponCode: e.target.value.toUpperCase() } : prev)}
+                          placeholder="Código do cupom"
+                          disabled={!isOpen}
+                          maxLength={30}
+                          className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-3 text-[14px] text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)] disabled:opacity-50"
+                        />
+                        {draft.couponCode && (
+                          <button
+                            type="button"
+                            onClick={() => setDraft((prev) => prev ? { ...prev, couponCode: '' } : prev)}
+                            className="self-start rounded-lg p-3 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-line)]"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </label>
+
                     <div className="flex items-center gap-2 text-[13px] font-semibold">
                       <ShoppingCart className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
                       Resumo
@@ -1366,9 +1439,15 @@ export default function ZeloMenuCartPage() {
                           {isDelivery ? (feeToConfirm ? 'a confirmar' : toBRL(fee)) : 'sem taxa'}
                         </span>
                       </div>
+                      {payload.session.pricing.discount > 0 && (
+                        <div className="flex items-center justify-between text-[13px] text-green-600">
+                          <span>Desconto{payload.session.pricing.couponCode ? ` (${payload.session.pricing.couponCode})` : ''}</span>
+                          <span className="tabular-nums">-{toBRL(payload.session.pricing.discount)}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between border-t border-[var(--color-line)] pt-2.5 text-[15px] font-bold text-[var(--color-ink)]">
                         <span>Total</span>
-                        <span className="tabular-nums">{feeToConfirm ? `${toBRL(estimated.subtotal)} +` : toBRL(estimated.total)}</span>
+                        <span className="tabular-nums">{feeToConfirm ? `${toBRL(payload.session.pricing.subtotal)} +` : toBRL(payload.session.pricing.total)}</span>
                       </div>
                       <p className="text-[11.5px] leading-relaxed text-[var(--color-ink-muted)]">{summaryMeta}</p>
                     </div>

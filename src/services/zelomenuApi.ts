@@ -77,6 +77,10 @@ export type ZeloMenuCartSessionPayload = {
   pricing: {
     subtotal: number;
     deliveryFee: number;
+    discount: number;
+    couponCode: string | null;
+    couponDiscountType: 'valor' | 'percentual' | 'frete_gratis' | null;
+    couponDiscountValue: number | null;
     total: number;
   };
   payment: {
@@ -142,6 +146,7 @@ export type ZeloMenuUpdateCartPayload = {
     deliveryNeighborhood?: string | null;
   };
   paymentMethod?: string | null;
+  couponCode?: string | null; // undefined = não mexe; null/'' = remove cupom; string = tenta aplicar/revalidar
   observations?: string | null;
 };
 

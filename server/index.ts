@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug } from './zelomenuCartSessions.js';
 import { requireEmpresaId, getEmpresaUserId } from './supabaseServer.js';
 import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
+import { listZeloMenuCoupons, createZeloMenuCoupon, updateZeloMenuCoupon, deleteZeloMenuCoupon } from './zelomenuCoupons.js';
 import type { Response } from 'express';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -111,6 +112,9 @@ app.patch('/api/public/zelomenu/cart/:token', async (req, res) => {
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
     if (message === 'INVALID_QUANTITY' || message === 'CART_LINE_LIMIT_EXCEEDED' || message === 'ORDER_TOTAL_LIMIT_EXCEEDED') return res.status(400).json({ error: message, requestId: res.locals.requestId });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
+    if (message === 'COUPON_INVALID') return res.status(400).json({ error: 'COUPON_INVALID' });
+    if (message === 'COUPON_EXPIRED') return res.status(400).json({ error: 'COUPON_EXPIRED' });
+    if (message === 'COUPON_MIN_NOT_MET') return res.status(400).json({ error: 'COUPON_MIN_NOT_MET' });
     res.status(500).json({ error: 'INTERNAL_ERROR' });
   }
 });
@@ -140,6 +144,9 @@ app.post('/api/public/zelomenu/cart/:token/confirm', async (req, res) => {
     if (message.startsWith('PICKUP_CLOSED_DAY:')) return res.status(400).json({ error: 'PICKUP_CLOSED_DAY', detail: message.slice('PICKUP_CLOSED_DAY:'.length) });
     if (message.startsWith('PICKUP_TIME_INVALID:')) return res.status(400).json({ error: 'PICKUP_TIME_INVALID', detail: message.slice('PICKUP_TIME_INVALID:'.length) });
     if (message.startsWith('PICKUP_IN_PAST:')) return res.status(400).json({ error: 'PICKUP_IN_PAST', detail: message.slice('PICKUP_IN_PAST:'.length) });
+    if (message === 'COUPON_INVALID') return res.status(400).json({ error: 'COUPON_INVALID' });
+    if (message === 'COUPON_EXPIRED') return res.status(400).json({ error: 'COUPON_EXPIRED' });
+    if (message === 'COUPON_MIN_NOT_MET') return res.status(400).json({ error: 'COUPON_MIN_NOT_MET' });
     // Fallback genérico — nunca expõe detalhes internos
     console.error('[ZeloMenu] confirmPublicCartSession unhandled error:', message);
     res.status(500).json({
@@ -158,6 +165,10 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'INVALID_SLUG') return void res.status(400).json({ error: 'INVALID_SLUG' });
   if (message === 'RESERVED_SLUG') return void res.status(400).json({ error: 'RESERVED_SLUG' });
   if (message === 'SLUG_TAKEN') return void res.status(409).json({ error: 'SLUG_TAKEN' });
+  if (message === 'COUPON_CODE_TAKEN') return void res.status(409).json({ error: 'COUPON_CODE_TAKEN' });
+  if (message === 'COUPON_INVALID_CODE') return void res.status(400).json({ error: 'COUPON_INVALID_CODE' });
+  if (message === 'COUPON_INVALID_DISCOUNT_VALUE') return void res.status(400).json({ error: 'COUPON_INVALID_DISCOUNT_VALUE' });
+  if (message === 'COUPON_NOT_FOUND') return void res.status(404).json({ error: 'COUPON_NOT_FOUND' });
   res.status(500).json({ error: 'INTERNAL_ERROR' });
 }
 
@@ -276,6 +287,58 @@ app.post('/api/admin/zelomenu/product-description', async (req, res) => {
     const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const text = (data.choices?.[0]?.message?.content ?? '').trim();
     res.json({ text });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// ─── Coupons (admin, Bearer-authed) ───────────────────────────────────────────
+
+app.get('/api/admin/zelomenu/coupons', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const ownerUserId = await getEmpresaUserId(empresaId);
+    if (!ownerUserId) throw new Error('EMPRESA_NOT_FOUND');
+    const coupons = await listZeloMenuCoupons(ownerUserId);
+    res.json({ coupons });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+app.post('/api/admin/zelomenu/coupons', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const ownerUserId = await getEmpresaUserId(empresaId);
+    if (!ownerUserId) throw new Error('EMPRESA_NOT_FOUND');
+    const { code, discountType, discountValue, minOrderValue, startsAt, expiresAt, active } = req.body ?? {};
+    const coupon = await createZeloMenuCoupon(ownerUserId, { code, discountType, discountValue, minOrderValue, startsAt, expiresAt, active });
+    res.json(coupon);
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+app.patch('/api/admin/zelomenu/coupons/:id', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const ownerUserId = await getEmpresaUserId(empresaId);
+    if (!ownerUserId) throw new Error('EMPRESA_NOT_FOUND');
+    const { code, discountType, discountValue, minOrderValue, startsAt, expiresAt, active } = req.body ?? {};
+    const coupon = await updateZeloMenuCoupon(ownerUserId, req.params.id, { code, discountType, discountValue, minOrderValue, startsAt, expiresAt, active });
+    res.json(coupon);
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+app.delete('/api/admin/zelomenu/coupons/:id', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const ownerUserId = await getEmpresaUserId(empresaId);
+    if (!ownerUserId) throw new Error('EMPRESA_NOT_FOUND');
+    await deleteZeloMenuCoupon(ownerUserId, req.params.id);
+    res.json({ ok: true });
   } catch (error) {
     sendAdminError(res, error);
   }

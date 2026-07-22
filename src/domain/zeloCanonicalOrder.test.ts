@@ -13,7 +13,7 @@ describe('canonical Zelo order boundary', () => {
       customer: { name: 'Cliente', phone: null },
       cart: { observations: null, items: [] },
       fulfillment: { type: 'pickup' },
-      pricing: { subtotal: 10, deliveryFee: 0, total: 10 },
+      pricing: { subtotal: 10, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 10 },
       payment: { declaredMethod: 'pix', pixReceiptRequired: true, pixReceiptApproved: false },
     });
     expect(snapshots.source).toBe('zelomenu');
