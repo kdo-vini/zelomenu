@@ -44,6 +44,10 @@ export type ZeloMenuPublicBusinessHoursStatus = {
   label: string | null;
   closedDays?: string[];
   timezone?: string;
+  /** Janelas do dia de hoje (multi-janela). Vazio = fechado hoje. */
+  todayWindows?: { start: string; end: string }[];
+  /** Próxima abertura (dentro de 7 dias), se houver. */
+  nextOpen?: { day: string; start: string } | null;
 };
 
 // ─── Cart types ────────────────────────────────────────────────────────────────

@@ -320,8 +320,9 @@ export function ZeloMenuStorePage({
                   Fora do horário de atendimento
                 </p>
                 <p className="mt-0.5 text-[12px] leading-5 text-[var(--color-ink-soft)]">
-                  Você pode montar o pedido agora e agendar para um horário disponível
-                  {businessHours?.label ? ` (${businessHours.label}).` : '.'}
+                  {businessHours?.nextOpen
+                    ? `Próximo horário: ${businessHours.nextOpen.day} às ${businessHours.nextOpen.start}. Você pode montar o pedido e agendar.`
+                    : `Você pode montar o pedido agora e agendar para um horário disponível${businessHours?.label ? ` (${businessHours.label}).` : '.'}`}
                 </p>
               </div>
             </div>

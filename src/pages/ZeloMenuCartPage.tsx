@@ -448,9 +448,18 @@ export default function ZeloMenuCartPage() {
     const bh = payload?.business?.businessHours;
     if (!bh || !bh.configured || !bh.label) return null;
 
+    const hasWindows = Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0;
+
     // "Pra já" — check if store is currently open
     if (scheduleMode === 'asap') {
       if (bh.openNow === false) {
+        if (bh.nextOpen) {
+          return `Loja fechada agora. Próximo horário: ${bh.nextOpen.day} às ${bh.nextOpen.start}.`;
+        }
+        if (hasWindows) {
+          const windowsStr = bh.todayWindows!.map((w) => `${w.start}–${w.end}`).join(' e ');
+          return `Loja fechada agora (horários de hoje: ${windowsStr}). Para pedir, selecione Agendar e escolha um horário de funcionamento.`;
+        }
         return `Loja fechada agora (${bh.label}). Para pedir, selecione Agendar e escolha um horário de funcionamento.`;
       }
       return null;
@@ -459,22 +468,46 @@ export default function ZeloMenuCartPage() {
     if (!draft) return null;
     if (!draft.pickupTime || !draft.pickupDate) return null;
 
-    // Parse label "HH:mm–HH:mm"
-    const parts = bh.label.split('–');
-    if (parts.length !== 2) return null;
-    const [openStr, closeStr] = parts.map((s: string) => s.trim());
-    if (!openStr || !closeStr) return null;
+    // Multi-janela: valida contra as janelas reais do dia selecionado
+    if (hasWindows) {
+      const dayLabel = businessDayLabel(draft.pickupDate);
+      if (!dayLabel) return null;
+      const closedDays = bh.closedDays ?? [];
+      if (closedDays.includes(dayLabel)) {
+        return `A loja não funciona aos ${dayLabel.toLowerCase() === 'dom' ? 'domingos' : dayLabel.toLowerCase() + 's'}. Escolha outro dia.`;
+      }
+      const pickupMinutes = parseBusinessTime(draft.pickupTime);
+      if (pickupMinutes === null) return null;
+      // Checa se cai em pelo menos uma das janelas de hoje (aproximação:
+      // para dias diferentes o servidor valida com precisão no confirm).
+      const inApproxWindow = bh.todayWindows!.some((w) => {
+        const open = parseBusinessTime(w.start);
+        const close = parseBusinessTime(w.end);
+        if (open === null || close === null) return false;
+        return isBusinessWindowOpen(pickupMinutes, open, close);
+      });
+      if (!inApproxWindow) {
+        const windowsStr = bh.todayWindows!.map((w) => `${w.start}–${w.end}`).join(' e ');
+        return `Horário fora do funcionamento da loja (hoje: ${windowsStr}).`;
+      }
+    } else {
+      // Legado single-window — valida contra o label lossy
+      const parts = bh.label.split('–');
+      if (parts.length !== 2) return null;
+      const [openStr, closeStr] = parts.map((s: string) => s.trim());
+      if (!openStr || !closeStr) return null;
 
-    const pickupMinutes = parseBusinessTime(draft.pickupTime);
-    const openMinutes = parseBusinessTime(openStr);
-    const closeMinutes = parseBusinessTime(closeStr);
-    if (
-      pickupMinutes === null
-      || openMinutes === null
-      || closeMinutes === null
-      || !isBusinessWindowOpen(pickupMinutes, openMinutes, closeMinutes)
-    ) {
-      return `Horário fora do funcionamento da loja (${bh.label}).`;
+      const pickupMinutes = parseBusinessTime(draft.pickupTime);
+      const openMinutes = parseBusinessTime(openStr);
+      const closeMinutes = parseBusinessTime(closeStr);
+      if (
+        pickupMinutes === null
+        || openMinutes === null
+        || closeMinutes === null
+        || !isBusinessWindowOpen(pickupMinutes, openMinutes, closeMinutes)
+      ) {
+        return `Horário fora do funcionamento da loja (${bh.label}).`;
+      }
     }
 
     const storeTz = bh.timezone || 'America/Sao_Paulo';

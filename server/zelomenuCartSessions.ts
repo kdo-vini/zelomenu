@@ -34,8 +34,14 @@ import {
   hasAnyOpenWindow,
   isMinuteWithinDay,
   isOpenAt,
+  weekdayKeyInTz,
   type DayKey,
 } from '../src/domain/businessHours.js';
+
+const FULL_DAY_LABELS: Record<string, string> = {
+  sun: 'domingo', mon: 'segunda', tue: 'terça', wed: 'quarta', thu: 'quinta', fri: 'sexta', sat: 'sábado',
+};
+
 import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
@@ -233,6 +239,10 @@ type PublicBusinessHoursStatus = {
   label: string | null;
   closedDays: string[];
   timezone: string;
+  /** Janelas do dia de hoje (multi-janela). Vazio = fechado hoje. */
+  todayWindows: { start: string; end: string }[];
+  /** Próxima abertura (dentro de 7 dias), se houver. */
+  nextOpen: { day: string; start: string } | null;
 };
 
 export type PublicCartResponse = {
@@ -547,25 +557,31 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
   const timezone = config.timezone || 'America/Sao_Paulo';
   const openMinutes = parseBusinessTime(config.openTime);
   const closeMinutes = parseBusinessTime(config.closeTime);
-  // Rótulo continua sendo a faixa legada (open–close) para o chip de status. Em
-  // lojas multi-janela é o shadow lossy da faixa do dia — não bloqueia nada.
   const label = openMinutes !== null && closeMinutes !== null
     ? `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`
     : null;
 
   // Modelo multi-janela: "aberto agora" vem de isOpenAt (respeita o vão do dia).
   if (hasAnyOpenWindow(config.weeklyHours)) {
+    const now = new Date();
+    const status = isOpenAt(config.weeklyHours, now, timezone);
+    const todayKey = weekdayKeyInTz(now, timezone);
+    const todayWindows = config.weeklyHours[todayKey] ?? [];
     return {
       configured: true,
-      openNow: isOpenAt(config.weeklyHours, new Date(), timezone).open,
+      openNow: status.open,
       label,
       closedDays: config.closedDays ?? [],
       timezone,
+      todayWindows: todayWindows.map((w) => ({ start: w.start, end: w.end })),
+      nextOpen: status.nextOpen
+        ? { day: FULL_DAY_LABELS[status.nextOpen.day] || status.nextOpen.day, start: status.nextOpen.start }
+        : null,
     };
   }
 
   // Legado single-window (comportamento idêntico ao anterior).
-  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone };
+  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone, todayWindows: [], nextOpen: null };
   const now = new Date();
   const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, weekday: 'short' }).format(now).toLowerCase().replace(/\./g, '');
   const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
@@ -582,6 +598,8 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
     label,
     closedDays: config.closedDays ?? [],
     timezone: timezone,
+    todayWindows: [],
+    nextOpen: null,
   };
 }
 
