@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ImageIcon, Minus, Plus, X } from 'lucide-react';
+import { Check, ImageIcon, Minus, Plus, X } from 'lucide-react';
 import { resolveModifierSelections } from '../../domain/zelomenuModifiers';
 import { resolveCategorySuggestions } from '../../domain/zelomenuCategorySuggestions';
 import type { ZeloMenuCatalogGroup, ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
@@ -121,6 +121,11 @@ export function ProductAddModal({
         // Single-selection: replace with just this one
         return { ...prev, [groupId]: { [optionId]: 1 } };
       } else {
+        // Não deixa marcar além do máximo do grupo — precisa desmarcar uma
+        // opção antes de escolher outra.
+        if (group.maxSelections != null && Object.keys(groupSelections).length >= group.maxSelections) {
+          return prev;
+        }
         groupSelections[optionId] = 1;
       }
       return { ...prev, [groupId]: groupSelections };
@@ -253,11 +258,19 @@ export function ProductAddModal({
                         </div>
                       );
                     }
-                    const checked = (selections[group.id] ?? {})[option.id] > 0;
+                    const groupSelections = selections[group.id] ?? {};
+                    const checked = groupSelections[option.id] > 0;
+                    // Grupo de escolha única (máximo 1): marcar uma opção troca
+                    // direto pra outra (não trava as demais) — só grupos com
+                    // máximo > 1 bloqueiam opções não marcadas ao bater o teto.
+                    const atMax = group.maxSelections != null
+                      && group.maxSelections !== 1
+                      && !checked
+                      && Object.keys(groupSelections).length >= group.maxSelections;
                     return (
                       <label
                         key={option.id}
-                        className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-4 py-3"
+                        className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${atMax ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
                         style={{
                           borderColor: checked ? 'var(--color-brand)' : 'var(--color-line)',
                           background: checked ? 'var(--color-brand-soft)' : 'var(--color-surface)',
@@ -265,13 +278,34 @@ export function ProductAddModal({
                         }}
                       >
                         <div className="flex items-center gap-3">
-                          <input
-                            type={group.maxSelections === 1 ? 'radio' : 'checkbox'}
-                            name={group.id}
-                            checked={checked}
-                            onChange={() => toggleOption(group.id, option.id)}
-                            className="h-4 w-4 accent-[var(--color-brand)]"
-                          />
+                          <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
+                            <input
+                              type="checkbox"
+                              name={group.id}
+                              checked={checked}
+                              disabled={atMax}
+                              onChange={() => toggleOption(group.id, option.id)}
+                              className="sr-only"
+                            />
+                            {group.maxSelections === 1 ? (
+                              <span
+                                className="flex h-4 w-4 items-center justify-center rounded-full border-2"
+                                style={{ borderColor: checked ? 'var(--color-brand)' : 'var(--color-line-strong)' }}
+                              >
+                                {checked ? <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--color-brand)' }} /> : null}
+                              </span>
+                            ) : (
+                              <span
+                                className="flex h-4 w-4 items-center justify-center rounded"
+                                style={{
+                                  border: checked ? 'none' : '2px solid var(--color-line-strong)',
+                                  background: checked ? 'var(--color-brand)' : 'transparent',
+                                }}
+                              >
+                                {checked ? <Check className="h-3 w-3 text-white" strokeWidth={3} /> : null}
+                              </span>
+                            )}
+                          </span>
                           {option.linkedProduct ? (
                             <div className="flex items-center gap-2.5">
                               {option.linkedProduct.photoUrl ? (
