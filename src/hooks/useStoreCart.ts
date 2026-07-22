@@ -78,12 +78,15 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     product: ZeloMenuCatalogProduct,
     quantity: number,
     notes: string,
-    selections: Record<string, string[]>,
+    selections: Record<string, Array<{ optionId: string; quantity: number }>>,
   ) {
     if (quantity <= 0) return;
     const selectedOptions = Object.keys(selections)
-      .map((groupId) => ({ groupId, optionIds: selections[groupId] ?? [] }))
-      .filter((sel) => sel.optionIds.length > 0);
+      .map((groupId) => ({
+        groupId,
+        optionSelections: (selections[groupId] ?? []).filter((s) => s.quantity > 0),
+      }))
+      .filter((sel) => sel.optionSelections.length > 0);
     const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions);
     if (!resolved.ok) return;
     const key = product.modifierGroups.length > 0 ? buildCartItemKey(product.id, selectedOptions) : `${product.id}::plain`;

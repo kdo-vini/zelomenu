@@ -391,12 +391,14 @@ function parseSelectedModifiers(value: unknown): ZeloMenuCartItemSnapshot['selec
     const selectedOptions = Array.isArray(typed.selectedOptions)
       ? typed.selectedOptions.flatMap((option) => {
         if (!option || typeof option !== 'object') return [];
-        const candidate = option as { optionId?: unknown; optionName?: unknown; priceDelta?: unknown };
+        const candidate = option as { optionId?: unknown; optionName?: unknown; priceDelta?: unknown; quantity?: unknown };
         const optionId = sanitizeText(candidate.optionId, 64);
         const optionName = sanitizeText(candidate.optionName, 120);
         const priceDelta = Number(candidate.priceDelta ?? 0);
+        const qty = Number(candidate.quantity);
+        const quantity = Number.isFinite(qty) && qty >= 1 ? Math.floor(qty) : 1;
         if (!optionId || !optionName || !Number.isFinite(priceDelta)) return [];
-        return [{ optionId, optionName, priceDelta }];
+        return [{ optionId, optionName, priceDelta, quantity }];
       })
       : [];
     return [{ groupId, groupName, kind: typed.kind === 'variacao' ? 'variacao' : 'adicional', selectedOptions }];
@@ -644,13 +646,20 @@ function normalizeIncomingModifierSelections(value: unknown): ZeloMenuModifierSe
   if (!Array.isArray(value)) return [];
   return value.flatMap((selection) => {
     if (!selection || typeof selection !== 'object') return [];
-    const typed = selection as { groupId?: unknown; optionIds?: unknown };
+    const typed = selection as { groupId?: unknown; optionSelections?: unknown };
     const groupId = sanitizeText(typed.groupId, 64);
-    if (!groupId || !Array.isArray(typed.optionIds)) return [];
-    const optionIds = typed.optionIds
-      .map((id) => sanitizeText(id, 64))
-      .filter((id): id is string => Boolean(id));
-    return [{ groupId, optionIds }];
+    if (!groupId || !Array.isArray(typed.optionSelections)) return [];
+    const optionSelections = typed.optionSelections.flatMap((sel: unknown) => {
+      if (!sel || typeof sel !== 'object') return [];
+      const s = sel as { optionId?: unknown; quantity?: unknown };
+      const optionId = sanitizeText(s.optionId, 64);
+      if (!optionId) return [];
+      const qty = Number(s.quantity);
+      const quantity = Number.isFinite(qty) && qty >= 1 ? Math.floor(qty) : 1;
+      return [{ optionId, quantity }];
+    });
+    if (optionSelections.length === 0) return [];
+    return [{ groupId, optionSelections }];
   });
 }
 
@@ -682,7 +691,10 @@ function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
     notes: item.notes ?? null,
     selectedOptions: item.selectedModifiers.map((group) => ({
       groupId: group.groupId,
-      optionIds: group.selectedOptions.map((option) => option.optionId),
+      optionSelections: group.selectedOptions.map((option) => ({
+        optionId: option.optionId,
+        quantity: option.quantity ?? 1,
+      })),
     })),
   }));
 }
@@ -893,8 +905,8 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
       const resolvedItem = resolved.cart.items.find(
         (item) =>
           (item.productId === storedItem.productId || normalizeComparableText(item.productName) === normalizeComparableText(storedItem.productName))
-          && buildModifierSignature(item.selectedModifiers.map((g) => ({ groupId: g.groupId, optionIds: g.selectedOptions.map((o) => o.optionId) })))
-          === buildModifierSignature(storedItem.selectedModifiers.map((g) => ({ groupId: g.groupId, optionIds: g.selectedOptions.map((o) => o.optionId) }))),
+          && buildModifierSignature(item.selectedModifiers.map((g) => ({ groupId: g.groupId, optionSelections: g.selectedOptions.map((o) => ({ optionId: o.optionId, quantity: o.quantity ?? 1 })) })))
+          === buildModifierSignature(storedItem.selectedModifiers.map((g) => ({ groupId: g.groupId, optionSelections: g.selectedOptions.map((o) => ({ optionId: o.optionId, quantity: o.quantity ?? 1 })) }))),
       );
       if (!resolvedItem) {
         issues.push({ code: 'product_missing', message: `O item ${formatModifierAwareCartItem(storedItem)} não está mais disponível nesse carrinho.`, productName: storedItem.productName });

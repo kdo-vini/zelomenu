@@ -141,6 +141,8 @@ export function normalizeModifierGroupRow(
     kind: row.tipo === 'variacao' ? 'variacao' : 'adicional',
     minSelections: Math.max(0, Number(row.min_selecoes ?? 0)),
     maxSelections: row.max_selecoes == null ? null : Math.max(1, Number(row.max_selecoes)),
+    allowsQuantity: row.permite_quantidade === true,
+    maxPerOption: row.maximo_por_opcao == null ? null : Math.max(1, Number(row.maximo_por_opcao)),
     active: row.ativo !== false,
     order: Math.max(0, Number(row.ordem ?? 0)),
     options: (optionsByGroupId.get(id) ?? []).map((option) => ({
