@@ -69,7 +69,7 @@ export function syncZeloMenuStoreCartCache(input: {
     notes?: string | null;
     selectedModifiers: Array<{
       groupId: string;
-      selectedOptions: Array<{ optionId: string }>;
+      selectedOptions: Array<{ optionId: string; quantity?: number }>;
     }>;
   }>;
 }): void {
@@ -84,7 +84,10 @@ export function syncZeloMenuStoreCartCache(input: {
       if (item.productId == null || item.quantity <= 0) return [];
       const selectedOptions = item.selectedModifiers.map((group) => ({
         groupId: group.groupId,
-        optionIds: group.selectedOptions.map((option) => option.optionId),
+        optionSelections: group.selectedOptions.map((option) => ({
+          optionId: option.optionId,
+          quantity: option.quantity ?? 1,
+        })),
       }));
       const key = buildCartItemKey(item.productId, selectedOptions);
       return [[key, {

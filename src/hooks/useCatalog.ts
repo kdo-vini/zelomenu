@@ -68,7 +68,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     setLoading(true);
     setError(null);
     try {
-      const [catsRes, subsRes, prodsRes, publicationsRes, modifierGroupsRes, modifierOptionsRes] = await Promise.all([
+      const [catsRes, subsRes, prodsRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierOptionProductsRes] = await Promise.all([
         supabase
           .from('categorias')
           .select('id, nome, ordem')
@@ -97,7 +97,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .limit(CATALOG_PUBLICATION_LIMIT),
         supabase
           .from('zelomenu_modifier_groups')
-          .select('id, id_produto, nome, tipo, min_selecoes, max_selecoes, ativo, ordem')
+          .select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, permite_quantidade, maximo_por_opcao, ativo, ordem')
           .eq('id_usuario', userId)
           .order('ordem')
           .limit(CATALOG_MODIFIER_GROUP_LIMIT),
@@ -107,6 +107,11 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .eq('id_usuario', userId)
           .order('ordem')
           .limit(CATALOG_MODIFIER_OPTION_LIMIT),
+        supabase
+          .from('zelomenu_modifier_option_products')
+          .select('id_opcao, id_produto, price_override')
+          .eq('id_usuario', userId)
+          .limit(CATALOG_MODIFIER_OPTION_LIMIT),
       ]);
       if (catsRes.error) throw catsRes.error;
       if (subsRes.error) throw subsRes.error;
@@ -114,12 +119,23 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
       if (publicationsRes.error) throw publicationsRes.error;
       if (modifierGroupsRes.error) throw modifierGroupsRes.error;
       if (modifierOptionsRes.error) throw modifierOptionsRes.error;
+      if (modifierOptionProductsRes.error) throw modifierOptionProductsRes.error;
       const optionsByGroupId = new Map<string, ZeloMenuModifierOptionRow[]>();
       for (const row of modifierOptionsRes.data ?? []) {
         const option = normalizeModifierOptionRow(row);
         const existing = optionsByGroupId.get(option.groupId) ?? [];
         existing.push(option);
         optionsByGroupId.set(option.groupId, existing);
+      }
+      const modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }> = {};
+      for (const row of modifierOptionProductsRes.data ?? []) {
+        const optionId = String(row.id_opcao ?? '');
+        const productId = Number(row.id_produto ?? 0);
+        if (!optionId || !productId) continue;
+        modifierOptionProducts[optionId] = {
+          productId,
+          priceOverride: row.price_override == null ? null : Number(row.price_override),
+        };
       }
       const productModifierGroups = Object.fromEntries(
         (modifierGroupsRes.data ?? [])
@@ -162,6 +178,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           }),
         ),
         productModifierGroups,
+        modifierOptionProducts,
       };
       dataRef.current = nextData;
       setData(nextData);

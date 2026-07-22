@@ -42,6 +42,14 @@ function getFeaturedProducts(catalog: ZeloMenuCatalogGroup[], ids: number[]): Ze
   return ids.map((id) => byId.get(id)).filter((p): p is ZeloMenuCatalogProduct => p != null && p.available !== false);
 }
 
+function findCategoryName(catalog: ZeloMenuCatalogGroup[], productId: number): string {
+  for (const group of catalog) {
+    for (const p of group.produtosDireto) if (p.id === productId) return group.nome;
+    for (const sub of group.subcategorias) for (const p of sub.produtos) if (p.id === productId) return group.nome;
+  }
+  return '';
+}
+
 function storeInitials(name: string): string {
   return name
     .split(/\s+/)
@@ -450,6 +458,8 @@ export function ZeloMenuStorePage({
         const product = cart.sheetProduct;
         const plainKey = `${product.id}::plain`;
         const existing = product.modifierGroups.length === 0 ? cart.items[plainKey] : undefined;
+        const categoryName = findCategoryName(store.catalog, product.id);
+        const cartProductIds = Object.values(cart.items).map((i) => i.productId).filter((id): id is number => id != null);
         return (
           <ProductAddModal
             product={product}
@@ -457,6 +467,11 @@ export function ZeloMenuStorePage({
             initialNotes={existing?.notes ?? ''}
             onClose={() => cart.setSheetProduct(null)}
             onConfirm={(quantity, notes, selections) => cart.confirmSheet(product, quantity, notes, selections)}
+            categoryName={categoryName}
+            categorySuggestions={store.business.categorySuggestions}
+            catalog={store.catalog}
+            cartProductIds={cartProductIds}
+            onQuickAdd={(p) => cart.quickAddProduct(p)}
           />
         );
       })() : null}

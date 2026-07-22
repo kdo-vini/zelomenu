@@ -1,12 +1,54 @@
 import { useEffect, useState } from 'react';
-import { Minus, Plus, X } from 'lucide-react';
+import { Check, ImageIcon, Minus, Plus, X } from 'lucide-react';
 import { resolveModifierSelections } from '../../domain/zelomenuModifiers';
-import type { ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
+import { resolveCategorySuggestions } from '../../domain/zelomenuCategorySuggestions';
+import type { ZeloMenuCatalogGroup, ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
 
 const NOTES_MAX_LENGTH = 200;
 
 function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+/** Mini-stepper para opções com quantidade (visualmente menor que o stepper do produto). */
+function MiniStepper({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number | null;
+  onChange: (v: number) => void;
+}) {
+  const atMin = value <= min;
+  const atMax = max != null && value >= max;
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-lg border border-[var(--color-line)]">
+      <button
+        type="button"
+        onClick={() => onChange(value - 1)}
+        disabled={atMin}
+        className="flex h-7 w-7 items-center justify-center rounded-l-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label="Diminuir"
+      >
+        <Minus className="h-3 w-3" strokeWidth={2.5} />
+      </button>
+      <span className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)]">
+        {value}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(value + 1)}
+        disabled={atMax}
+        className="flex h-7 w-7 items-center justify-center rounded-r-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label="Aumentar"
+      >
+        <Plus className="h-3 w-3" strokeWidth={2.5} />
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -20,14 +62,24 @@ export function ProductAddModal({
   initialNotes,
   onClose,
   onConfirm,
+  categoryName,
+  categorySuggestions,
+  catalog,
+  cartProductIds,
+  onQuickAdd,
 }: {
   product: ZeloMenuCatalogProduct;
   initialQuantity: number;
   initialNotes: string;
   onClose: () => void;
-  onConfirm: (quantity: number, notes: string, selections: Record<string, string[]>) => void;
+  onConfirm: (quantity: number, notes: string, selections: Record<string, Array<{ optionId: string; quantity: number }>>) => void;
+  categoryName?: string;
+  categorySuggestions?: Record<string, number[]>;
+  catalog?: ZeloMenuCatalogGroup[];
+  cartProductIds?: number[];
+  onQuickAdd?: (product: ZeloMenuCatalogProduct) => void;
 }) {
-  const [selections, setSelections] = useState<Record<string, string[]>>({});
+  const [selections, setSelections] = useState<Record<string, Record<string, number>>>({});
   const [qtyDraft, setQtyDraft] = useState(String(Math.max(1, initialQuantity)));
   const [notes, setNotes] = useState(initialNotes);
   const isEditing = initialQuantity > 0;
@@ -38,31 +90,69 @@ export function ProductAddModal({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  function setOptionQuantity(groupId: string, optionId: string, quantity: number) {
+    setSelections((prev) => {
+      const group = product.modifierGroups.find((g) => g.id === groupId);
+      if (!group) return prev;
+      const groupSelections = { ...(prev[groupId] ?? {}) };
+      if (quantity <= 0) {
+        delete groupSelections[optionId];
+      } else {
+        groupSelections[optionId] = quantity;
+      }
+      if (group.allowsQuantity) return { ...prev, [groupId]: groupSelections };
+      // Legacy toggle behavior (no quantity)
+      return { ...prev, [groupId]: groupSelections };
+    });
+  }
+
   function toggleOption(groupId: string, optionId: string) {
     setSelections((prev) => {
       const group = product.modifierGroups.find((g) => g.id === groupId);
       if (!group) return prev;
-      const current = prev[groupId] ?? [];
-      const has = current.includes(optionId);
-      let next: string[];
-      if (has) next = current.filter((id) => id !== optionId);
-      else if (group.maxSelections === 1) next = [optionId];
-      else next = [...current, optionId];
-      return { ...prev, [groupId]: next };
+      if (group.allowsQuantity) {
+        // Use stepper instead — this shouldn't be called
+        return prev;
+      }
+      const groupSelections = { ...(prev[groupId] ?? {}) };
+      if (groupSelections[optionId]) {
+        delete groupSelections[optionId];
+      } else if (group.maxSelections === 1) {
+        // Single-selection: replace with just this one
+        return { ...prev, [groupId]: { [optionId]: 1 } };
+      } else {
+        // Não deixa marcar além do máximo do grupo — precisa desmarcar uma
+        // opção antes de escolher outra.
+        if (group.maxSelections != null && Object.keys(groupSelections).length >= group.maxSelections) {
+          return prev;
+        }
+        groupSelections[optionId] = 1;
+      }
+      return { ...prev, [groupId]: groupSelections };
     });
   }
 
   const selectedOptions = Object.entries(selections)
-    .map(([groupId, optionIds]) => ({ groupId, optionIds }))
-    .filter((sel) => sel.optionIds.length > 0);
-  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions);
+    .map(([groupId, options]) => ({
+      groupId,
+      optionSelections: Object.entries(options).map(([optionId, quantity]) => ({ optionId, quantity })),
+    }))
+    .filter((sel) => sel.optionSelections.length > 0);
+  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
   const quantity = parseInt(qtyDraft, 10);
   const validQuantity = !isNaN(quantity) && quantity > 0;
   const canConfirm = resolution.ok && validQuantity;
 
   function confirm() {
     if (!canConfirm) return;
-    onConfirm(quantity, notes.trim(), selections);
+    const selectionsArray = Object.entries(selections).reduce<
+      Record<string, Array<{ optionId: string; quantity: number }>>
+    >((acc, [groupId, opts]) => {
+      const entries = Object.entries(opts).map(([optionId, qty]) => ({ optionId, quantity: qty }));
+      if (entries.length > 0) acc[groupId] = entries;
+      return acc;
+    }, {});
+    onConfirm(quantity, notes.trim(), selectionsArray);
   }
 
   return (
@@ -105,7 +195,7 @@ export function ProductAddModal({
                 </p>
               ) : null}
               <p className="mt-2 text-[15px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
-                {toBRL(product.basePrice)}
+                {resolution.ok ? toBRL(resolution.finalUnitPrice) : toBRL(product.basePrice)}
               </p>
             </div>
 
@@ -121,12 +211,66 @@ export function ProductAddModal({
                   </p>
                 </div>
                 <div className="space-y-2">
-                  {group.options.filter((o) => o.active).map((option) => {
-                    const checked = (selections[group.id] ?? []).includes(option.id);
+                  {group.options.filter((o) => o.active && o.linkedProduct?.available !== false).map((option) => {
+                    const isSubstituir = group.pricingMode === 'substituir';
+                    if (group.allowsQuantity) {
+                      const groupSelections = selections[group.id] ?? {};
+                      const currentQty = groupSelections[option.id] ?? 0;
+                      const checked = currentQty > 0;
+                      const unitPrice = option.linkedProduct ? option.linkedProduct.price : option.priceDelta;
+                      return (
+                        <div
+                          key={option.id}
+                          className="flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5"
+                          style={{
+                            borderColor: checked ? 'var(--color-brand)' : 'var(--color-line)',
+                            background: checked ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                            transition: 'border-color 0.15s, background 0.15s',
+                          }}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            {option.linkedProduct?.photoUrl ? (
+                              <img
+                                src={option.linkedProduct.photoUrl}
+                                alt={option.linkedProduct.name}
+                                className="h-8 w-8 shrink-0 rounded-lg object-cover"
+                              />
+                            ) : null}
+                            <span className="text-[14px] text-[var(--color-ink)]">
+                              {option.linkedProduct ? option.linkedProduct.name : option.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">
+                              {unitPrice > 0
+                                ? checked
+                                  ? `+ ${toBRL(unitPrice * currentQty)}`
+                                  : `+ ${toBRL(unitPrice)}`
+                                : 'incluso'}
+                            </span>
+                            <MiniStepper
+                              value={currentQty}
+                              min={0}
+                              max={group.maxPerOption ?? null}
+                              onChange={(v) => setOptionQuantity(group.id, option.id, v)}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+                    const groupSelections = selections[group.id] ?? {};
+                    const checked = groupSelections[option.id] > 0;
+                    // Grupo de escolha única (máximo 1): marcar uma opção troca
+                    // direto pra outra (não trava as demais) — só grupos com
+                    // máximo > 1 bloqueiam opções não marcadas ao bater o teto.
+                    const atMax = group.maxSelections != null
+                      && group.maxSelections !== 1
+                      && !checked
+                      && Object.keys(groupSelections).length >= group.maxSelections;
                     return (
                       <label
                         key={option.id}
-                        className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-4 py-3"
+                        className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${atMax ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
                         style={{
                           borderColor: checked ? 'var(--color-brand)' : 'var(--color-line)',
                           background: checked ? 'var(--color-brand-soft)' : 'var(--color-surface)',
@@ -134,17 +278,61 @@ export function ProductAddModal({
                         }}
                       >
                         <div className="flex items-center gap-3">
-                          <input
-                            type={group.maxSelections === 1 ? 'radio' : 'checkbox'}
-                            name={group.id}
-                            checked={checked}
-                            onChange={() => toggleOption(group.id, option.id)}
-                            className="h-4 w-4 accent-[var(--color-brand)]"
-                          />
-                          <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                          <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
+                            <input
+                              type="checkbox"
+                              name={group.id}
+                              checked={checked}
+                              disabled={atMax}
+                              onChange={() => toggleOption(group.id, option.id)}
+                              className="sr-only"
+                            />
+                            {group.maxSelections === 1 ? (
+                              <span
+                                className="flex h-4 w-4 items-center justify-center rounded-full border-2"
+                                style={{ borderColor: checked ? 'var(--color-brand)' : 'var(--color-line-strong)' }}
+                              >
+                                {checked ? <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--color-brand)' }} /> : null}
+                              </span>
+                            ) : (
+                              <span
+                                className="flex h-4 w-4 items-center justify-center rounded"
+                                style={{
+                                  border: checked ? 'none' : '2px solid var(--color-line-strong)',
+                                  background: checked ? 'var(--color-brand)' : 'transparent',
+                                }}
+                              >
+                                {checked ? <Check className="h-3 w-3 text-white" strokeWidth={3} /> : null}
+                              </span>
+                            )}
+                          </span>
+                          {option.linkedProduct ? (
+                            <div className="flex items-center gap-2.5">
+                              {option.linkedProduct.photoUrl ? (
+                                <img
+                                  src={option.linkedProduct.photoUrl}
+                                  alt={option.linkedProduct.name}
+                                  className="h-8 w-8 shrink-0 rounded-lg object-cover"
+                                />
+                              ) : null}
+                              <span className="text-[14px] text-[var(--color-ink)]">
+                                {option.linkedProduct.name}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                          )}
                         </div>
                         <span className="text-[13px] font-semibold text-[var(--color-ink-soft)]">
-                          {option.priceDelta > 0 ? `+ ${toBRL(option.priceDelta)}` : 'incluso'}
+                          {option.linkedProduct
+                            ? isSubstituir
+                              ? toBRL(option.linkedProduct.price)
+                              : option.linkedProduct.price > 0
+                                ? `+ ${toBRL(option.linkedProduct.price)}`
+                                : 'incluso'
+                            : option.priceDelta > 0
+                              ? `+ ${toBRL(option.priceDelta)}`
+                              : 'incluso'}
                         </span>
                       </label>
                     );
@@ -158,6 +346,50 @@ export function ProductAddModal({
                 {resolution.message}
               </div>
             ) : null}
+
+            {/* ── Sugestões por categoria ── */}
+            {categoryName && categorySuggestions && catalog && cartProductIds && onQuickAdd
+              ? (() => {
+                  const catSuggestions = resolveCategorySuggestions(catalog, cartProductIds, categoryName, categorySuggestions);
+                  if (catSuggestions.length === 0) return null;
+                  return (
+                    <div>
+                      <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Adicional pra sua {categoryName.toLowerCase()}</p>
+                      <div className="-mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
+                        {catSuggestions.map((p) => (
+                          <div
+                            key={p.id}
+                            className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)]"
+                            style={{ scrollSnapAlign: 'start' }}
+                          >
+                            <div className="flex h-[80px] items-center justify-center overflow-hidden rounded-t-xl bg-[var(--color-surface)]">
+                              {p.photoUrl ? (
+                                <img src={p.photoUrl} alt={p.name} className="h-full w-full object-cover" loading="lazy" />
+                              ) : (
+                                <ImageIcon className="h-6 w-6 text-[var(--color-ink-soft)]" strokeWidth={1.4} />
+                              )}
+                            </div>
+                            <div className="flex flex-1 flex-col justify-between gap-1 p-2">
+                              <p className="text-[11px] font-medium leading-tight text-[var(--color-ink)] line-clamp-2">{p.name}</p>
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-[12px] font-semibold text-[var(--color-ink)]">{toBRL(p.basePrice)}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => onQuickAdd(p)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-brand)] text-white transition-transform active:scale-90"
+                                  aria-label={`Adicionar ${p.name}`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()
+              : null}
 
             <div>
               <div className="mb-1.5 flex items-baseline justify-between">
@@ -225,7 +457,7 @@ export function ProductAddModal({
           >
             <Plus className="h-4 w-4" strokeWidth={2.5} />
             {isEditing ? 'Atualizar' : 'Adicionar'}
-            {validQuantity && resolution.ok ? ` · ${toBRL((product.basePrice + resolution.deltaTotal) * quantity)}` : ''}
+            {validQuantity && resolution.ok ? ` · ${toBRL(resolution.finalUnitPrice * quantity)}` : ''}
           </button>
         </div>
       </div>

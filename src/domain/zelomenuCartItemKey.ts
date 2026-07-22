@@ -6,7 +6,11 @@ export function buildModifierSignature(
   if (!selectedOptions || selectedOptions.length === 0) return 'plain';
   return (
     selectedOptions
-      .map((g) => `${g.groupId}:${[...g.optionIds].sort().join(',')}`)
+      .map((g) => {
+        const sorted = [...g.optionSelections]
+          .sort((a, b) => a.optionId.localeCompare(b.optionId));
+        return `${g.groupId}:${sorted.map((s) => `${s.optionId}:${s.quantity}`).join(',')}`;
+      })
       .sort()
       .join('|') || 'plain'
   );

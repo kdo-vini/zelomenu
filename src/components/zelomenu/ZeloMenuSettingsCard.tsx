@@ -30,6 +30,7 @@ export function ZeloMenuSettingsCard() {
   const [featuredIds, setFeaturedIds] = useState<number[]>([]);
   const [recommendationsEnabled, setRecommendationsEnabled] = useState(false);
   const [recommendationIds, setRecommendationIds] = useState<number[]>([]);
+  const [categorySuggestions, setCategorySuggestions] = useState<Record<string, number[]>>({});
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
@@ -37,6 +38,9 @@ export function ZeloMenuSettingsCard() {
   const [recSearch, setRecSearch] = useState('');
   const [recPickerOpen, setRecPickerOpen] = useState(false);
   const recPickerRef = useRef<HTMLDivElement>(null);
+  const [catPickerCategory, setCatPickerCategory] = useState<string | null>(null);
+  const [catSearch, setCatSearch] = useState('');
+  const catPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -50,6 +54,7 @@ export function ZeloMenuSettingsCard() {
         setFeaturedIds(s.featuredProductIds);
         setRecommendationsEnabled(s.recommendationsEnabled);
         setRecommendationIds(s.recommendationProductIds);
+        setCategorySuggestions(s.categorySuggestions ?? {});
         // Reconcilia a ordem salva com o catálogo atual: descarta categorias que
         // não existem mais (renomeadas/excluídas no PDV) e anexa as novas no fim,
         // pra lista de arrastar sempre refletir o cardápio de verdade.
@@ -90,6 +95,17 @@ export function ZeloMenuSettingsCard() {
     return () => document.removeEventListener('mousedown', handler);
   }, [recPickerOpen]);
 
+  useEffect(() => {
+    if (!catPickerCategory) return;
+    const handler = (e: MouseEvent) => {
+      if (catPickerRef.current && !catPickerRef.current.contains(e.target as Node)) {
+        setCatPickerCategory(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [catPickerCategory]);
+
   function toggleProduct(id: number) {
     setFeaturedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -100,6 +116,18 @@ export function ZeloMenuSettingsCard() {
     setRecommendationIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+  }
+
+  function toggleCategorySuggestion(category: string, id: number) {
+    setCategorySuggestions((prev) => {
+      const current = prev[category] ?? [];
+      const next = current.includes(id)
+        ? current.filter((x) => x !== id)
+        : current.length >= 3
+          ? current
+          : [...current, id];
+      return { ...prev, [category]: next };
+    });
   }
 
   async function generateWelcome() {
@@ -130,6 +158,7 @@ export function ZeloMenuSettingsCard() {
         featuredProductIds: featuredIds,
         recommendationsEnabled,
         recommendationProductIds: recommendationIds,
+        categorySuggestions,
         categoryOrder,
       });
       setSaved(true);
@@ -456,6 +485,120 @@ export function ZeloMenuSettingsCard() {
               </div>
             ) : null}
           </div>
+
+          {/* ── Sugestões por categoria ── */}
+          {settings.availableCategories.length > 0 ? (
+            <div>
+              <div className="mb-3">
+                <p className="text-[13px] font-semibold text-[var(--color-ink)]">Sugestões por categoria</p>
+                <p className="text-[12px] text-[var(--color-ink-muted)]">Ofereça acompanhamentos específicos para cada categoria do cardápio (até 3 por categoria).</p>
+              </div>
+              <div className="space-y-3">
+                {settings.availableCategories.map((cat) => {
+                  const catProductIds = categorySuggestions[cat] ?? [];
+                  const catProducts = settings.availableProducts.filter((p) => p.categoryName === cat);
+                  const isOpen = catPickerCategory === cat;
+                  const filtered = catSearch.trim()
+                    ? catProducts.filter((p) => p.name.toLowerCase().includes(catSearch.toLowerCase()))
+                    : catProducts;
+                  return (
+                    <div key={cat} className="rounded-xl border border-[var(--color-line)] p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-[13px] font-semibold text-[var(--color-ink)]">{cat}</p>
+                        <span className="text-[11px] text-[var(--color-ink-muted)]">{catProductIds.length}/3</span>
+                      </div>
+                      <div className="relative" ref={isOpen ? catPickerRef : undefined}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCatPickerCategory(isOpen ? null : cat);
+                            setCatSearch('');
+                          }}
+                          className="flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-left"
+                        >
+                          <span className="text-[12px] text-[var(--color-ink)]">
+                            {catProductIds.length === 0 ? 'Selecionar produtos…' : `${catProductIds.length} produto${catProductIds.length !== 1 ? 's' : ''} selecionado${catProductIds.length !== 1 ? 's' : ''}`}
+                          </span>
+                          <ChevronDown
+                            className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-muted)] transition-transform"
+                            style={{ transform: isOpen ? 'rotate(180deg)' : '' }}
+                            strokeWidth={2}
+                          />
+                        </button>
+                        {isOpen ? (
+                          <div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-lg">
+                            <div className="flex items-center gap-2 border-b border-[var(--color-line)] px-3 py-2">
+                              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-muted)]" strokeWidth={2} />
+                              <input
+                                autoFocus
+                                value={catSearch}
+                                onChange={(e) => setCatSearch(e.target.value)}
+                                placeholder="Buscar…"
+                                className="flex-1 bg-transparent text-[13px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)]"
+                              />
+                              {catSearch ? (
+                                <button type="button" onClick={() => setCatSearch('')}>
+                                  <X className="h-3.5 w-3.5 text-[var(--color-ink-muted)]" strokeWidth={2} />
+                                </button>
+                              ) : null}
+                            </div>
+                            <div className="max-h-40 overflow-y-auto">
+                              {filtered.length === 0 ? (
+                                <p className="px-4 py-3 text-[13px] text-[var(--color-ink-muted)]">Nenhum produto encontrado</p>
+                              ) : (
+                                filtered.map((p) => {
+                                  const checked = catProductIds.includes(p.id);
+                                  const atLimit = !checked && catProductIds.length >= 3;
+                                  return (
+                                    <label
+                                      key={p.id}
+                                      className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-canvas)] ${atLimit ? 'opacity-40' : ''}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        disabled={atLimit}
+                                        onChange={() => toggleCategorySuggestion(cat, p.id)}
+                                        className="h-4 w-4 accent-[var(--color-brand)]"
+                                      />
+                                      <span className="min-w-0 flex-1 text-[13px] text-[var(--color-ink)]">{p.name}</span>
+                                    </label>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                      {catProductIds.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {catProductIds.map((id) => {
+                            const name = settings.availableProducts.find((p) => p.id === id)?.name;
+                            if (!name) return null;
+                            return (
+                              <span
+                                key={id}
+                                className="inline-flex items-center gap-1 rounded-full bg-[var(--color-brand-soft)] px-2.5 py-1 text-[12px] font-medium text-[var(--color-brand-deep)]"
+                              >
+                                {name}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleCategorySuggestion(cat, id)}
+                                  aria-label={`Remover ${name}`}
+                                >
+                                  <X className="h-3 w-3" strokeWidth={2.5} />
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           {/* ── Category order ── */}
           {categoryOrder.length > 1 ? (

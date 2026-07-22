@@ -54,17 +54,40 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     setSheetProduct(product);
   }
 
+  function quickAddProduct(product: ZeloMenuCatalogProduct) {
+    const key = `${product.id}::plain`;
+    setItems((prev) => {
+      const existing = prev[key];
+      return {
+        ...prev,
+        [key]: {
+          key,
+          productId: product.id,
+          productName: product.name,
+          quantity: (existing?.quantity ?? 0) + 1,
+          selectedOptions: [],
+          unitPrice: product.basePrice,
+          notes: null,
+        },
+      };
+    });
+    toast.success('Adicionado ao carrinho');
+  }
+
   function confirmSheet(
     product: ZeloMenuCatalogProduct,
     quantity: number,
     notes: string,
-    selections: Record<string, string[]>,
+    selections: Record<string, Array<{ optionId: string; quantity: number }>>,
   ) {
     if (quantity <= 0) return;
     const selectedOptions = Object.keys(selections)
-      .map((groupId) => ({ groupId, optionIds: selections[groupId] ?? [] }))
-      .filter((sel) => sel.optionIds.length > 0);
-    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions);
+      .map((groupId) => ({
+        groupId,
+        optionSelections: (selections[groupId] ?? []).filter((s) => s.quantity > 0),
+      }))
+      .filter((sel) => sel.optionSelections.length > 0);
+    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
     if (!resolved.ok) return;
     const key = product.modifierGroups.length > 0 ? buildCartItemKey(product.id, selectedOptions) : `${product.id}::plain`;
     const trimmedNotes = notes.trim();
@@ -76,7 +99,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
         productName: product.name,
         quantity,
         selectedOptions,
-        unitPrice: Number((product.basePrice + resolved.deltaTotal).toFixed(2)),
+        unitPrice: Number(resolved.finalUnitPrice.toFixed(2)),
         notes: trimmedNotes ? trimmedNotes : null,
       },
     }));
@@ -123,6 +146,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     changeQty,
     setQty,
     onAddProduct,
+    quickAddProduct,
     confirmSheet,
     continueToCart,
     lines,

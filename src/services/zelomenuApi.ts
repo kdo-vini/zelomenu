@@ -114,6 +114,7 @@ export type ZeloMenuPublicCartResponse = {
     featuredProductIds?: number[];
     recommendationsEnabled?: boolean;
     recommendationProductIds?: number[];
+    categorySuggestions?: Record<string, number[]>;
     businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
   catalog: ZeloMenuCatalogGroup[];
@@ -171,6 +172,7 @@ export type ZeloMenuPublicStoreResponse = {
     featuredProductIds?: number[];
     recommendationsEnabled?: boolean;
     recommendationProductIds?: number[];
+    categorySuggestions?: Record<string, number[]>;
     businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
   catalog: ZeloMenuCatalogGroup[];
