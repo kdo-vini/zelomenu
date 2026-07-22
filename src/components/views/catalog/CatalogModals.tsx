@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, Sparkles, X } from 'lucide-react';
+import { Search, Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, Sparkles, X } from 'lucide-react';
 import { motion, useMotionValue, useTransform } from 'motion/react';
 import { ConfirmModal } from '../../ConfirmModal';
 import { Modal, useModalTitleId } from '../../Modal';
@@ -19,6 +19,7 @@ import {
   validateModifierGroupDrafts,
   type ZeloMenuModifierGroupDraft,
   type ZeloMenuModifierGroupKind,
+  type ZeloMenuModifierOptionDraft,
 } from '../../../domain/zelomenuModifiers';
 
 type ModalShellProps = {
@@ -459,12 +460,13 @@ export function ProductModal({
 }
 
 // ---------- Publicação ZeloMenu ----------
-type ProductPublicationModalProps = {
+export type ProductPublicationModalProps = {
   open: boolean;
   product: ProdutoRow | null;
   products: ProdutoRow[];
   initial?: ZeloMenuProductPublicationRow | null;
   modifierGroups: ZeloMenuModifierGroupRow[];
+  modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
   uploadImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
   deleteImage: (url: string | null | undefined) => Promise<void>;
   onClose: () => void;
@@ -485,6 +487,7 @@ export function ProductPublicationModal({
   products,
   initial,
   modifierGroups,
+  modifierOptionProducts,
   uploadImage,
   deleteImage,
   onClose,
@@ -527,7 +530,7 @@ export function ProductPublicationModal({
     setDescricaoPublica(initial?.descricao_publica ?? '');
     setFotoUrl(initial?.foto_url ?? '');
     setOrdem(String(initial?.ordem ?? 0));
-    setGroupsDraft(toModifierDrafts(modifierGroups));
+    setGroupsDraft(toModifierDrafts(modifierGroups, modifierOptionProducts));
     setGroupsDirty(false);
     setSaveStatus('idle');
     setErr(null);
@@ -871,6 +874,7 @@ export function ProductPublicationModal({
             <ModifierGroupEditor
               key={group.id ?? `group-${groupIndex}`}
               group={group}
+              products={products}
               onChange={(nextGroup) => {
                 setGroupsDirty(true);
                 setGroupsDraft((prev) => prev.map((entry, index) => index === groupIndex ? nextGroup : entry));
@@ -901,24 +905,33 @@ export function ProductPublicationModal({
   );
 }
 
-function toModifierDrafts(groups: ZeloMenuModifierGroupRow[]): ZeloMenuModifierGroupDraft[] {
+function toModifierDrafts(
+  groups: ZeloMenuModifierGroupRow[],
+  optionProducts: Record<string, { productId: number; priceOverride: number | null }>,
+): ZeloMenuModifierGroupDraft[] {
   return groups.map((group) => ({
     id: group.id,
     name: group.name,
     kind: group.kind,
+    pricingMode: group.pricingMode,
     minSelections: group.minSelections,
     maxSelections: group.maxSelections,
     allowsQuantity: group.allowsQuantity,
     maxPerOption: group.maxPerOption,
     active: group.active,
     order: group.order,
-    options: group.options.map((option) => ({
-      id: option.id,
-      name: option.name,
-      priceDelta: option.priceDelta,
-      active: option.active,
-      order: option.order,
-    })),
+    options: group.options.map((option) => {
+      const link = optionProducts[option.id];
+      return {
+        id: option.id,
+        name: option.name,
+        priceDelta: option.priceDelta,
+        active: option.active,
+        order: option.order,
+        linkedProductId: link?.productId ?? null,
+        priceOverride: link?.priceOverride ?? null,
+      };
+    }),
   }));
 }
 
@@ -998,16 +1011,44 @@ function ProductCardPreview({
 
 function ModifierGroupEditor({
   group,
+  products,
   onChange,
   onDelete,
 }: {
   group: ZeloMenuModifierGroupDraft;
+  products: ProdutoRow[];
   onChange: (group: ZeloMenuModifierGroupDraft) => void;
   onDelete: () => void;
 }) {
   const updateGroup = (patch: Partial<ZeloMenuModifierGroupDraft>) => {
     onChange({ ...group, ...patch });
   };
+  const updateOption = (index: number, patch: Partial<ZeloMenuModifierOptionDraft>) => {
+    onChange({
+      ...group,
+      options: group.options.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)),
+    });
+  };
+
+  const [productPickerIndex, setProductPickerIndex] = useState<number | null>(null);
+  const [productSearch, setProductSearch] = useState('');
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (productPickerIndex == null) return;
+    const handleClick = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setProductPickerIndex(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [productPickerIndex]);
+
+  const filteredProducts = products
+    .filter((p) => p.nome.toLowerCase().includes(productSearch.toLowerCase()))
+    .sort((a, b) => a.nome.localeCompare(b.nome));
 
   return (
     <div className="rounded-xl border border-[var(--color-line)] bg-white p-3">
@@ -1069,6 +1110,25 @@ function ModifierGroupEditor({
             className={INPUT_CLS}
             placeholder="Sem limite"
           />
+        </label>
+
+        <label className="space-y-1.5">
+          <span className={LABEL_CLS}>Preço do grupo</span>
+          <select
+            value={group.pricingMode}
+            onChange={(event) => {
+              const pricingMode = event.target.value as 'somar' | 'substituir';
+              updateGroup({
+                pricingMode,
+                // When switching to 'substituir', force max = 1
+                ...(pricingMode === 'substituir' ? { maxSelections: 1 } : {}),
+              });
+            }}
+            className={INPUT_CLS}
+          >
+            <option value="somar">Somar ao base</option>
+            <option value="substituir">Substituir o base</option>
+          </select>
         </label>
       </div>
 
@@ -1144,58 +1204,140 @@ function ModifierGroupEditor({
         </div>
 
         {group.options.map((option, optionIndex) => (
-          <div key={option.id ?? `option-${optionIndex}`} className="grid gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3 md:grid-cols-[minmax(0,1fr)_140px_auto]">
-            <label className="space-y-1">
-              <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Nome</span>
-              <input
-                value={option.name}
-                onChange={(event) => onChange({
-                  ...group,
-                  options: group.options.map((entry, index) => index === optionIndex ? { ...entry, name: event.target.value } : entry),
-                })}
-                placeholder="Ex.: Catupiry"
-                className={INPUT_CLS}
-              />
-            </label>
+          <div key={option.id ?? `option-${optionIndex}`} className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3">
+            <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_auto]">
+              <label className="space-y-1">
+                <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Nome</span>
+                <input
+                  value={option.name}
+                  onChange={(event) => updateOption(optionIndex, { name: event.target.value })}
+                  placeholder="Ex.: Catupiry"
+                  className={INPUT_CLS}
+                />
+              </label>
 
-            <label className="space-y-1">
-              <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Adicional (R$)</span>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={String(option.priceDelta)}
-                onChange={(event) => onChange({
-                  ...group,
-                  options: group.options.map((entry, index) => index === optionIndex ? { ...entry, priceDelta: Number(event.target.value || 0) } : entry),
-                })}
-                className={INPUT_CLS}
-              />
-            </label>
+              <label className="space-y-1">
+                <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Adicional (R$)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={String(option.priceDelta)}
+                  onChange={(event) => updateOption(optionIndex, { priceDelta: Number(event.target.value || 0) })}
+                  className={INPUT_CLS}
+                />
+              </label>
 
-            <div className="flex items-end justify-between gap-2">
+              <div className="flex items-end justify-between gap-2">
+                <label className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
+                  <input
+                    type="checkbox"
+                    checked={option.active}
+                    onChange={(event) => updateOption(optionIndex, { active: event.target.checked })}
+                    className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
+                  />
+                  Ativa
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onChange({
+                    ...group,
+                    options: group.options.filter((_, index) => index !== optionIndex),
+                  })}
+                  className="rounded-lg px-2 py-1 text-xs font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
+                >
+                  Remover
+                </button>
+              </div>
+            </div>
+
+            {/* ── Vincular a produto ── */}
+            <div className="border-t border-[var(--color-line)] pt-2">
               <label className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
                 <input
                   type="checkbox"
-                  checked={option.active}
-                  onChange={(event) => onChange({
-                    ...group,
-                    options: group.options.map((entry, index) => index === optionIndex ? { ...entry, active: event.target.checked } : entry),
-                  })}
+                  checked={!!option.linkedProductId}
+                  onChange={(event) => {
+                    const linking = event.target.checked;
+                    updateOption(optionIndex, {
+                      linkedProductId: linking ? (option.linkedProductId ?? products[0]?.id ?? null) : null,
+                      priceOverride: linking ? option.priceOverride : null,
+                    });
+                    if (linking) setProductPickerIndex(optionIndex);
+                  }}
                   className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
                 />
-                Ativa
+                Vincular a um produto do catálogo
               </label>
-              <button
-                type="button"
-                onClick={() => onChange({
-                  ...group,
-                  options: group.options.filter((_, index) => index !== optionIndex),
-                })}
-                className="rounded-lg px-2 py-1 text-xs font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
-              >
-                Remover
-              </button>
+
+              {option.linkedProductId && (
+                <div className="relative mt-2" ref={productPickerIndex === optionIndex ? pickerRef : undefined}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProductPickerIndex(productPickerIndex === optionIndex ? null : optionIndex);
+                      setProductSearch('');
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-left text-xs"
+                  >
+                    <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)]" />
+                    <span className="truncate text-[var(--color-ink)]">
+                      {products.find((p) => p.id === option.linkedProductId)?.nome ?? 'Produto não encontrado'}
+                    </span>
+                  </button>
+
+                  {productPickerIndex === optionIndex && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-lg border border-[var(--color-line)] bg-white shadow-lg">
+                      <div className="sticky top-0 border-b border-[var(--color-line)] bg-white p-2">
+                        <input
+                          autoFocus
+                          value={productSearch}
+                          onChange={(e) => setProductSearch(e.target.value)}
+                          placeholder="Buscar produto..."
+                          className="w-full rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--color-brand)]"
+                        />
+                      </div>
+                      {filteredProducts.length === 0 ? (
+                        <p className="px-3 py-4 text-center text-xs text-[var(--color-ink-faint)]">Nenhum produto encontrado</p>
+                      ) : filteredProducts.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            updateOption(optionIndex, { linkedProductId: p.id });
+                            setProductPickerIndex(null);
+                          }}
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-[var(--color-surface-muted)] ${
+                            option.linkedProductId === p.id ? 'bg-[var(--color-brand-soft)] font-semibold' : ''
+                          }`}
+                        >
+                          <span className="truncate">{p.nome}</span>
+                          <span className="shrink-0 text-[var(--color-ink-muted)]">
+                            R$ {Number(p.preco).toFixed(2).replace('.', ',')}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {option.linkedProductId && (
+                    <label className="mt-1.5 flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
+                      <span className="shrink-0">Preço (R$) no combo:</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={option.priceOverride == null ? '' : String(option.priceOverride)}
+                        onChange={(event) => updateOption(optionIndex, {
+                          priceOverride: event.target.value === '' ? null : Number(event.target.value || 0),
+                        })}
+                        placeholder="Usar preço do produto"
+                        className="w-32 rounded-md border border-[var(--color-line)] bg-white px-2 py-1 text-xs outline-none focus:border-[var(--color-brand)]"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -1208,13 +1350,14 @@ function createEmptyModifierGroup(order: number): ZeloMenuModifierGroupDraft {
   return {
     name: '',
     kind: 'adicional',
+    pricingMode: 'somar',
     minSelections: 0,
     maxSelections: null,
     allowsQuantity: false,
     maxPerOption: null,
     active: true,
     order,
-    options: [createEmptyModifierOption(0)],
+    options: [createEmptyModifierOption(order)],
   };
 }
 
@@ -1224,6 +1367,8 @@ function createEmptyModifierOption(order: number) {
     priceDelta: 0,
     active: true,
     order,
+    linkedProductId: null,
+    priceOverride: null,
   };
 }
 

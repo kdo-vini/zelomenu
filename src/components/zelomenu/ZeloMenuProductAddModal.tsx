@@ -133,7 +133,7 @@ export function ProductAddModal({
       optionSelections: Object.entries(options).map(([optionId, quantity]) => ({ optionId, quantity })),
     }))
     .filter((sel) => sel.optionSelections.length > 0);
-  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions);
+  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
   const quantity = parseInt(qtyDraft, 10);
   const validQuantity = !isNaN(quantity) && quantity > 0;
   const canConfirm = resolution.ok && validQuantity;
@@ -190,7 +190,7 @@ export function ProductAddModal({
                 </p>
               ) : null}
               <p className="mt-2 text-[15px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
-                {toBRL(product.basePrice)}
+                {resolution.ok ? toBRL(resolution.finalUnitPrice) : toBRL(product.basePrice)}
               </p>
             </div>
 
@@ -206,11 +206,13 @@ export function ProductAddModal({
                   </p>
                 </div>
                 <div className="space-y-2">
-                  {group.options.filter((o) => o.active).map((option) => {
-                    const groupSelections = selections[group.id] ?? {};
-                    const currentQty = groupSelections[option.id] ?? 0;
-                    const checked = currentQty > 0;
+                  {group.options.filter((o) => o.active && o.linkedProduct?.available !== false).map((option) => {
+                    const isSubstituir = group.pricingMode === 'substituir';
                     if (group.allowsQuantity) {
+                      const groupSelections = selections[group.id] ?? {};
+                      const currentQty = groupSelections[option.id] ?? 0;
+                      const checked = currentQty > 0;
+                      const unitPrice = option.linkedProduct ? option.linkedProduct.price : option.priceDelta;
                       return (
                         <div
                           key={option.id}
@@ -222,14 +224,23 @@ export function ProductAddModal({
                           }}
                         >
                           <div className="flex items-center gap-2.5">
-                            <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                            {option.linkedProduct?.photoUrl ? (
+                              <img
+                                src={option.linkedProduct.photoUrl}
+                                alt={option.linkedProduct.name}
+                                className="h-8 w-8 shrink-0 rounded-lg object-cover"
+                              />
+                            ) : null}
+                            <span className="text-[14px] text-[var(--color-ink)]">
+                              {option.linkedProduct ? option.linkedProduct.name : option.name}
+                            </span>
                           </div>
                           <div className="flex items-center gap-2.5">
                             <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">
-                              {option.priceDelta > 0
+                              {unitPrice > 0
                                 ? checked
-                                  ? `+ ${toBRL(option.priceDelta * currentQty)}`
-                                  : `+ ${toBRL(option.priceDelta)}`
+                                  ? `+ ${toBRL(unitPrice * currentQty)}`
+                                  : `+ ${toBRL(unitPrice)}`
                                 : 'incluso'}
                             </span>
                             <MiniStepper
@@ -242,6 +253,7 @@ export function ProductAddModal({
                         </div>
                       );
                     }
+                    const checked = (selections[group.id] ?? {})[option.id] > 0;
                     return (
                       <label
                         key={option.id}
@@ -260,10 +272,33 @@ export function ProductAddModal({
                             onChange={() => toggleOption(group.id, option.id)}
                             className="h-4 w-4 accent-[var(--color-brand)]"
                           />
-                          <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                          {option.linkedProduct ? (
+                            <div className="flex items-center gap-2.5">
+                              {option.linkedProduct.photoUrl ? (
+                                <img
+                                  src={option.linkedProduct.photoUrl}
+                                  alt={option.linkedProduct.name}
+                                  className="h-8 w-8 shrink-0 rounded-lg object-cover"
+                                />
+                              ) : null}
+                              <span className="text-[14px] text-[var(--color-ink)]">
+                                {option.linkedProduct.name}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                          )}
                         </div>
                         <span className="text-[13px] font-semibold text-[var(--color-ink-soft)]">
-                          {option.priceDelta > 0 ? `+ ${toBRL(option.priceDelta)}` : 'incluso'}
+                          {option.linkedProduct
+                            ? isSubstituir
+                              ? toBRL(option.linkedProduct.price)
+                              : option.linkedProduct.price > 0
+                                ? `+ ${toBRL(option.linkedProduct.price)}`
+                                : 'incluso'
+                            : option.priceDelta > 0
+                              ? `+ ${toBRL(option.priceDelta)}`
+                              : 'incluso'}
                         </span>
                       </label>
                     );
@@ -388,7 +423,7 @@ export function ProductAddModal({
           >
             <Plus className="h-4 w-4" strokeWidth={2.5} />
             {isEditing ? 'Atualizar' : 'Adicionar'}
-            {validQuantity && resolution.ok ? ` · ${toBRL((product.basePrice + resolution.deltaTotal) * quantity)}` : ''}
+            {validQuantity && resolution.ok ? ` · ${toBRL(resolution.finalUnitPrice * quantity)}` : ''}
           </button>
         </div>
       </div>

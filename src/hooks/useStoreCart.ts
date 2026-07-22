@@ -87,7 +87,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
         optionSelections: (selections[groupId] ?? []).filter((s) => s.quantity > 0),
       }))
       .filter((sel) => sel.optionSelections.length > 0);
-    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions);
+    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
     if (!resolved.ok) return;
     const key = product.modifierGroups.length > 0 ? buildCartItemKey(product.id, selectedOptions) : `${product.id}::plain`;
     const trimmedNotes = notes.trim();
@@ -99,7 +99,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
         productName: product.name,
         quantity,
         selectedOptions,
-        unitPrice: Number((product.basePrice + resolved.deltaTotal).toFixed(2)),
+        unitPrice: Number(resolved.finalUnitPrice.toFixed(2)),
         notes: trimmedNotes ? trimmedNotes : null,
       },
     }));

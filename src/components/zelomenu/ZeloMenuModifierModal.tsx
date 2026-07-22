@@ -32,7 +32,7 @@ export function ModifierModal({
       optionSelections: optionIds.map((optionId) => ({ optionId, quantity: 1 })),
     }))
     .filter((sel) => sel.optionSelections.length > 0);
-  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions);
+  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50">
@@ -68,7 +68,7 @@ export function ModifierModal({
                   </p>
                 </div>
                 <div className="space-y-2">
-                  {group.options.filter((o) => o.active).map((option) => {
+                  {group.options.filter((o) => o.active && o.linkedProduct?.available !== false).map((option) => {
                     const checked = selectedIds.includes(option.id);
                     return (
                       <label
@@ -88,10 +88,20 @@ export function ModifierModal({
                             onChange={() => onToggle(group.id, option.id)}
                             className="h-4 w-4 accent-[var(--color-brand)]"
                           />
-                          <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                          <span className="text-[14px] text-[var(--color-ink)]">
+                            {option.linkedProduct ? option.linkedProduct.name : option.name}
+                          </span>
                         </div>
                         <span className="text-[13px] font-semibold text-[var(--color-ink-soft)]">
-                          {option.priceDelta > 0 ? `+ ${toBRL(option.priceDelta)}` : 'incluso'}
+                          {option.linkedProduct
+                            ? group.pricingMode === 'substituir'
+                              ? toBRL(option.linkedProduct.price)
+                              : option.linkedProduct.price > 0
+                                ? `+ ${toBRL(option.linkedProduct.price)}`
+                                : 'incluso'
+                            : option.priceDelta > 0
+                              ? `+ ${toBRL(option.priceDelta)}`
+                              : 'incluso'}
                         </span>
                       </label>
                     );
@@ -111,7 +121,7 @@ export function ModifierModal({
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t border-[var(--color-line)] px-5 py-4" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
           <p className="text-[14px] font-bold text-[var(--color-ink)]">
-            {resolution.ok ? toBRL(product.basePrice + resolution.deltaTotal) : '—'}
+            {resolution.ok ? toBRL(resolution.finalUnitPrice) : '—'}
           </p>
           <button
             type="button"
