@@ -27,8 +27,11 @@ export function ModifierModal({
   }, [onClose]);
 
   const selectedOptions = Object.entries(selections)
-    .map(([groupId, optionIds]) => ({ groupId, optionIds }))
-    .filter((sel) => sel.optionIds.length > 0);
+    .map(([groupId, optionIds]) => ({
+      groupId,
+      optionSelections: optionIds.map((optionId) => ({ optionId, quantity: 1 })),
+    }))
+    .filter((sel) => sel.optionSelections.length > 0);
   const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions);
 
   return (

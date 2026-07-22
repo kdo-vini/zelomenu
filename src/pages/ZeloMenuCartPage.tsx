@@ -121,7 +121,10 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
       notes: item.notes ?? '',
       selectedOptions: item.selectedModifiers.map((group) => ({
         groupId: group.groupId,
-        optionIds: group.selectedOptions.map((option) => option.optionId),
+        optionSelections: group.selectedOptions.map((option) => ({
+          optionId: option.optionId,
+          quantity: option.quantity ?? 1,
+        })),
       })),
       selectedModifiers: item.selectedModifiers,
       baseUnitPrice: item.baseUnitPrice,
@@ -216,7 +219,13 @@ function isKnownPaymentMethod(value: string): boolean {
 function draftItemKey(item: DraftState['items'][number]): string {
   const idPart = item.productId ?? item.productName;
   const selections = item.selectedOptions
-    .map((group) => `${group.groupId}:${[...group.optionIds].sort().join(',')}`)
+    .map((group) => {
+      const sorted = [...group.optionSelections]
+        .map((s) => `${s.optionId}:${s.quantity}`)
+        .sort()
+        .join(',');
+      return `${group.groupId}:${sorted}`;
+    })
     .sort()
     .join('|');
   return `${idPart}::${selections || 'plain'}`;
@@ -227,7 +236,10 @@ function selectedOptionsFromSelectedModifiers(
 ): ZeloMenuModifierSelectionInput[] {
   return selectedModifiers.map((group) => ({
     groupId: group.groupId,
-    optionIds: group.selectedOptions.map((option) => option.optionId),
+    optionSelections: group.selectedOptions.map((option) => ({
+      optionId: option.optionId,
+      quantity: option.quantity ?? 1,
+    })),
   }));
 }
 
@@ -1638,8 +1650,11 @@ export default function ZeloMenuCartPage() {
           onConfirm={() => {
             if (!recModalProduct) return;
             const selectedOptions = Object.entries(recModalSelections)
-              .map(([groupId, optionIds]) => ({ groupId, optionIds }))
-              .filter((sel) => sel.optionIds.length > 0);
+              .map(([groupId, optionIds]) => ({
+                groupId,
+                optionSelections: optionIds.map((optionId) => ({ optionId, quantity: 1 })),
+              }))
+              .filter((sel) => sel.optionSelections.length > 0);
             const resolution = resolveModifierSelections(recModalProduct.modifierGroups, selectedOptions);
             if (!resolution.ok) return;
             setDraft((cur) => {

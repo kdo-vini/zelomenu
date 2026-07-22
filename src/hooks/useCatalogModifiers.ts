@@ -31,6 +31,8 @@ export function useCatalogModifiers(
         kind: group.kind,
         minSelections: Math.max(0, Math.trunc(group.minSelections)),
         maxSelections: group.maxSelections == null ? null : Math.max(1, Math.trunc(group.maxSelections)),
+        allowsQuantity: group.allowsQuantity,
+        maxPerOption: group.maxPerOption,
         active: group.active,
         order: Math.max(0, Math.trunc(group.order ?? groupIndex)),
         options: group.options.map((option, optionIndex) => ({
@@ -60,6 +62,8 @@ export function useCatalogModifiers(
       tipo: group.kind,
       min_selecoes: group.minSelections,
       max_selecoes: group.maxSelections,
+      permite_quantidade: group.allowsQuantity,
+      maximo_por_opcao: group.maxPerOption,
       ativo: group.active,
       ordem: group.order,
       updated_at: new Date().toISOString(),

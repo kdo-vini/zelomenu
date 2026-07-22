@@ -15,6 +15,8 @@ export type ZeloMenuModifierGroup = {
   kind: ZeloMenuModifierGroupKind;
   minSelections: number;
   maxSelections: number | null;
+  allowsQuantity: boolean;
+  maxPerOption: number | null;
   active: boolean;
   order: number;
   options: ZeloMenuModifierOption[];
@@ -34,6 +36,8 @@ export type ZeloMenuModifierGroupDraft = {
   kind: ZeloMenuModifierGroupKind;
   minSelections: number;
   maxSelections: number | null;
+  allowsQuantity: boolean;
+  maxPerOption: number | null;
   active: boolean;
   order: number;
   options: ZeloMenuModifierOptionDraft[];
@@ -41,13 +45,14 @@ export type ZeloMenuModifierGroupDraft = {
 
 export type ZeloMenuModifierSelectionInput = {
   groupId: string;
-  optionIds: string[];
+  optionSelections: Array<{ optionId: string; quantity: number }>;
 };
 
 export type ZeloMenuSelectedModifierOption = {
   optionId: string;
   optionName: string;
   priceDelta: number;
+  quantity: number;
 };
 
 export type ZeloMenuSelectedModifierGroup = {
@@ -61,7 +66,8 @@ export type ZeloMenuModifierResolutionErrorCode =
   | 'group_missing'
   | 'option_missing'
   | 'group_required'
-  | 'selection_bounds';
+  | 'selection_bounds'
+  | 'option_quantity_exceeded';
 
 export type ZeloMenuModifierResolutionResult =
   | {
@@ -100,12 +106,7 @@ export function resolveModifierSelections(
     return { ok: true, selectedGroups: [], deltaTotal: 0 };
   }
 
-  const selectionsByGroupId = new Map<string, string[]>();
-  for (const selection of selections ?? []) {
-    const uniqueOptionIds = [...new Set(selection.optionIds.filter((optionId) => typeof optionId === 'string' && optionId.trim()))];
-    selectionsByGroupId.set(selection.groupId, uniqueOptionIds);
-  }
-
+  // Validate all groups exist first
   for (const selection of selections ?? []) {
     const knownGroup = activeGroups.find((group) => group.id === selection.groupId);
     if (!knownGroup) {
@@ -121,12 +122,22 @@ export function resolveModifierSelections(
   let deltaTotal = 0;
 
   for (const group of activeGroups) {
-    const optionIds = selectionsByGroupId.get(group.id) ?? [];
+    const input = (selections ?? []).find((s) => s.groupId === group.id);
+    const rawSelections = input?.optionSelections ?? [];
     const activeOptions = group.options.filter((option) => option.active);
     const selectedOptions: ZeloMenuSelectedModifierOption[] = [];
 
-    for (const optionId of optionIds) {
-      const option = activeOptions.find((candidate) => candidate.id === optionId);
+    // Defensive sanitization: quantity must be positive integer
+    const sanitized: Array<{ optionId: string; quantity: number }> = [];
+    for (const sel of rawSelections) {
+      if (typeof sel.optionId !== 'string' || !sel.optionId.trim()) continue;
+      const qty = Math.floor(Number(sel.quantity));
+      if (!Number.isFinite(qty) || qty < 1) continue; // 0 = deselected, NaN/negative = invalid
+      sanitized.push({ optionId: sel.optionId.trim(), quantity: qty });
+    }
+
+    for (const sel of sanitized) {
+      const option = activeOptions.find((candidate) => candidate.id === sel.optionId);
       if (!option) {
         return {
           ok: false,
@@ -134,12 +145,23 @@ export function resolveModifierSelections(
           message: `Uma opção de ${group.name} não está mais disponível.`,
         };
       }
+
+      // Validate maxPerOption
+      if (group.allowsQuantity && group.maxPerOption != null && sel.quantity > group.maxPerOption) {
+        return {
+          ok: false,
+          code: 'option_quantity_exceeded',
+          message: `Você pode escolher no máximo ${selectionCountLabel(group.maxPerOption)} de ${option.name}.`,
+        };
+      }
+
       selectedOptions.push({
         optionId: option.id,
         optionName: option.name,
         priceDelta: roundCurrency(option.priceDelta),
+        quantity: sel.quantity,
       });
-      deltaTotal += roundCurrency(option.priceDelta);
+      deltaTotal += roundCurrency(option.priceDelta) * sel.quantity;
     }
 
     if (selectedOptions.length < group.minSelections) {
@@ -181,7 +203,9 @@ export function formatSelectedModifierGroups(
   if (!selectedGroups || selectedGroups.length === 0) return '';
   return selectedGroups
     .map((group) => {
-      const options = group.selectedOptions.map((option) => option.optionName).join(', ');
+      const options = group.selectedOptions
+        .map((option) => option.quantity > 1 ? `${option.quantity}x ${option.optionName}` : option.optionName)
+        .join(', ');
       return `${group.groupName}: ${options}`;
     })
     .join(' • ');
@@ -198,6 +222,15 @@ export function validateModifierGroupDrafts(groups: ZeloMenuModifierGroupDraft[]
     if (group.minSelections < 0) return `O grupo ${group.name} tem mínimo inválido.`;
     if (group.maxSelections != null && group.maxSelections < Math.max(group.minSelections, 1)) {
       return `O grupo ${group.name} precisa de um máximo maior ou igual ao mínimo.`;
+    }
+    if (group.allowsQuantity && group.maxSelections === 1) {
+      return `Grupo de escolha única não pode permitir quantidade.`;
+    }
+    if (group.maxPerOption != null && group.maxPerOption < 1) {
+      return `O grupo ${group.name} tem máximo por opção inválido.`;
+    }
+    if (group.allowsQuantity && group.kind === 'variacao') {
+      return `Quantidade só é permitida em grupos do tipo Adicional.`;
     }
     if (group.options.length === 0) {
       return `O grupo ${group.name} precisa ter pelo menos uma opção.`;

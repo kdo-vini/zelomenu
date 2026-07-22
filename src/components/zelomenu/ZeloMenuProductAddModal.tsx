@@ -9,6 +9,47 @@ function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+/** Mini-stepper para opções com quantidade (visualmente menor que o stepper do produto). */
+function MiniStepper({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number | null;
+  onChange: (v: number) => void;
+}) {
+  const atMin = value <= min;
+  const atMax = max != null && value >= max;
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-lg border border-[var(--color-line)]">
+      <button
+        type="button"
+        onClick={() => onChange(value - 1)}
+        disabled={atMin}
+        className="flex h-7 w-7 items-center justify-center rounded-l-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label="Diminuir"
+      >
+        <Minus className="h-3 w-3" strokeWidth={2.5} />
+      </button>
+      <span className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)]">
+        {value}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(value + 1)}
+        disabled={atMax}
+        className="flex h-7 w-7 items-center justify-center rounded-r-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label="Aumentar"
+      >
+        <Plus className="h-3 w-3" strokeWidth={2.5} />
+      </button>
+    </div>
+  );
+}
+
 /**
  * Card de produto exibido sempre que o cliente toca em "adicionar" — com ou
  * sem grupos de complemento — pra que ele veja foto/descrição e possa deixar
@@ -25,9 +66,9 @@ export function ProductAddModal({
   initialQuantity: number;
   initialNotes: string;
   onClose: () => void;
-  onConfirm: (quantity: number, notes: string, selections: Record<string, string[]>) => void;
+  onConfirm: (quantity: number, notes: string, selections: Record<string, Array<{ optionId: string; quantity: number }>>) => void;
 }) {
-  const [selections, setSelections] = useState<Record<string, string[]>>({});
+  const [selections, setSelections] = useState<Record<string, Record<string, number>>>({});
   const [qtyDraft, setQtyDraft] = useState(String(Math.max(1, initialQuantity)));
   const [notes, setNotes] = useState(initialNotes);
   const isEditing = initialQuantity > 0;
@@ -38,23 +79,49 @@ export function ProductAddModal({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  function setOptionQuantity(groupId: string, optionId: string, quantity: number) {
+    setSelections((prev) => {
+      const group = product.modifierGroups.find((g) => g.id === groupId);
+      if (!group) return prev;
+      const groupSelections = { ...(prev[groupId] ?? {}) };
+      if (quantity <= 0) {
+        delete groupSelections[optionId];
+      } else {
+        groupSelections[optionId] = quantity;
+      }
+      if (group.allowsQuantity) return { ...prev, [groupId]: groupSelections };
+      // Legacy toggle behavior (no quantity)
+      return { ...prev, [groupId]: groupSelections };
+    });
+  }
+
   function toggleOption(groupId: string, optionId: string) {
     setSelections((prev) => {
       const group = product.modifierGroups.find((g) => g.id === groupId);
       if (!group) return prev;
-      const current = prev[groupId] ?? [];
-      const has = current.includes(optionId);
-      let next: string[];
-      if (has) next = current.filter((id) => id !== optionId);
-      else if (group.maxSelections === 1) next = [optionId];
-      else next = [...current, optionId];
-      return { ...prev, [groupId]: next };
+      if (group.allowsQuantity) {
+        // Use stepper instead — this shouldn't be called
+        return prev;
+      }
+      const groupSelections = { ...(prev[groupId] ?? {}) };
+      if (groupSelections[optionId]) {
+        delete groupSelections[optionId];
+      } else if (group.maxSelections === 1) {
+        // Single-selection: replace with just this one
+        return { ...prev, [groupId]: { [optionId]: 1 } };
+      } else {
+        groupSelections[optionId] = 1;
+      }
+      return { ...prev, [groupId]: groupSelections };
     });
   }
 
   const selectedOptions = Object.entries(selections)
-    .map(([groupId, optionIds]) => ({ groupId, optionIds }))
-    .filter((sel) => sel.optionIds.length > 0);
+    .map(([groupId, options]) => ({
+      groupId,
+      optionSelections: Object.entries(options).map(([optionId, quantity]) => ({ optionId, quantity })),
+    }))
+    .filter((sel) => sel.optionSelections.length > 0);
   const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions);
   const quantity = parseInt(qtyDraft, 10);
   const validQuantity = !isNaN(quantity) && quantity > 0;
@@ -62,7 +129,14 @@ export function ProductAddModal({
 
   function confirm() {
     if (!canConfirm) return;
-    onConfirm(quantity, notes.trim(), selections);
+    const selectionsArray = Object.entries(selections).reduce<
+      Record<string, Array<{ optionId: string; quantity: number }>>
+    >((acc, [groupId, opts]) => {
+      const entries = Object.entries(opts).map(([optionId, qty]) => ({ optionId, quantity: qty }));
+      if (entries.length > 0) acc[groupId] = entries;
+      return acc;
+    }, {});
+    onConfirm(quantity, notes.trim(), selectionsArray);
   }
 
   return (
@@ -122,7 +196,41 @@ export function ProductAddModal({
                 </div>
                 <div className="space-y-2">
                   {group.options.filter((o) => o.active).map((option) => {
-                    const checked = (selections[group.id] ?? []).includes(option.id);
+                    const groupSelections = selections[group.id] ?? {};
+                    const currentQty = groupSelections[option.id] ?? 0;
+                    const checked = currentQty > 0;
+                    if (group.allowsQuantity) {
+                      return (
+                        <div
+                          key={option.id}
+                          className="flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5"
+                          style={{
+                            borderColor: checked ? 'var(--color-brand)' : 'var(--color-line)',
+                            background: checked ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                            transition: 'border-color 0.15s, background 0.15s',
+                          }}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">
+                              {option.priceDelta > 0
+                                ? checked
+                                  ? `+ ${toBRL(option.priceDelta * currentQty)}`
+                                  : `+ ${toBRL(option.priceDelta)}`
+                                : 'incluso'}
+                            </span>
+                            <MiniStepper
+                              value={currentQty}
+                              min={0}
+                              max={group.maxPerOption ?? null}
+                              onChange={(v) => setOptionQuantity(group.id, option.id, v)}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
                       <label
                         key={option.id}

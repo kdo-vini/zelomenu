@@ -908,6 +908,8 @@ function toModifierDrafts(groups: ZeloMenuModifierGroupRow[]): ZeloMenuModifierG
     kind: group.kind,
     minSelections: group.minSelections,
     maxSelections: group.maxSelections,
+    allowsQuantity: group.allowsQuantity,
+    maxPerOption: group.maxPerOption,
     active: group.active,
     order: group.order,
     options: group.options.map((option) => ({
@@ -1024,7 +1026,14 @@ function ModifierGroupEditor({
           <span className={LABEL_CLS}>Tipo</span>
           <select
             value={group.kind}
-            onChange={(event) => updateGroup({ kind: event.target.value as ZeloMenuModifierGroupKind })}
+            onChange={(event) => {
+              const nextKind = event.target.value as ZeloMenuModifierGroupKind;
+              updateGroup({
+                kind: nextKind,
+                allowsQuantity: nextKind !== 'adicional' ? false : group.allowsQuantity,
+                maxPerOption: nextKind !== 'adicional' ? null : group.maxPerOption,
+              });
+            }}
             className={INPUT_CLS}
           >
             <option value="adicional">Adicional</option>
@@ -1049,9 +1058,14 @@ function ModifierGroupEditor({
             type="number"
             min={1}
             value={group.maxSelections == null ? '' : String(group.maxSelections)}
-            onChange={(event) => updateGroup({
-              maxSelections: event.target.value === '' ? null : Number(event.target.value || 1),
-            })}
+            onChange={(event) => {
+              const next = event.target.value === '' ? null : Number(event.target.value || 1);
+              updateGroup({
+                maxSelections: next,
+                allowsQuantity: next === 1 ? false : group.allowsQuantity,
+                maxPerOption: next === 1 ? null : group.maxPerOption,
+              });
+            }}
             className={INPUT_CLS}
             placeholder="Sem limite"
           />
@@ -1068,6 +1082,25 @@ function ModifierGroupEditor({
           />
           Grupo ativo no link
         </label>
+
+        <label className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
+          <input
+            type="checkbox"
+            checked={group.allowsQuantity}
+            disabled={group.maxSelections === 1 || group.kind !== 'adicional'}
+            onChange={(event) => {
+              const on = event.target.checked;
+              if (on && (group.maxSelections === 1 || group.kind !== 'adicional')) return;
+              updateGroup({
+                allowsQuantity: on,
+                maxPerOption: on ? group.maxPerOption : null,
+              });
+            }}
+            className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-40"
+          />
+          Permite quantidade por opção (ex.: 2x, 3x)
+        </label>
+
         <button
           type="button"
           onClick={onDelete}
@@ -1076,6 +1109,24 @@ function ModifierGroupEditor({
           Remover grupo
         </button>
       </div>
+
+      {group.allowsQuantity ? (
+        <div className="mt-3">
+          <label className="space-y-1.5">
+            <span className={LABEL_CLS}>Máximo por opção</span>
+            <input
+              type="number"
+              min={1}
+              value={group.maxPerOption == null ? '' : String(group.maxPerOption)}
+              onChange={(event) => updateGroup({
+                maxPerOption: event.target.value === '' ? null : Number(event.target.value || 1),
+              })}
+              className={INPUT_CLS + ' max-w-[140px]'}
+              placeholder="Sem limite"
+            />
+          </label>
+        </div>
+      ) : null}
 
       <div className="mt-4 space-y-2">
         <div className="flex items-center justify-between gap-3">
@@ -1159,6 +1210,8 @@ function createEmptyModifierGroup(order: number): ZeloMenuModifierGroupDraft {
     kind: 'adicional',
     minSelections: 0,
     maxSelections: null,
+    allowsQuantity: false,
+    maxPerOption: null,
     active: true,
     order,
     options: [createEmptyModifierOption(0)],
