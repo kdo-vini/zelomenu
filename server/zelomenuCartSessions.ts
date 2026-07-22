@@ -293,14 +293,17 @@ type ZeloMenuProfileRow = {
   zelomenu_category_order?: unknown;
   zelomenu_recommendations_enabled?: boolean;
   zelomenu_recommendation_product_ids?: unknown;
+  zelomenu_category_suggestions?: unknown;
 };
 
 const ZELOMENU_PROFILE_CORE_COLUMNS =
   'logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_category_order';
 const ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS =
   'zelomenu_recommendations_enabled, zelomenu_recommendation_product_ids';
+const ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS =
+  'zelomenu_category_suggestions';
 const ZELOMENU_PROFILE_ALL_COLUMNS =
-  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}`;
+  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}`;
 
 function isMissingZeloMenuRecommendationColumn(
   error: { code?: string; message?: string } | null,
@@ -309,7 +312,8 @@ function isMissingZeloMenuRecommendationColumn(
   if (error.code === '42703') return true;
   const message = error.message ?? '';
   return message.includes('zelomenu_recommendations_enabled')
-    || message.includes('zelomenu_recommendation_product_ids');
+    || message.includes('zelomenu_recommendation_product_ids')
+    || message.includes('zelomenu_category_suggestions');
 }
 
 /**
@@ -973,6 +977,9 @@ async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenR
       featuredProductIds: Array.isArray(perfilData?.zelomenu_featured_product_ids) ? (perfilData.zelomenu_featured_product_ids as number[]) : [],
       recommendationsEnabled: perfilData?.zelomenu_recommendations_enabled ?? false,
       recommendationProductIds: Array.isArray(perfilData?.zelomenu_recommendation_product_ids) ? (perfilData.zelomenu_recommendation_product_ids as number[]) : [],
+      categorySuggestions: typeof perfilData?.zelomenu_category_suggestions === 'object' && perfilData?.zelomenu_category_suggestions !== null
+        ? (perfilData.zelomenu_category_suggestions as Record<string, number[]>)
+        : {},
       businessHours: buildPublicBusinessHoursStatus(config),
     },
     catalog: filterVisibleCatalog(config.catalogHierarchy),
@@ -1036,6 +1043,9 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
       featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids) ? (perfil.zelomenu_featured_product_ids as number[]) : [],
       recommendationsEnabled: perfil?.zelomenu_recommendations_enabled ?? false,
       recommendationProductIds: Array.isArray(perfil?.zelomenu_recommendation_product_ids) ? (perfil.zelomenu_recommendation_product_ids as number[]) : [],
+      categorySuggestions: typeof perfil?.zelomenu_category_suggestions === 'object' && perfil?.zelomenu_category_suggestions !== null
+        ? (perfil.zelomenu_category_suggestions as Record<string, number[]>)
+        : {},
       businessHours: buildPublicBusinessHoursStatus(config),
     },
     catalog: applyCategoryOrder(rawCatalog, categoryOrder),
@@ -1055,6 +1065,7 @@ export type ZeloMenuStoreSettings = {
   featuredProductIds: number[];
   recommendationsEnabled: boolean;
   recommendationProductIds: number[];
+  categorySuggestions: Record<string, number[]>;
   categoryOrder: string[];
   availableProducts: Array<{ id: number; name: string; categoryName: string }>;
   availableCategories: string[];
@@ -1083,6 +1094,9 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids) ? (perfil.zelomenu_featured_product_ids as number[]) : [],
     recommendationsEnabled: perfil?.zelomenu_recommendations_enabled ?? false,
     recommendationProductIds: Array.isArray(perfil?.zelomenu_recommendation_product_ids) ? (perfil.zelomenu_recommendation_product_ids as number[]) : [],
+    categorySuggestions: typeof perfil?.zelomenu_category_suggestions === 'object' && perfil?.zelomenu_category_suggestions !== null
+      ? (perfil.zelomenu_category_suggestions as Record<string, number[]>)
+      : {},
     categoryOrder: Array.isArray(perfil?.zelomenu_category_order) ? (perfil.zelomenu_category_order as string[]) : [],
     availableProducts,
     availableCategories: catalog.map((c) => c.nome),
@@ -1091,7 +1105,7 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
 
 export async function updateZeloMenuStoreSettings(
   empresaId: string,
-  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categoryOrder'>>,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder'>>,
 ): Promise<void> {
   const coreUpdate: Record<string, unknown> = {};
   const recommendationUpdate: Record<string, unknown> = {};
@@ -1101,6 +1115,7 @@ export async function updateZeloMenuStoreSettings(
   if ('categoryOrder' in patch) coreUpdate.zelomenu_category_order = patch.categoryOrder;
   if ('recommendationsEnabled' in patch) recommendationUpdate.zelomenu_recommendations_enabled = patch.recommendationsEnabled;
   if ('recommendationProductIds' in patch) recommendationUpdate.zelomenu_recommendation_product_ids = patch.recommendationProductIds;
+  if ('categorySuggestions' in patch) recommendationUpdate.zelomenu_category_suggestions = patch.categorySuggestions;
 
   const supabase = getServiceSupabase();
   const update = { ...coreUpdate, ...recommendationUpdate };

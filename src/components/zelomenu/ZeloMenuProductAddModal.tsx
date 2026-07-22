@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Minus, Plus, X } from 'lucide-react';
+import { ImageIcon, Minus, Plus, X } from 'lucide-react';
 import { resolveModifierSelections } from '../../domain/zelomenuModifiers';
-import type { ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
+import { resolveCategorySuggestions } from '../../domain/zelomenuCategorySuggestions';
+import type { ZeloMenuCatalogGroup, ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
 
 const NOTES_MAX_LENGTH = 200;
 
@@ -20,12 +21,22 @@ export function ProductAddModal({
   initialNotes,
   onClose,
   onConfirm,
+  categoryName,
+  categorySuggestions,
+  catalog,
+  cartProductIds,
+  onQuickAdd,
 }: {
   product: ZeloMenuCatalogProduct;
   initialQuantity: number;
   initialNotes: string;
   onClose: () => void;
   onConfirm: (quantity: number, notes: string, selections: Record<string, string[]>) => void;
+  categoryName?: string;
+  categorySuggestions?: Record<string, number[]>;
+  catalog?: ZeloMenuCatalogGroup[];
+  cartProductIds?: number[];
+  onQuickAdd?: (product: ZeloMenuCatalogProduct) => void;
 }) {
   const [selections, setSelections] = useState<Record<string, string[]>>({});
   const [qtyDraft, setQtyDraft] = useState(String(Math.max(1, initialQuantity)));
@@ -158,6 +169,50 @@ export function ProductAddModal({
                 {resolution.message}
               </div>
             ) : null}
+
+            {/* ── Sugestões por categoria ── */}
+            {categoryName && categorySuggestions && catalog && cartProductIds && onQuickAdd
+              ? (() => {
+                  const catSuggestions = resolveCategorySuggestions(catalog, cartProductIds, categoryName, categorySuggestions);
+                  if (catSuggestions.length === 0) return null;
+                  return (
+                    <div>
+                      <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Adicional pra sua {categoryName.toLowerCase()}</p>
+                      <div className="-mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
+                        {catSuggestions.map((p) => (
+                          <div
+                            key={p.id}
+                            className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)]"
+                            style={{ scrollSnapAlign: 'start' }}
+                          >
+                            <div className="flex h-[80px] items-center justify-center overflow-hidden rounded-t-xl bg-[var(--color-surface)]">
+                              {p.photoUrl ? (
+                                <img src={p.photoUrl} alt={p.name} className="h-full w-full object-cover" loading="lazy" />
+                              ) : (
+                                <ImageIcon className="h-6 w-6 text-[var(--color-ink-soft)]" strokeWidth={1.4} />
+                              )}
+                            </div>
+                            <div className="flex flex-1 flex-col justify-between gap-1 p-2">
+                              <p className="text-[11px] font-medium leading-tight text-[var(--color-ink)] line-clamp-2">{p.name}</p>
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-[12px] font-semibold text-[var(--color-ink)]">{toBRL(p.basePrice)}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => onQuickAdd(p)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-brand)] text-white transition-transform active:scale-90"
+                                  aria-label={`Adicionar ${p.name}`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()
+              : null}
 
             <div>
               <div className="mb-1.5 flex items-baseline justify-between">

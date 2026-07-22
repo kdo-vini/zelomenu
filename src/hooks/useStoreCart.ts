@@ -54,6 +54,26 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     setSheetProduct(product);
   }
 
+  function quickAddProduct(product: ZeloMenuCatalogProduct) {
+    const key = `${product.id}::plain`;
+    setItems((prev) => {
+      const existing = prev[key];
+      return {
+        ...prev,
+        [key]: {
+          key,
+          productId: product.id,
+          productName: product.name,
+          quantity: (existing?.quantity ?? 0) + 1,
+          selectedOptions: [],
+          unitPrice: product.basePrice,
+          notes: null,
+        },
+      };
+    });
+    toast.success('Adicionado ao carrinho');
+  }
+
   function confirmSheet(
     product: ZeloMenuCatalogProduct,
     quantity: number,
@@ -123,6 +143,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     changeQty,
     setQty,
     onAddProduct,
+    quickAddProduct,
     confirmSheet,
     continueToCart,
     lines,
