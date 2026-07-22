@@ -121,7 +121,7 @@ export function ProductAddModal({
                   </p>
                 </div>
                 <div className="space-y-2">
-                  {group.options.filter((o) => o.active).map((option) => {
+                  {group.options.filter((o) => o.active && o.linkedProduct?.available !== false).map((option) => {
                     const checked = (selections[group.id] ?? []).includes(option.id);
                     const isSubstituir = group.pricingMode === 'substituir';
                     return (
@@ -162,9 +162,7 @@ export function ProductAddModal({
                         <span className="text-[13px] font-semibold text-[var(--color-ink-soft)]">
                           {option.linkedProduct
                             ? isSubstituir
-                              ? checked
-                                ? toBRL(option.linkedProduct.price)
-                                : toBRL(option.linkedProduct.price)
+                              ? toBRL(option.linkedProduct.price)
                               : option.linkedProduct.price > 0
                                 ? `+ ${toBRL(option.linkedProduct.price)}`
                                 : 'incluso'

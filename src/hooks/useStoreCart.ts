@@ -76,7 +76,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
         productName: product.name,
         quantity,
         selectedOptions,
-        unitPrice: Number((product.basePrice + resolved.deltaTotal).toFixed(2)),
+        unitPrice: Number(resolved.finalUnitPrice.toFixed(2)),
         notes: trimmedNotes ? trimmedNotes : null,
       },
     }));

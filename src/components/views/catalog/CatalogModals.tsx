@@ -1220,7 +1220,7 @@ function ModifierGroupEditor({
               </label>
 
               {option.linkedProductId && (
-                <div className="relative mt-2" ref={pickerRef}>
+                <div className="relative mt-2" ref={productPickerIndex === optionIndex ? pickerRef : undefined}>
                   <button
                     type="button"
                     onClick={() => {

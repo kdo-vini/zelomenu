@@ -65,7 +65,7 @@ export function ModifierModal({
                   </p>
                 </div>
                 <div className="space-y-2">
-                  {group.options.filter((o) => o.active).map((option) => {
+                  {group.options.filter((o) => o.active && o.linkedProduct?.available !== false).map((option) => {
                     const checked = selectedIds.includes(option.id);
                     return (
                       <label
