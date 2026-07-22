@@ -3,6 +3,7 @@ import { resolveZeloMenuPublicationCatalogProduct } from '../src/domain/zelomenu
 import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication } from '../src/domain/zelomenuPublication.js';
+import { deriveWeeklyFromLegacy, normalizeWeeklyHours, type WeeklyHours } from '../src/domain/businessHours.js';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -47,6 +48,12 @@ export type BusinessConfig = {
   openTime?: string;
   closeTime?: string;
   closedDays: string[];
+  /**
+   * Modelo por dia / múltiplas janelas (fonte: `empresa_perfil.horario_semanal`).
+   * Quando a coluna é NULL, é derivado das colunas legadas — mantendo o
+   * comportamento single-window idêntico. `[]` num dia = fechado naquele dia.
+   */
+  weeklyHours: WeeklyHours;
   timezone?: string;
   deliveryConfig: DeliveryConfig | null;
   pixReceiptConfig: PixReceiptConfig | null;
@@ -59,6 +66,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   address: '',
   contato: null,
   closedDays: [],
+  weeklyHours: deriveWeeklyFromLegacy(null, null, null),
   deliveryConfig: null,
   pixReceiptConfig: null,
   catalogHierarchy: [],
@@ -310,14 +318,33 @@ function buildCatalogHierarchy(
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
 
+const PERFIL_BASE_COLUMNS = 'user_id, nome_exibicao, endereco, contato, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone';
+
+/** `horario_semanal` é uma coluna nova (ZeloChat-owned). Se ela ainda não existir
+ * neste banco, o select falha com 42703 — nesse caso relemos sem ela e caímos no
+ * legado, sem quebrar o carregamento do cardápio. */
+function isMissingColumnError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === '42703') return true;
+  return typeof error.message === 'string' && error.message.includes('horario_semanal');
+}
+
 export async function loadCatalogFromDb(empresaId: string): Promise<void> {
   const supabase = getServiceSupabase();
 
-  const { data: perfilData, error: perfilError } = await supabase
+  let perfilRes = await supabase
     .from('empresa_perfil')
-    .select('user_id, nome_exibicao, endereco, contato, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone')
+    .select(`${PERFIL_BASE_COLUMNS}, horario_semanal`)
     .eq('id', empresaId)
     .maybeSingle();
+  if (perfilRes.error && isMissingColumnError(perfilRes.error)) {
+    perfilRes = await supabase
+      .from('empresa_perfil')
+      .select(PERFIL_BASE_COLUMNS)
+      .eq('id', empresaId)
+      .maybeSingle();
+  }
+  const { data: perfilData, error: perfilError } = perfilRes;
   if (perfilError) throw perfilError;
   if (!perfilData) throw new Error(`empresa_perfil not found for ${empresaId}`);
 
@@ -331,6 +358,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     horario_abertura?: string | null;
     horario_fechamento?: string | null;
     dias_fechamento?: unknown;
+    horario_semanal?: unknown;
     timezone?: string | null;
   };
 
@@ -426,14 +454,21 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
   );
 
   const closedDays = Array.isArray(row.dias_fechamento) ? (row.dias_fechamento as string[]) : [];
+  const openTime = normalizeText(row.horario_abertura) || undefined;
+  const closeTime = normalizeText(row.horario_fechamento) || undefined;
+  // Modelo novo (`horario_semanal`) quando presente; senão deriva do legado —
+  // lojas single-window mantêm exatamente o comportamento atual.
+  const weeklyHours = normalizeWeeklyHours(row.horario_semanal)
+    ?? deriveWeeklyFromLegacy(openTime, closeTime, closedDays);
 
   configMap.set(empresaId, {
     name: normalizeText(row.nome_exibicao) || 'Loja',
     address: normalizeText(row.endereco),
     contato: normalizeText(row.contato) || null,
-    openTime: normalizeText(row.horario_abertura) || undefined,
-    closeTime: normalizeText(row.horario_fechamento) || undefined,
+    openTime,
+    closeTime,
     closedDays,
+    weeklyHours,
     timezone: normalizeText(row.timezone) || undefined,
     deliveryConfig: normalizeDeliveryConfig(row.delivery_config),
     pixReceiptConfig: normalizePixReceiptConfig(row.pix_receipt_config),

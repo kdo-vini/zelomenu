@@ -29,6 +29,13 @@ import {
   isPickupInPast,
   parseBusinessTime,
 } from '../src/domain/zelomenuBusinessHours.js';
+import {
+  DAY_KEYS,
+  hasAnyOpenWindow,
+  isMinuteWithinDay,
+  isOpenAt,
+  type DayKey,
+} from '../src/domain/businessHours.js';
 import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
@@ -468,11 +475,41 @@ function publicMinutesLabel(minutes: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
+/**
+ * Mapeia a data civil de retirada (YYYY-MM-DD) para a chave de dia do modelo
+ * `horario_semanal`, passando por `businessDayLabel` para manter os rótulos
+ * PT consistentes com `PUBLIC_DAY_LABELS` (Dom..Sáb / index = getUTCDay).
+ */
+function pickupDayKey(pickupDate: string): DayKey | null {
+  const label = businessDayLabel(pickupDate);
+  if (!label) return null;
+  const idx = PUBLIC_DAY_LABELS.indexOf(label);
+  return idx >= 0 ? DAY_KEYS[idx] : null;
+}
+
 function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): PublicBusinessHoursStatus {
+  const timezone = config.timezone || 'America/Sao_Paulo';
   const openMinutes = parseBusinessTime(config.openTime);
   const closeMinutes = parseBusinessTime(config.closeTime);
-  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone: config.timezone || 'America/Sao_Paulo' };
-  const timezone = config.timezone || 'America/Sao_Paulo';
+  // Rótulo continua sendo a faixa legada (open–close) para o chip de status. Em
+  // lojas multi-janela é o shadow lossy da faixa do dia — não bloqueia nada.
+  const label = openMinutes !== null && closeMinutes !== null
+    ? `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`
+    : null;
+
+  // Modelo multi-janela: "aberto agora" vem de isOpenAt (respeita o vão do dia).
+  if (hasAnyOpenWindow(config.weeklyHours)) {
+    return {
+      configured: true,
+      openNow: isOpenAt(config.weeklyHours, new Date(), timezone).open,
+      label,
+      closedDays: config.closedDays ?? [],
+      timezone,
+    };
+  }
+
+  // Legado single-window (comportamento idêntico ao anterior).
+  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone };
   const now = new Date();
   const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, weekday: 'short' }).format(now).toLowerCase().replace(/\./g, '');
   const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
@@ -486,7 +523,7 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
   return {
     configured: true,
     openNow: !closedToday && isBusinessWindowOpen(nowMinutes, openMinutes, closeMinutes),
-    label: `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`,
+    label,
     closedDays: config.closedDays ?? [],
     timezone: timezone,
   };
@@ -1217,12 +1254,18 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
   const config = getConfig(sessionRow.empresa_id);
   const openMinutes = parseBusinessTime(config.openTime);
   const closeMinutes = parseBusinessTime(config.closeTime);
-  if (openMinutes !== null && closeMinutes !== null) {
+  // Fonte multi-janela quando `horario_semanal` está configurado (ou derivado do
+  // legado). `useWeekly=false` só quando não há nenhuma janela — aí caímos no
+  // check legado exato (idêntico ao comportamento atual). Lojas single-window
+  // continuam batendo com hoje; só multi-janela ganha o bloqueio do vão.
+  const useWeekly = hasAnyOpenWindow(config.weeklyHours);
+  if (useWeekly || (openMinutes !== null && closeMinutes !== null)) {
     const closedDays = Array.isArray(config.closedDays) ? config.closedDays : [];
     const timezone = config.timezone || 'America/Sao_Paulo';
 
     if (current.fulfillment.asap === true) {
-      // "Pra já" — check if store is currently open
+      // "Pra já" — check if store is currently open (multi-janela via isOpenAt
+      // quando há janelas; senão a lógica single-window legada).
       const hoursStatus = buildPublicBusinessHoursStatus(config);
       if (hoursStatus.openNow === false) {
         throw new Error(
@@ -1248,19 +1291,39 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
         }
       }
 
-      if (!isBusinessWindowOpen(pickupMinutes, openMinutes, closeMinutes)) {
-        throw new Error(
-          'PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.'
-        );
-      }
-
-      // Weekly closed days apply to the selected civil date.
-      if (typeof pickupDate === 'string') {
-        const mapped = businessDayLabel(pickupDate);
-        if (mapped && closedDays.includes(mapped)) {
+      if (useWeekly) {
+        // O horário de retirada precisa cair numa das janelas do DIA escolhido.
+        // Isso rejeita corretamente um horário que caia no vão almoço→jantar
+        // (o check single-window legado permitiria por engano).
+        const dayKey = typeof pickupDate === 'string' ? pickupDayKey(pickupDate) : null;
+        if (dayKey) {
+          if (config.weeklyHours[dayKey].length === 0) {
+            throw new Error(
+              'PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.'
+            );
+          }
+          if (!isMinuteWithinDay(config.weeklyHours, dayKey, pickupMinutes)) {
+            throw new Error(
+              'PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.'
+            );
+          }
+        }
+      } else {
+        // Legado single-window (comportamento idêntico ao anterior).
+        if (!isBusinessWindowOpen(pickupMinutes, openMinutes!, closeMinutes!)) {
           throw new Error(
-            'PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.'
+            'PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.'
           );
+        }
+
+        // Weekly closed days apply to the selected civil date.
+        if (typeof pickupDate === 'string') {
+          const mapped = businessDayLabel(pickupDate);
+          if (mapped && closedDays.includes(mapped)) {
+            throw new Error(
+              'PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.'
+            );
+          }
         }
       }
     }
