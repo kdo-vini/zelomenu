@@ -109,6 +109,7 @@ export function AdminPage() {
       produtos={catalog.produtos}
       productPublications={catalog.productPublications}
       productModifierGroups={catalog.productModifierGroups}
+      modifierOptionProducts={catalog.modifierOptionProducts}
       refresh={catalog.refresh}
       createCategoria={catalog.createCategoria}
       updateCategoria={catalog.updateCategoria}

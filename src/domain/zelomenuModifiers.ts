@@ -1,11 +1,20 @@
 export type ZeloMenuModifierGroupKind = 'adicional' | 'variacao';
 
+export type ZeloMenuLinkedModifierProduct = {
+  productId: number;
+  name: string;
+  photoUrl: string | null;
+  price: number;
+  available: boolean;
+};
+
 export type ZeloMenuModifierOption = {
   id: string;
   name: string;
   priceDelta: number;
   active: boolean;
   order: number;
+  linkedProduct?: ZeloMenuLinkedModifierProduct | null;
 };
 
 export type ZeloMenuModifierGroup = {
@@ -13,6 +22,7 @@ export type ZeloMenuModifierGroup = {
   productId: number;
   name: string;
   kind: ZeloMenuModifierGroupKind;
+  pricingMode: 'somar' | 'substituir';
   minSelections: number;
   maxSelections: number | null;
   active: boolean;
@@ -26,12 +36,15 @@ export type ZeloMenuModifierOptionDraft = {
   priceDelta: number;
   active: boolean;
   order: number;
+  linkedProductId?: number | null;
+  priceOverride?: number | null;
 };
 
 export type ZeloMenuModifierGroupDraft = {
   id?: string;
   name: string;
   kind: ZeloMenuModifierGroupKind;
+  pricingMode: 'somar' | 'substituir';
   minSelections: number;
   maxSelections: number | null;
   active: boolean;
@@ -68,6 +81,7 @@ export type ZeloMenuModifierResolutionResult =
       ok: true;
       selectedGroups: ZeloMenuSelectedModifierGroup[];
       deltaTotal: number;
+      finalUnitPrice: number;
     }
   | {
       ok: false;
@@ -78,6 +92,12 @@ export type ZeloMenuModifierResolutionResult =
 export type ModifierAwareCartItem = {
   productName: string;
   selectedModifiers?: ZeloMenuSelectedModifierGroup[] | null;
+};
+
+export type ZeloMenuModifierOptionProductLink = {
+  optionId: string;
+  productId: number;
+  priceOverride: number | null;
 };
 
 export function sortModifierGroups(groups: ZeloMenuModifierGroup[]): ZeloMenuModifierGroup[] {
@@ -91,13 +111,23 @@ export function sortModifierGroups(groups: ZeloMenuModifierGroup[]): ZeloMenuMod
 
 export { buildModifierSignature as buildModifierSelectionKey } from './zelomenuCartItemKey';
 
+function resolveOptionPrice(
+  option: ZeloMenuModifierOption,
+): number {
+  if (option.linkedProduct) {
+    return option.linkedProduct.price;
+  }
+  return roundCurrency(option.priceDelta);
+}
+
 export function resolveModifierSelections(
   groups: ZeloMenuModifierGroup[] | null | undefined,
   selections: ZeloMenuModifierSelectionInput[] | null | undefined,
+  basePrice: number,
 ): ZeloMenuModifierResolutionResult {
   const activeGroups = sortModifierGroups((groups ?? []).filter((group) => group.active));
   if (activeGroups.length === 0) {
-    return { ok: true, selectedGroups: [], deltaTotal: 0 };
+    return { ok: true, selectedGroups: [], deltaTotal: 0, finalUnitPrice: roundCurrency(basePrice) };
   }
 
   const selectionsByGroupId = new Map<string, string[]>();
@@ -118,11 +148,12 @@ export function resolveModifierSelections(
   }
 
   const selectedGroups: ZeloMenuSelectedModifierGroup[] = [];
-  let deltaTotal = 0;
+  let baseOverride: number | null = null;
+  let addDeltaTotal = 0;
 
   for (const group of activeGroups) {
     const optionIds = selectionsByGroupId.get(group.id) ?? [];
-    const activeOptions = group.options.filter((option) => option.active);
+    const activeOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false);
     const selectedOptions: ZeloMenuSelectedModifierOption[] = [];
 
     for (const optionId of optionIds) {
@@ -136,10 +167,9 @@ export function resolveModifierSelections(
       }
       selectedOptions.push({
         optionId: option.id,
-        optionName: option.name,
-        priceDelta: roundCurrency(option.priceDelta),
+        optionName: option.linkedProduct ? option.linkedProduct.name : option.name,
+        priceDelta: resolveOptionPrice(option),
       });
-      deltaTotal += roundCurrency(option.priceDelta);
     }
 
     if (selectedOptions.length < group.minSelections) {
@@ -159,6 +189,16 @@ export function resolveModifierSelections(
     }
 
     if (selectedOptions.length > 0) {
+      if (group.pricingMode === 'substituir') {
+        baseOverride = resolveOptionPrice(
+          activeOptions.find((o) => o.id === optionIds[0])!,
+        );
+      } else {
+        for (const option of selectedOptions) {
+          addDeltaTotal += option.priceDelta;
+        }
+      }
+
       selectedGroups.push({
         groupId: group.id,
         groupName: group.name,
@@ -168,10 +208,13 @@ export function resolveModifierSelections(
     }
   }
 
+  const finalUnitPrice = roundCurrency((baseOverride ?? basePrice) + addDeltaTotal);
+
   return {
     ok: true,
     selectedGroups,
-    deltaTotal: roundCurrency(deltaTotal),
+    deltaTotal: roundCurrency(finalUnitPrice - basePrice),
+    finalUnitPrice,
   };
 }
 
@@ -193,6 +236,8 @@ export function formatModifierAwareCartItem(item: ModifierAwareCartItem): string
 }
 
 export function validateModifierGroupDrafts(groups: ZeloMenuModifierGroupDraft[]): string | null {
+  let substitutionCount = 0;
+
   for (const group of groups) {
     if (!group.name.trim()) return 'Todo grupo precisa de um nome.';
     if (group.minSelections < 0) return `O grupo ${group.name} tem mínimo inválido.`;
@@ -203,9 +248,18 @@ export function validateModifierGroupDrafts(groups: ZeloMenuModifierGroupDraft[]
       return `O grupo ${group.name} precisa ter pelo menos uma opção.`;
     }
 
+    if (group.pricingMode === 'substituir') {
+      if (group.maxSelections !== 1) {
+        return 'Grupo de substituição de preço precisa ser de escolha única (máximo = 1).';
+      }
+      substitutionCount += 1;
+    }
+
     let activeOptions = 0;
     for (const option of group.options) {
-      if (!option.name.trim()) return `Uma opção do grupo ${group.name} está sem nome.`;
+      if (!option.name.trim() && !option.linkedProductId) {
+        return `Uma opção do grupo ${group.name} está sem nome.`;
+      }
       if (!Number.isFinite(option.priceDelta) || option.priceDelta < 0) {
         return `A opção ${option.name || 'sem nome'} do grupo ${group.name} tem preço adicional inválido.`;
       }
@@ -216,6 +270,11 @@ export function validateModifierGroupDrafts(groups: ZeloMenuModifierGroupDraft[]
       return `O grupo ${group.name} precisa de pelo menos ${selectionCountLabel(group.minSelections)} ativa(s).`;
     }
   }
+
+  if (substitutionCount > 1) {
+    return 'Só pode existir um grupo de substituição de preço por produto.';
+  }
+
   return null;
 }
 

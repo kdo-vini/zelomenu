@@ -29,7 +29,7 @@ export function ModifierModal({
   const selectedOptions = Object.entries(selections)
     .map(([groupId, optionIds]) => ({ groupId, optionIds }))
     .filter((sel) => sel.optionIds.length > 0);
-  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions);
+  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50">
@@ -108,7 +108,7 @@ export function ModifierModal({
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t border-[var(--color-line)] px-5 py-4" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
           <p className="text-[14px] font-bold text-[var(--color-ink)]">
-            {resolution.ok ? toBRL(product.basePrice + resolution.deltaTotal) : '—'}
+            {resolution.ok ? toBRL(resolution.finalUnitPrice) : '—'}
           </p>
           <button
             type="button"

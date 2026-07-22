@@ -64,7 +64,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     const selectedOptions = Object.keys(selections)
       .map((groupId) => ({ groupId, optionIds: selections[groupId] ?? [] }))
       .filter((sel) => sel.optionIds.length > 0);
-    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions);
+    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
     if (!resolved.ok) return;
     const key = product.modifierGroups.length > 0 ? buildCartItemKey(product.id, selectedOptions) : `${product.id}::plain`;
     const trimmedNotes = notes.trim();

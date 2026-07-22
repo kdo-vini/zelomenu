@@ -29,6 +29,7 @@ export function useCatalogModifiers(
         productId,
         name: group.name.trim(),
         kind: group.kind,
+        pricingMode: group.pricingMode,
         minSelections: Math.max(0, Math.trunc(group.minSelections)),
         maxSelections: group.maxSelections == null ? null : Math.max(1, Math.trunc(group.maxSelections)),
         active: group.active,
@@ -39,6 +40,9 @@ export function useCatalogModifiers(
           priceDelta: Number(option.priceDelta ?? 0),
           active: option.active,
           order: Math.max(0, Math.trunc(option.order ?? optionIndex)),
+          linkedProduct: option.linkedProductId
+            ? { productId: option.linkedProductId, name: '', photoUrl: null, price: Number(option.priceOverride ?? 0), available: true }
+            : null,
         })),
       };
     });
@@ -58,6 +62,7 @@ export function useCatalogModifiers(
       id_produto: productId,
       nome: group.name,
       tipo: group.kind,
+      modo_preco: group.pricingMode,
       min_selecoes: group.minSelections,
       max_selecoes: group.maxSelections,
       ativo: group.active,
@@ -110,6 +115,78 @@ export function useCatalogModifiers(
       if (deleteGroupsError) throw deleteGroupsError;
     }
 
+    // ── Sidecar (zelomenu_modifier_option_products) ─────────────────────────
+
+    // Collect current sidecar option IDs for this product
+    const currentSidecarOptionIds = new Set<string>(
+      Object.keys(dataRef.current.modifierOptionProducts ?? {})
+        .filter((optId) => currentOptionIds.has(optId)),
+    );
+
+    // Collect next sidecar entries from the original drafts (have linkedProductId/priceOverride)
+    const nextSidecarOptionIds = new Set<string>();
+    const sidecarUpsertPayload: Array<{
+      id_opcao: string;
+      id_usuario: string;
+      id_produto: number;
+      price_override: number | null;
+    }> = [];
+
+    // Build a map of draft groupId -> group for quick lookup by option ID
+    const allOptionLinks = new Map<string, { productId: number; priceOverride: number | null }>();
+    for (const group of groups) {
+      for (const option of group.options) {
+        if (option.id && option.linkedProductId) {
+          allOptionLinks.set(option.id, { productId: option.linkedProductId, priceOverride: option.priceOverride ?? null });
+        }
+      }
+    }
+    for (const [optId, link] of allOptionLinks) {
+      nextSidecarOptionIds.add(optId);
+      sidecarUpsertPayload.push({
+        id_opcao: optId,
+        id_usuario: userId,
+        id_produto: link.productId,
+        price_override: link.priceOverride,
+      });
+    }
+
+    // Delete stale sidecar rows (unlinked or deleted options that had a link)
+    const staleSidecarOptionIds = [...currentSidecarOptionIds].filter(
+      (id) => !nextSidecarOptionIds.has(id),
+    );
+    if (staleSidecarOptionIds.length > 0) {
+      const { error: deleteSidecarError } = await supabase
+        .from('zelomenu_modifier_option_products')
+        .delete()
+        .eq('id_usuario', userId)
+        .in('id_opcao', staleSidecarOptionIds);
+      if (deleteSidecarError) throw deleteSidecarError;
+    }
+
+    // Upsert current sidecar rows
+    if (sidecarUpsertPayload.length > 0) {
+      const { error: upsertSidecarError } = await supabase
+        .from('zelomenu_modifier_option_products')
+        .upsert(sidecarUpsertPayload, { onConflict: 'id_opcao' });
+      if (upsertSidecarError) throw upsertSidecarError;
+    }
+
+    // ── Update local state ───────────────────────────────────────────────────
+
+    const newModifierOptionProducts = { ...dataRef.current.modifierOptionProducts };
+    // Remove stale sidecar entries
+    for (const id of staleSidecarOptionIds) {
+      delete newModifierOptionProducts[id];
+    }
+    // Add/update new sidecar entries
+    for (const entry of sidecarUpsertPayload) {
+      newModifierOptionProducts[entry.id_opcao] = {
+        productId: entry.id_produto,
+        priceOverride: entry.price_override,
+      };
+    }
+
     const saved = sortModifierGroups(nextGroups);
     commitData((prev) => ({
       ...prev,
@@ -117,6 +194,7 @@ export function useCatalogModifiers(
         ...prev.productModifierGroups,
         [productId]: saved,
       },
+      modifierOptionProducts: newModifierOptionProducts,
     }));
     return saved;
   }, [userId, dataRef, commitData]);

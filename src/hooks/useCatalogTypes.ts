@@ -80,6 +80,7 @@ export type CatalogState = {
   produtos: ProdutoRow[];
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
   productModifierGroups: Record<number, ZeloMenuModifierGroupRow[]>;
+  modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
 };
 
 export const EMPTY: CatalogState = {
@@ -88,6 +89,7 @@ export const EMPTY: CatalogState = {
   produtos: [],
   productPublications: {},
   productModifierGroups: {},
+  modifierOptionProducts: {},
 };
 
 export type CommitFn = (updater: (previous: CatalogState) => CatalogState) => void;
@@ -139,6 +141,7 @@ export function normalizeModifierGroupRow(
     productId,
     name,
     kind: row.tipo === 'variacao' ? 'variacao' : 'adicional',
+    pricingMode: row.modo_preco === 'substituir' ? 'substituir' : 'somar',
     minSelections: Math.max(0, Number(row.min_selecoes ?? 0)),
     maxSelections: row.max_selecoes == null ? null : Math.max(1, Number(row.max_selecoes)),
     active: row.ativo !== false,

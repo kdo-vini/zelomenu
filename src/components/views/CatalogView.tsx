@@ -54,6 +54,7 @@ interface Props {
   produtos: ProdutoRow[];
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
   productModifierGroups: Record<number, ZeloMenuModifierGroupRow[]>;
+  modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
   refresh: () => Promise<void>;
   createCategoria: (input: { nome: string; ordem?: number }) => Promise<Categoria>;
   updateCategoria: (id: number, patch: { nome?: string; ordem?: number }) => Promise<void>;
@@ -113,6 +114,7 @@ export const CatalogView = ({
   produtos,
   productPublications,
   productModifierGroups,
+  modifierOptionProducts,
   refresh,
   createCategoria,
   updateCategoria,
@@ -710,6 +712,7 @@ export const CatalogView = ({
         products={editorProducts}
         initial={modal?.kind === 'publication' ? productPublications[modal.product.id] ?? null : null}
         modifierGroups={modal?.kind === 'publication' ? productModifierGroups[modal.product.id] ?? [] : []}
+        modifierOptionProducts={modifierOptionProducts}
         uploadImage={uploadProductPublicationImage}
         deleteImage={deleteProductPublicationImage}
         onClose={() => setModal(null)}

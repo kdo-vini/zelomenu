@@ -174,9 +174,9 @@ function estimateDraftTotals(
     let unitPrice = item.baseUnitPrice + item.modifierDeltaTotal;
     let selectedModifiers = item.selectedModifiers;
     if (product) {
-      const resolved = resolveModifierSelections(product.modifierGroups, item.selectedOptions);
+      const resolved = resolveModifierSelections(product.modifierGroups, item.selectedOptions, product.basePrice);
       if (resolved.ok) {
-        unitPrice = Number((product.basePrice + resolved.deltaTotal).toFixed(2));
+        unitPrice = Number(resolved.finalUnitPrice.toFixed(2));
         selectedModifiers = resolved.selectedGroups;
       }
     }
@@ -1640,7 +1640,7 @@ export default function ZeloMenuCartPage() {
             const selectedOptions = Object.entries(recModalSelections)
               .map(([groupId, optionIds]) => ({ groupId, optionIds }))
               .filter((sel) => sel.optionIds.length > 0);
-            const resolution = resolveModifierSelections(recModalProduct.modifierGroups, selectedOptions);
+            const resolution = resolveModifierSelections(recModalProduct.modifierGroups, selectedOptions, recModalProduct.basePrice);
             if (!resolution.ok) return;
             setDraft((cur) => {
               if (!cur) return cur;

@@ -720,10 +720,29 @@ async function resolveSnapshots(
       const stockQuantity = Number(product.stockQuantity ?? 0);
       if ((item.productId != null ? aggregated.get(item.productId) ?? item.quantity : item.quantity) > stockQuantity) throw new Error('PRODUCT_STOCK_EXCEEDED');
     }
-    const modifierResolution = resolveModifierSelections(product.modifierGroups, item.selectedOptions ?? []);
-    if (modifierResolution.ok === false) throw new Error(`MODIFIER_INVALID:${modifierResolution.message}`);
     const baseUnitPrice = Number(product.basePrice ?? product.price);
-    const unitPrice = Number((baseUnitPrice + modifierResolution.deltaTotal).toFixed(2));
+    const modifierResolution = resolveModifierSelections(product.modifierGroups, item.selectedOptions ?? [], baseUnitPrice);
+    if (modifierResolution.ok === false) throw new Error(`MODIFIER_INVALID:${modifierResolution.message}`);
+    const unitPrice = Number(modifierResolution.finalUnitPrice.toFixed(2));
+
+    // Stock checking for linked products in modifier options
+    if (modifierResolution.ok) {
+      for (const group of modifierResolution.selectedGroups) {
+        for (const opt of group.selectedOptions) {
+          const modifierGroup = product.modifierGroups.find((g) => g.id === group.groupId);
+          if (!modifierGroup) continue;
+          const modifierOption = modifierGroup.options.find((o) => o.id === opt.optionId);
+          if (!modifierOption?.linkedProduct) continue;
+          if (modifierOption.linkedProduct.available === false) throw new Error('MODIFIER_INVALID:Uma opção vinculada não está mais disponível.');
+          const linkedProductInCatalog = config.products.find((p) => p.id === modifierOption.linkedProduct!.productId);
+          if (linkedProductInCatalog?.stockControlled) {
+            const stockQuantity = Number(linkedProductInCatalog.stockQuantity ?? 0);
+            const linkedAgg = aggregated.get(modifierOption.linkedProduct.productId) ?? item.quantity;
+            if (linkedAgg > stockQuantity) throw new Error('PRODUCT_STOCK_EXCEEDED');
+          }
+        }
+      }
+    }
     resolvedItems.push({
       productId: product.id ?? null,
       productName: product.name,
