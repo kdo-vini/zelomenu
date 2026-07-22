@@ -16,6 +16,8 @@ export type ZeloMenuStoreSettings = {
   welcomeText: string | null;
   featuredEnabled: boolean;
   featuredProductIds: number[];
+  recommendationsEnabled: boolean;
+  recommendationProductIds: number[];
   categoryOrder: string[];
   availableProducts: Array<{ id: number; name: string; categoryName: string }>;
   availableCategories: string[];
@@ -25,6 +27,8 @@ export type ZeloMenuSettingsPatch = {
   welcomeText?: string | null;
   featuredEnabled?: boolean;
   featuredProductIds?: number[];
+  recommendationsEnabled?: boolean;
+  recommendationProductIds?: number[];
   categoryOrder?: string[];
 };
 

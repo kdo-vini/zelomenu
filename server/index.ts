@@ -209,11 +209,13 @@ app.get('/api/admin/zelomenu/settings', async (req, res) => {
 app.patch('/api/admin/zelomenu/settings', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { welcomeText, featuredEnabled, featuredProductIds, categoryOrder } = req.body ?? {};
+    const { welcomeText, featuredEnabled, featuredProductIds, recommendationsEnabled, recommendationProductIds, categoryOrder } = req.body ?? {};
     await updateZeloMenuStoreSettings(empresaId, {
       ...(welcomeText !== undefined && { welcomeText: typeof welcomeText === 'string' ? welcomeText.slice(0, 500) : null }),
       ...(featuredEnabled !== undefined && { featuredEnabled: Boolean(featuredEnabled) }),
       ...(Array.isArray(featuredProductIds) && { featuredProductIds: featuredProductIds.map(Number).filter(Boolean) }),
+      ...(recommendationsEnabled !== undefined && { recommendationsEnabled: Boolean(recommendationsEnabled) }),
+      ...(Array.isArray(recommendationProductIds) && { recommendationProductIds: recommendationProductIds.map(Number).filter(Boolean) }),
       ...(Array.isArray(categoryOrder) && { categoryOrder: categoryOrder.map(String) }),
     });
     res.json({ ok: true });

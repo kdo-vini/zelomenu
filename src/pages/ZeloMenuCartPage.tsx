@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   CreditCard,
+  ImageIcon,
   Loader2,
   MessageCircle,
   Minus,
@@ -56,6 +57,8 @@ import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { loadZeloMenuCustomerCache, saveZeloMenuCustomerCache } from '../domain/zelomenuCustomerCache';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
+import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
+import { resolveCheckoutSuggestions } from '../domain/zelomenuRecommendations';
 import { useToast } from '../contexts/ToastContext';
 
 type DraftState = {
@@ -337,6 +340,8 @@ export default function ZeloMenuCartPage() {
   const saveVersionRef = useRef(0);
   const latestAutosaveRef = useRef<ZeloMenuUpdateCartPayload | null>(null);
   const loadRequestRef = useRef(0);
+  const [recModalProduct, setRecModalProduct] = useState<ZeloMenuCatalogProduct | null>(null);
+  const [recModalSelections, setRecModalSelections] = useState<Record<string, string[]>>({});
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
     const requestId = ++loadRequestRef.current;
@@ -1161,6 +1166,78 @@ export default function ZeloMenuCartPage() {
                         })}
                       </div>
                     )}
+
+                    {/* ── Recomendações "Peça também" ── */}
+                    {(() => {
+                      if (!payload.business.recommendationsEnabled) return null;
+                      const cartProductIds = draft.items.map((i) => i.productId).filter((id): id is number => id != null);
+                      const suggestions = resolveCheckoutSuggestions({
+                        enabled: true,
+                        recommendationProductIds: payload.business.recommendationProductIds ?? [],
+                        catalog: payload.catalog,
+                        cartProductIds,
+                        max: 10,
+                      });
+                      if (suggestions.length === 0) return null;
+                      return (
+                        <div className="mt-1">
+                          <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Complete seu pedido</p>
+                          <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
+                            {suggestions.map((p) => (
+                              <div
+                                key={p.id}
+                                className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2"
+                                style={{ scrollSnapAlign: 'start' }}
+                              >
+                                {p.photoUrl ? (
+                                  <img src={p.photoUrl} alt={p.name} className="mb-1.5 h-[72px] w-full rounded-lg object-cover" />
+                                ) : (
+                                  <div className="mb-1.5 flex h-[72px] items-center justify-center rounded-lg bg-[var(--color-surface-muted)] text-[var(--color-ink-faint)]">
+                                    <ImageIcon className="h-6 w-6" strokeWidth={1.4} />
+                                  </div>
+                                )}
+                                <p className="line-clamp-2 text-[12px] font-medium leading-tight text-[var(--color-ink)]">{p.name}</p>
+                                <p className="mt-0.5 text-[11px] tabular-nums text-[var(--color-ink-muted)]">{toBRL(p.basePrice)}</p>
+                                <button
+                                  type="button"
+                                  disabled={!isOpen}
+                                  onClick={() => {
+                                    const hasRequired = p.modifierGroups.some((g) => g.active && g.minSelections > 0);
+                                    if (hasRequired) {
+                                      setRecModalProduct(p);
+                                      setRecModalSelections({});
+                                    } else {
+                                      setDraft((cur) => {
+                                        if (!cur) return cur;
+                                        return {
+                                          ...cur,
+                                          items: [...cur.items, {
+                                            productId: p.id,
+                                            productName: p.name,
+                                            quantity: 1,
+                                            notes: '',
+                                            selectedOptions: [],
+                                            selectedModifiers: [],
+                                            baseUnitPrice: p.basePrice,
+                                            modifierDeltaTotal: 0,
+                                          }],
+                                        };
+                                      });
+                                      toast.success('Adicionado ao pedido');
+                                    }
+                                  }}
+                                  className="mt-auto flex h-8 w-full items-center justify-center gap-1 rounded-lg bg-[var(--color-brand)] text-[12px] font-bold text-white transition-transform active:scale-95 disabled:opacity-40"
+                                >
+                                  <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                                  Adicionar
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {isTableOrder && (
                       <label className="flex flex-col gap-1.5">
                         <span className="text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Observações (opcional)</span>
@@ -1505,6 +1582,55 @@ export default function ZeloMenuCartPage() {
           </div>
         )}
       </div>
+
+      {/* ── Modifier modal para recomendações ── */}
+      {recModalProduct ? (
+        <ModifierModal
+          product={recModalProduct}
+          selections={recModalSelections}
+          onClose={() => { setRecModalProduct(null); setRecModalSelections({}); }}
+          onToggle={(groupId, optionId) => {
+            setRecModalSelections((prev) => {
+              const group = recModalProduct.modifierGroups.find((g) => g.id === groupId);
+              if (!group) return prev;
+              const current = prev[groupId] ?? [];
+              const has = current.includes(optionId);
+              let next: string[];
+              if (has) next = current.filter((id) => id !== optionId);
+              else if (group.maxSelections === 1) next = [optionId];
+              else next = [...current, optionId];
+              return { ...prev, [groupId]: next };
+            });
+          }}
+          onConfirm={() => {
+            if (!recModalProduct) return;
+            const selectedOptions = Object.entries(recModalSelections)
+              .map(([groupId, optionIds]) => ({ groupId, optionIds }))
+              .filter((sel) => sel.optionIds.length > 0);
+            const resolution = resolveModifierSelections(recModalProduct.modifierGroups, selectedOptions);
+            if (!resolution.ok) return;
+            setDraft((cur) => {
+              if (!cur) return cur;
+              return {
+                ...cur,
+                items: [...cur.items, {
+                  productId: recModalProduct.id,
+                  productName: recModalProduct.name,
+                  quantity: 1,
+                  notes: '',
+                  selectedOptions,
+                  selectedModifiers: resolution.selectedGroups,
+                  baseUnitPrice: recModalProduct.basePrice,
+                  modifierDeltaTotal: resolution.deltaTotal,
+                }],
+              };
+            });
+            setRecModalProduct(null);
+            setRecModalSelections({});
+            toast.success('Adicionado ao pedido');
+          }}
+        />
+      ) : null}
     </div>
   );
 }

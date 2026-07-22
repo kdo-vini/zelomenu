@@ -106,6 +106,10 @@ export type ZeloMenuPublicCartResponse = {
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     whatsapp?: string | null;
+    featuredEnabled?: boolean;
+    featuredProductIds?: number[];
+    recommendationsEnabled?: boolean;
+    recommendationProductIds?: number[];
     businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
   catalog: ZeloMenuCatalogGroup[];
@@ -161,6 +165,8 @@ export type ZeloMenuPublicStoreResponse = {
     welcomeText?: string | null;
     featuredEnabled?: boolean;
     featuredProductIds?: number[];
+    recommendationsEnabled?: boolean;
+    recommendationProductIds?: number[];
     businessHours?: ZeloMenuPublicBusinessHoursStatus;
   };
   catalog: ZeloMenuCatalogGroup[];

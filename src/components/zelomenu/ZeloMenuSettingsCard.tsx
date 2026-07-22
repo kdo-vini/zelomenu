@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, GripVertical, Loader2, Search, Sparkles, Star, Store, X } from 'lucide-react';
+import { Check, ChevronDown, GripVertical, Loader2, Search, ShoppingCart, Sparkles, Star, Store, X } from 'lucide-react';
 import { Reorder } from 'motion/react';
 import {
   generateZeloMenuWelcome,
@@ -28,10 +28,15 @@ export function ZeloMenuSettingsCard() {
   const [welcomeText, setWelcomeText] = useState('');
   const [featuredEnabled, setFeaturedEnabled] = useState(false);
   const [featuredIds, setFeaturedIds] = useState<number[]>([]);
+  const [recommendationsEnabled, setRecommendationsEnabled] = useState(false);
+  const [recommendationIds, setRecommendationIds] = useState<number[]>([]);
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const [recSearch, setRecSearch] = useState('');
+  const [recPickerOpen, setRecPickerOpen] = useState(false);
+  const recPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -43,6 +48,8 @@ export function ZeloMenuSettingsCard() {
         setWelcomeText(s.welcomeText ?? '');
         setFeaturedEnabled(s.featuredEnabled);
         setFeaturedIds(s.featuredProductIds);
+        setRecommendationsEnabled(s.recommendationsEnabled);
+        setRecommendationIds(s.recommendationProductIds);
         // Reconcilia a ordem salva com o catálogo atual: descarta categorias que
         // não existem mais (renomeadas/excluídas no PDV) e anexa as novas no fim,
         // pra lista de arrastar sempre refletir o cardápio de verdade.
@@ -72,8 +79,25 @@ export function ZeloMenuSettingsCard() {
     return () => document.removeEventListener('mousedown', handler);
   }, [productPickerOpen]);
 
+  useEffect(() => {
+    if (!recPickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (recPickerRef.current && !recPickerRef.current.contains(e.target as Node)) {
+        setRecPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [recPickerOpen]);
+
   function toggleProduct(id: number) {
     setFeaturedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  function toggleRecommendation(id: number) {
+    setRecommendationIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   }
@@ -104,6 +128,8 @@ export function ZeloMenuSettingsCard() {
         welcomeText: welcomeText.trim() || null,
         featuredEnabled,
         featuredProductIds: featuredIds,
+        recommendationsEnabled,
+        recommendationProductIds: recommendationIds,
         categoryOrder,
       });
       setSaved(true);
@@ -122,6 +148,13 @@ export function ZeloMenuSettingsCard() {
     ? settings.availableProducts.filter((p) =>
         p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
         p.categoryName.toLowerCase().includes(productSearch.toLowerCase()),
+      )
+    : settings.availableProducts;
+
+  const recFilteredProducts = recSearch.trim()
+    ? settings.availableProducts.filter((p) =>
+        p.name.toLowerCase().includes(recSearch.toLowerCase()) ||
+        p.categoryName.toLowerCase().includes(recSearch.toLowerCase()),
       )
     : settings.availableProducts;
 
@@ -281,6 +314,136 @@ export function ZeloMenuSettingsCard() {
                           <button
                             type="button"
                             onClick={() => toggleProduct(id)}
+                            aria-label={`Remover ${name}`}
+                          >
+                            <X className="h-3 w-3" strokeWidth={2.5} />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {/* ── Checkout recommendations (cross-sell) ── */}
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-[13px] font-semibold text-[var(--color-ink)]">Sugestões no checkout</p>
+                <p className="text-[12px] text-[var(--color-ink-muted)]">Ofereça bebidas, sobremesas ou acompanhamentos na hora de fechar o pedido.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={recommendationsEnabled}
+                onClick={() => setRecommendationsEnabled((v) => !v)}
+                className="relative h-6 w-11 rounded-full transition-colors"
+                style={{ background: recommendationsEnabled ? 'var(--color-brand)' : 'var(--color-line-strong)' }}
+              >
+                <span
+                  className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                  style={{ transform: recommendationsEnabled ? 'translateX(20px)' : 'translateX(2px)' }}
+                />
+              </button>
+            </div>
+
+            {recommendationsEnabled ? (
+              <div className="space-y-2">
+                {/* Product picker trigger */}
+                <div className="relative" ref={recPickerRef}>
+                  <button
+                    type="button"
+                    onClick={() => setRecPickerOpen((v) => !v)}
+                    className="flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-4 py-3 text-left"
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <ShoppingCart className="h-4 w-4 shrink-0 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
+                      <span className="truncate text-[13px] text-[var(--color-ink)]">
+                        {recommendationIds.length === 0
+                          ? 'Selecionar produtos…'
+                          : `${recommendationIds.length} produto${recommendationIds.length !== 1 ? 's' : ''} selecionado${recommendationIds.length !== 1 ? 's' : ''}`}
+                      </span>
+                    </div>
+                    <ChevronDown
+                      className="h-4 w-4 shrink-0 text-[var(--color-ink-muted)] transition-transform"
+                      style={{ transform: recPickerOpen ? 'rotate(180deg)' : '' }}
+                      strokeWidth={2}
+                    />
+                  </button>
+
+                  {recPickerOpen ? (
+                    <div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-lg">
+                      {/* Search */}
+                      <div className="flex items-center gap-2 border-b border-[var(--color-line)] px-3 py-2">
+                        <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-muted)]" strokeWidth={2} />
+                        <input
+                          autoFocus
+                          value={recSearch}
+                          onChange={(e) => setRecSearch(e.target.value)}
+                          placeholder="Buscar produto…"
+                          className="flex-1 bg-transparent text-[13px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)]"
+                        />
+                        {recSearch ? (
+                          <button type="button" onClick={() => setRecSearch('')}>
+                            <X className="h-3.5 w-3.5 text-[var(--color-ink-muted)]" strokeWidth={2} />
+                          </button>
+                        ) : null}
+                      </div>
+                      {/* List */}
+                      <div className="max-h-52 overflow-y-auto">
+                        {recFilteredProducts.length === 0 ? (
+                          <p className="px-4 py-3 text-[13px] text-[var(--color-ink-muted)]">Nenhum produto encontrado</p>
+                        ) : (
+                          recFilteredProducts.map((p) => {
+                            const checked = recommendationIds.includes(p.id);
+                            return (
+                              <label
+                                key={p.id}
+                                className="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-canvas)]"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleRecommendation(p.id)}
+                                  className="h-4 w-4 accent-[var(--color-brand)]"
+                                />
+                                <span className="min-w-0 flex-1 text-[13px] text-[var(--color-ink)]">{p.name}</span>
+                                <span className="shrink-0 text-[11px] text-[var(--color-ink-muted)]">{p.categoryName}</span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                      <div className="border-t border-[var(--color-line)] px-4 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setRecPickerOpen(false)}
+                          className="text-[12px] font-medium text-[var(--color-brand-deep)]"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Selected pills */}
+                {recommendationIds.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {recommendationIds.map((id) => {
+                      const name = settings.availableProducts.find((p) => p.id === id)?.name;
+                      if (!name) return null;
+                      return (
+                        <span
+                          key={id}
+                          className="inline-flex items-center gap-1 rounded-full bg-[var(--color-brand-soft)] px-2.5 py-1 text-[12px] font-medium text-[var(--color-brand-deep)]"
+                        >
+                          {name}
+                          <button
+                            type="button"
+                            onClick={() => toggleRecommendation(id)}
                             aria-label={`Remover ${name}`}
                           >
                             <X className="h-3 w-3" strokeWidth={2.5} />
