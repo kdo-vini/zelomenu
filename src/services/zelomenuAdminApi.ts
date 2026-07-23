@@ -75,6 +75,12 @@ const ERROR_MESSAGES: Record<string, string> = {
 // Parse a Response into JSON, throwing a friendly Error (mapped where possible)
 // when the request failed.
 async function parseResponse<T>(response: Response): Promise<T> {
+  // 401 = sessão expirada — força logout imediato para redirecionar ao login
+  if (response.status === 401) {
+    await supabase.auth.signOut();
+    throw new Error('Sessão expirada. Faça login novamente.');
+  }
+
   const body = (await response.json().catch(() => ({}))) as {
     error?: string;
     message?: string;
