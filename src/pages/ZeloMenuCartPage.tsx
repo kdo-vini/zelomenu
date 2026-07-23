@@ -1117,6 +1117,58 @@ export default function ZeloMenuCartPage() {
                     ? [draft.deliveryAddress, draft.deliveryNeighborhood].filter(Boolean).join(', ') || whenLabel
                     : (whenLabel === 'o quanto antes' ? 'Assim que ficar pronto' : whenLabel);
 
+                  // Pagamento-first: quando há Pix a pagar, o código sobe pro topo
+                  // (logo após o título) e a timeline de status desce — padrão de
+                  // checkout das big techs. Sem Pix, status fica no topo.
+                  const hasPix = !isTableOrder
+                    && orderStatus !== 'rejected'
+                    && orderStatus !== 'cancelled'
+                    && !!payload.session.payment.pixCopyPaste;
+
+                  const timelineEl = isTerminalBad ? null : (
+                    <ol className="mt-6" aria-label="Andamento do pedido">
+                      {orderInfo.steps.map((step, i) => {
+                        const isCompleted = i < orderInfo.currentStepIndex;
+                        const isActive = i === orderInfo.currentStepIndex;
+                        const isDone = isCompleted || isActive;
+                        const isLast = i === orderInfo.steps.length - 1;
+                        return (
+                          <li key={step.key} className={`relative flex gap-3.5 ${isLast ? '' : 'pb-6'}`}>
+                            {!isLast && (
+                              <span
+                                aria-hidden="true"
+                                className={`absolute bottom-0 left-[11px] top-6 w-0.5 ${isCompleted ? 'bg-[var(--zm-brand)]' : 'bg-[var(--zm-line-strong)]'}`}
+                              />
+                            )}
+                            <span className={`relative z-[1] flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 ${
+                              isDone
+                                ? 'border-[var(--zm-brand)] bg-[var(--zm-brand)]'
+                                : 'border-[var(--zm-line-strong)] bg-[var(--zm-surface)]'
+                            }`}>
+                              {isDone && <CheckCircle2 className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
+                            </span>
+                            <div className="flex flex-1 items-center justify-between gap-2">
+                              <span className={`text-[13.5px] ${
+                                isActive
+                                  ? 'font-semibold text-[var(--zm-ink)]'
+                                  : isCompleted
+                                    ? 'font-medium text-[var(--zm-ink)]'
+                                    : 'text-[var(--zm-ink-soft)]'
+                              }`}>
+                                {step.label}
+                              </span>
+                              {isActive && (
+                                <span className="flex-none rounded-full bg-[var(--zm-brand-soft)] px-2.5 py-1 text-[11px] font-bold text-[var(--zm-brand-deep)]">
+                                  Agora
+                                </span>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  );
+
                   return (
                     <>
                       <header className="text-center">
@@ -1126,49 +1178,36 @@ export default function ZeloMenuCartPage() {
                         </p>
                       </header>
 
-                      {!isTerminalBad && (
-                        <ol className="mt-6" aria-label="Andamento do pedido">
-                          {orderInfo.steps.map((step, i) => {
-                            const isCompleted = i < orderInfo.currentStepIndex;
-                            const isActive = i === orderInfo.currentStepIndex;
-                            const isDone = isCompleted || isActive;
-                            const isLast = i === orderInfo.steps.length - 1;
-                            return (
-                              <li key={step.key} className={`relative flex gap-3.5 ${isLast ? '' : 'pb-6'}`}>
-                                {!isLast && (
-                                  <span
-                                    aria-hidden="true"
-                                    className={`absolute bottom-0 left-[11px] top-6 w-0.5 ${isCompleted ? 'bg-[var(--zm-brand)]' : 'bg-[var(--zm-line-strong)]'}`}
-                                  />
-                                )}
-                                <span className={`relative z-[1] flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 ${
-                                  isDone
-                                    ? 'border-[var(--zm-brand)] bg-[var(--zm-brand)]'
-                                    : 'border-[var(--zm-line-strong)] bg-[var(--zm-surface)]'
-                                }`}>
-                                  {isDone && <CheckCircle2 className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
-                                </span>
-                                <div className="flex flex-1 items-center justify-between gap-2">
-                                  <span className={`text-[13.5px] ${
-                                    isActive
-                                      ? 'font-semibold text-[var(--zm-ink)]'
-                                      : isCompleted
-                                        ? 'font-medium text-[var(--zm-ink)]'
-                                        : 'text-[var(--zm-ink-soft)]'
-                                  }`}>
-                                    {step.label}
-                                  </span>
-                                  {isActive && (
-                                    <span className="flex-none rounded-full bg-[var(--zm-brand-soft)] px-2.5 py-1 text-[11px] font-bold text-[var(--zm-brand-deep)]">
-                                      Agora
-                                    </span>
-                                  )}
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ol>
+                      {hasPix && (
+                        <div className="mt-5 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4">
+                          <div className="flex items-center gap-1.5 text-[var(--zm-brand-deep)]">
+                            <QrCode className="h-4 w-4" strokeWidth={1.8} />
+                            <p className="text-[12.5px] font-semibold">Pix Copia e Cola</p>
+                          </div>
+                          <p className="mt-2 text-[22px] font-bold tabular-nums text-[var(--zm-ink)]">
+                            {toBRL(payload.session.pricing.total)}
+                          </p>
+                          <p
+                            ref={pixCodeRef}
+                            className="mt-2 max-h-24 overflow-y-auto break-all rounded-lg bg-[var(--zm-surface-muted)] p-2.5 font-mono text-[11px] leading-snug text-[var(--zm-ink-soft)]"
+                          >
+                            {payload.session.payment.pixCopyPaste}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void copyPixCode(payload.session.payment.pixCopyPaste as string)}
+                            className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] text-[13.5px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
+                          >
+                            <Copy className="h-4 w-4" strokeWidth={2} />
+                            Copiar código Pix
+                          </button>
+                          <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--zm-ink-soft)]">
+                            Cole no app do seu banco, pague e envie o comprovante no WhatsApp da loja.
+                          </p>
+                        </div>
                       )}
+
+                      {!hasPix && timelineEl}
 
                       {!isTerminalBad && (
                         <section className="mt-1 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4 shadow-[0_18px_44px_rgba(38,22,86,0.08)]">
@@ -1225,34 +1264,7 @@ export default function ZeloMenuCartPage() {
                         </section>
                       )}
 
-                      {!isTableOrder && orderStatus !== 'rejected' && orderStatus !== 'cancelled' && payload.session.payment.pixCopyPaste && (
-                        <div className="mt-4 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4">
-                          <div className="flex items-center gap-1.5 text-[var(--zm-brand-deep)]">
-                            <QrCode className="h-4 w-4" strokeWidth={1.8} />
-                            <p className="text-[12.5px] font-semibold">Pix Copia e Cola</p>
-                          </div>
-                          <p className="mt-2 text-[22px] font-bold tabular-nums text-[var(--zm-ink)]">
-                            {toBRL(payload.session.pricing.total)}
-                          </p>
-                          <p
-                            ref={pixCodeRef}
-                            className="mt-2 max-h-24 overflow-y-auto break-all rounded-lg bg-[var(--zm-surface-muted)] p-2.5 font-mono text-[11px] leading-snug text-[var(--zm-ink-soft)]"
-                          >
-                            {payload.session.payment.pixCopyPaste}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => void copyPixCode(payload.session.payment.pixCopyPaste as string)}
-                            className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] text-[13.5px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
-                          >
-                            <Copy className="h-4 w-4" strokeWidth={2} />
-                            Copiar código Pix
-                          </button>
-                          <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--zm-ink-soft)]">
-                            Cole no app do seu banco, pague e envie o comprovante no WhatsApp da loja.
-                          </p>
-                        </div>
-                      )}
+                      {hasPix && timelineEl}
 
                       {!isTerminalBad && nextStepText && (
                         <aside className="mt-4 flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[var(--zm-brand-soft)] to-[var(--zm-surface)] p-4">
