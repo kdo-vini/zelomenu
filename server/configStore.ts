@@ -1,5 +1,8 @@
 import { getServiceSupabase } from './supabaseServer.js';
-import { resolveZeloMenuPublicationCatalogProduct } from '../src/domain/zelomenuPublication.js';
+import {
+  resolveZeloMenuPublicationCatalogProduct,
+  resolveZeloMenuLinkedOptionAvailability,
+} from '../src/domain/zelomenuPublication.js';
 import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication } from '../src/domain/zelomenuPublication.js';
@@ -472,6 +475,10 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
         };
       }
       const overridePrice = link.priceOverride != null ? normalizeNumber(link.priceOverride) : linkedCatalogProduct.price;
+      const linkedOptionAvailable = resolveZeloMenuLinkedOptionAvailability({
+        controlar_estoque: linkedCatalogProduct.stockControlled === true,
+        estoque_atual: linkedCatalogProduct.stockQuantity ?? 0,
+      });
       return {
         ...option,
         linkedProduct: {
@@ -479,7 +486,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
           name: linkedCatalogProduct.name,
           photoUrl: linkedCatalogProduct.photoUrl,
           price: overridePrice,
-          available: linkedCatalogProduct.available,
+          available: linkedOptionAvailable,
         } satisfies ZeloMenuLinkedModifierProduct,
       };
     });

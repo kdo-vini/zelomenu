@@ -161,6 +161,21 @@ export function summarizeZeloMenuPublication(
   return summary;
 }
 
+/**
+ * Whether a product can be used as a modifier-option ingredient inside a
+ * combo (e.g. "Penne" inside "Monte sua Massa"), as opposed to whether it's
+ * listed on its own in the storefront. Deliberately narrower than
+ * `getZeloMenuPublicationStatus`: only real stock-out disables an
+ * ingredient. `visivel_online`/`pausado_manualmente`/`ocultar_no_pdv` are
+ * choices about the product's OWN storefront/PDV listing and must not leak
+ * into whether it still works as someone else's combo ingredient.
+ */
+export function resolveZeloMenuLinkedOptionAvailability(
+  product: Pick<ZeloMenuPublicationCatalogProduct, 'controlar_estoque' | 'estoque_atual'>,
+): boolean {
+  return !(product.controlar_estoque && product.estoque_atual <= 0);
+}
+
 export function resolveZeloMenuPublicationCatalogProduct(
   product: ZeloMenuPublicationCatalogProduct,
 ): ZeloMenuResolvedCatalogProduct {
