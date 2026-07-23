@@ -234,7 +234,7 @@ export function ZeloMenuStorePage({
             ) : (
               <div
                 className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-[16px] font-bold text-white"
-                style={{ background: 'linear-gradient(135deg, #0b9778, #07745c)' }}
+                style={{ background: 'linear-gradient(135deg, var(--zm-brand), var(--zm-brand-deep))' }}
                 aria-hidden="true"
               >
                 {store.business.name ? storeInitials(store.business.name) : '🍴'}

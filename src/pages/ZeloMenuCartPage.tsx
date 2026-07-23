@@ -1641,7 +1641,7 @@ export default function ZeloMenuCartPage() {
                         </span>
                       </div>
                       {payload.session.pricing.discount > 0 && (
-                        <div className="flex items-center justify-between text-[13px] text-green-600">
+                        <div className="flex items-center justify-between text-[13px] text-[var(--color-success)]">
                           <span>Desconto{payload.session.pricing.couponCode ? ` (${payload.session.pricing.couponCode})` : ''}</span>
                           <span className="tabular-nums">-{toBRL(payload.session.pricing.discount)}</span>
                         </div>
