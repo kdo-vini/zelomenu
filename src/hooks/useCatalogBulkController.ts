@@ -6,7 +6,7 @@ import type {
 } from './useCatalog';
 import { getFriendlyErrorMessage } from '../services/errorMessages';
 
-export type BulkPublicationState = 'published' | 'unpublished';
+export type BulkPublicationState = 'published' | 'unpublished' | 'paused' | 'resumed';
 
 export type CatalogBulkAction =
   | { type: 'delete' }
@@ -21,6 +21,7 @@ export type CatalogBulkResult = {
 
 type UseCatalogBulkControllerArgs = {
   visibleProducts: readonly ProdutoRow[];
+  productPublications: Record<number, ZeloMenuProductPublicationRow>;
   deleteProduto: (id: number) => Promise<void>;
   upsertProductPublication: (
     productId: number,
@@ -41,11 +42,13 @@ export type CatalogBulkController = {
   toggle(productId: number): void;
   toggleMany(productIds: Iterable<number>): void;
   toggleVisible(): void;
+  runForProductIds(ids: Iterable<number>, action: CatalogBulkAction, options?: { updateSelection?: boolean }): Promise<CatalogBulkResult>;
   run(action: CatalogBulkAction): Promise<CatalogBulkResult>;
 };
 
 export function useCatalogBulkController({
   visibleProducts,
+  productPublications,
   deleteProduto,
   upsertProductPublication,
 }: UseCatalogBulkControllerArgs): CatalogBulkController {
@@ -117,8 +120,12 @@ export function useCatalogBulkController({
     toggleMany(visibleIds);
   }, [toggleMany, visibleIds]);
 
-  const run = useCallback(async (action: CatalogBulkAction): Promise<CatalogBulkResult> => {
-    const ids: number[] = Array.from(selectedIds);
+  const runForProductIds = useCallback(async (
+    productIds: Iterable<number>,
+    action: CatalogBulkAction,
+    options: { updateSelection?: boolean } = {},
+  ): Promise<CatalogBulkResult> => {
+    const ids: number[] = [...new Set(productIds)];
     if (ids.length === 0) {
       return { total: 0, changed: 0, skipped: 0, failed: [] };
     }
@@ -129,23 +136,37 @@ export function useCatalogBulkController({
         ids.map(async (productId) => {
           if (action.type === 'delete') {
             await deleteProduto(productId);
-            return;
+            return { skipped: false };
+          }
+
+          const current = productPublications[productId];
+          if (
+            !current?.visivel_online
+            || (action.state === 'paused' && current.pausado_manualmente)
+            || (action.state === 'resumed' && !current.pausado_manualmente)
+          ) {
+            return { skipped: true };
           }
 
           const patch: ZeloMenuProductPublicationInput = action.state === 'published'
             ? { visivel_online: true, pausado_manualmente: false }
-            : { visivel_online: false, pausado_manualmente: false };
+            : action.state === 'unpublished'
+              ? { visivel_online: false, pausado_manualmente: false }
+              : { visivel_online: true, pausado_manualmente: action.state === 'paused' };
           await upsertProductPublication(productId, patch);
+          return { skipped: false };
         }),
       );
 
       const failed: Array<{ productId: number; reason: string }> = [];
       const succeededIds: number[] = [];
+      let skipped = 0;
 
       results.forEach((result, index) => {
         const productId = ids[index];
         if (result.status === 'fulfilled') {
-          succeededIds.push(productId);
+          if (result.value.skipped) skipped += 1;
+          else succeededIds.push(productId);
           return;
         }
         failed.push({
@@ -154,19 +175,26 @@ export function useCatalogBulkController({
         });
       });
 
-      setSelectedIds(new Set<number>(failed.map((item) => item.productId)));
-      if (failed.length === 0) setSelectionMode(false);
+      if (options.updateSelection && (action.type === 'delete' || action.type === 'set-publication')) {
+        setSelectedIds(new Set<number>(failed.map((item) => item.productId)));
+        if (failed.length === 0) setSelectionMode(false);
+      }
 
       return {
         total: ids.length,
         changed: succeededIds.length,
-        skipped: 0,
+        skipped,
         failed,
       };
     } finally {
       setBusyAction(null);
     }
-  }, [deleteProduto, selectedIds, upsertProductPublication]);
+  }, [deleteProduto, productPublications, upsertProductPublication]);
+
+  const run = useCallback(
+    (action: CatalogBulkAction) => runForProductIds(selectedIds, action, { updateSelection: true }),
+    [runForProductIds, selectedIds],
+  );
 
   return {
     selectionMode,
@@ -181,6 +209,7 @@ export function useCatalogBulkController({
     toggle,
     toggleMany,
     toggleVisible,
+    runForProductIds,
     run,
   };
 }
