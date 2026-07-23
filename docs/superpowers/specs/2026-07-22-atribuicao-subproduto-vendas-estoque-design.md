@@ -149,24 +149,93 @@ message='PRODUCT_STOCK_EXCEEDED'`) — se o vinculado não tiver estoque
 suficiente no momento do aceite, o aceite falha e o lojista vê o erro, mesmo
 que o pedido já tenha sido confirmado/pago pelo cliente.
 
+**Roteamento pela categoria certa:** cada linha explodida de opção vinculada
+carrega o `id_produto` do vinculado — o `join` com `categorias` pra decidir
+se ela entra no loop de estoque compartilhado ou no loop por produto usa a
+categoria **do produto vinculado** (`produtos.id_categoria` do Penne), nunca
+a categoria do container. É um bug fácil de introduzir (reusar sem querer a
+mesma condição de filtro do container) e silencioso — o vinculado simplesmente
+não decrementaria em nenhum dos dois loops, ou decrementaria nos dois. A
+review do codex deve conferir explicitamente esse ponto.
+
 ---
 
-## 4. Testes
+## 4. Robustez contra dado malformado/legado
+
+`close_zelo_order` e `transition_zelo_order` hoje **nunca leem o conteúdo**
+de `modifiers` — só existe pra exibição. Depois desta mudança, qualquer
+pedido (inclusive pedidos legados migrados no backfill da migration original,
+que inserem `zelo_order_items` sem popular `modifiers`) passa a ter esse
+jsonb parseado toda vez que fecha ou aceita uma venda. Isso é uma regressão
+em potencial: um cast solto (`(opt->>'optionId')::uuid`) que falhe por
+formato inesperado quebra o fechamento de **qualquer** pedido, não só os que
+usam produto vinculado.
+
+Mitigação obrigatória na implementação:
+- Todo cast de `optionId`/`groupId` pra uuid usa uma forma tolerante (ex.:
+  checar `optionId ~ '^[0-9a-f-]{36}$'` antes de castar, ou envolver em
+  `nullif`/bloco que trata falha de cast como "não vinculado" em vez de
+  propagar exceção) — dado ausente ou malformado deve degradar pra "opção
+  clássica, sem linha própria", nunca quebrar o fechamento do pedido inteiro.
+- `coalesce(i.modifiers,'[]'::jsonb)` em todo lugar que itera — a coluna já
+  é `not null default '[]'`, mas não custa blindar contra `null` explícito.
+- Guarda de sanidade em `containerUnitPrice`: se o valor calculado sair
+  negativo (indício de dado inconsistente — preço mudou entre o carrinho e
+  o pedido, ou bug na subtração), **não** gravar uma linha com preço
+  negativo no relatório financeiro. Em vez disso, usar `greatest(...,0)` e
+  registrar o caso via `raise warning` (não `exception` — não deve travar o
+  fechamento por causa disso, só sinalizar a anomalia nos logs do Postgres
+  pra investigação).
+
+---
+
+## 5. Riscos e mitigações (resumo pra quem for revisar)
+
+| Risco | Como aparece | Mitigação |
+|---|---|---|
+| Preço unitário × quantidade duplicados | Linha do vinculado usa `priceDelta * quantity` como preço **e** multiplica a quantidade de novo — dobra o faturamento reportado daquele produto | `preco_unitario_na_venda` é sempre `opt.priceDelta` puro (por unidade); `quantidade` é o único lugar onde `opt.quantity * i.quantity` aparece. Revisor confere essa separação linha a linha. |
+| Estoque roteado pela categoria errada | Vinculado nunca decrementa (fica de fora dos dois loops) ou decrementa em dobro (entra nos dois) | Filtro de categoria compartilhada sempre lido da categoria do **produto vinculado**, nunca do container. Ver seção 3. |
+| Cast de uuid quebra pedidos sem nenhuma relação com o recurso | `close_zelo_order`/`transition_zelo_order` passam a falhar em pedidos comuns por causa de dado legado/malformado em `modifiers` | Cast tolerante, nunca propaga exceção por causa de conteúdo de modificador. Ver seção 4. |
+| Preço negativo no relatório | Arredondamento ou inconsistência de preço no meio do caminho gera `containerUnitPrice < 0` | `greatest(...,0)` + `raise warning` pra investigar depois, sem travar o fechamento. |
+| Sem teste automatizado | Bug de matemática/roteamento só aparece em produção, com dinheiro/estoque real | Script de verificação versionado (seção 6) cobrindo os casos combinados antes de considerar a migration pronta pra aplicar em produção. |
+
+---
+
+## 6. Testes
 
 Não há framework de teste automatizado visível pra funções SQL deste repo
 (`.ai/migrations/*.sql` são aplicadas direto via `supabase db query
---linked`, sem suíte pgTAP). Verificação será manual, via
-`supabase db query --linked`, num pedido de teste real (dados já existentes
-de Bem Servido): criar um pedido com "Monte sua Massa" + massa vinculada +
-opção clássica de brinde, aceitar, fechar, e conferir:
+--linked`, sem suíte pgTAP). Verificação será via um **script de verificação
+versionado** (não só um teste manual ad hoc) — arquivo `.sql` separado,
+guardado junto da migration, que roda dentro de uma transação com
+`rollback` no final (nunca contamina dados reais), simulando cada cenário
+abaixo com um `zelo_orders`/`zelo_order_items` sintético e checando o
+resultado com `assert`/`raise exception` se algo não bater:
 
-- `produtos.estoque_atual` do produto vinculado decrementou a quantidade
-  certa.
-- `vendas_itens` tem 2 linhas para esse item (container com preço reduzido
-  correto, vinculado com nome/preço/quantidade certos).
-- Soma de `preco_unitario_na_venda * quantidade` das linhas geradas bate com
-  `zelo_orders.total` do pedido.
-- Cancelar um pedido já aceito devolve o estoque certo pros dois produtos.
+1. Pedido sem nenhum modificador — resultado idêntico ao comportamento
+   anterior (1 linha, mesmo preço, mesmo estoque).
+2. Grupo `somar` com opção vinculada (ex.: "Adicional bacon" vinculado a um
+   produto Bacon) — 2 linhas, preços corretos, sem duplicar.
+3. Grupo `substituir` (ex.: "Escolha a massa") — container com preço 0,
+   vinculado com o preço cheio.
+4. Substituir + somar no mesmo item (massa vinculada + adicional vinculado
+   junto) — 3 linhas, soma bate com o total do pedido.
+5. Opção vinculada com `permite_quantidade` (ex.: 3x bacon) — quantidade da
+   linha do vinculado multiplicada corretamente, preço unitário não muda.
+6. Produto vinculado cuja categoria compartilha estoque com outros produtos
+   — decremento cai no loop de categoria, não no de produto, e não duplica.
+7. Estoque insuficiente do vinculado — aceite bloqueia com
+   `PRODUCT_STOCK_EXCEEDED`, mesmo com o container tendo estoque de sobra.
+8. Cancelamento pós-aceite — estoque do vinculado e do container voltam
+   certos.
+9. Pedido legado (sem `modifiers` populado, simulando o backfill original)
+   — fecha normalmente, sem erro de cast.
+10. Opção clássica (sem vínculo) misturada com opção vinculada no mesmo
+    grupo — só a vinculada gera linha própria, a clássica permanece
+    embutida no preço do container.
+
+Só depois desse script passar limpo é que a migration é considerada pronta
+pra aplicar no banco compartilhado de produção.
 
 ---
 
