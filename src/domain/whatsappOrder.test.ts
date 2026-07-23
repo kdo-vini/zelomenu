@@ -47,14 +47,21 @@ describe('buildWhatsAppOrderMessage', () => {
 
   it('monta retirada com nome, itens, total e observações', () => {
     const msg = buildWhatsAppOrderMessage(base);
+    expect(msg).toContain('Olá! Segue meu pedido pelo cardápio digital.');
     expect(msg).toContain('Pedido #A1B2C3D4');
     expect(msg).toContain('Cliente: João Silva');
-    expect(msg).toContain('• 2x Coxinha');
-    expect(msg).toContain('• 1x Refrigerante lata');
+    expect(msg).toContain('2x Coxinha —');
+    expect(msg).toContain('1x Refrigerante lata —');
+    expect(msg).toContain('Subtotal:');
     expect(msg).toContain('Total:');
     expect(msg).toContain('Retirada · o quanto antes');
     expect(msg).toContain('Obs.: sem cebola');
     expect(msg).not.toContain('Endereço:');
+    expect(msg).not.toContain('Telefone:');
+    expect(msg).not.toContain('Pagamento:');
+    // footer
+    expect(msg).toContain('zelopdv.com.br');
+    expect(msg).toContain('Sistema Zelo Menu');
   });
 
   it('omite a linha de cliente quando não há nome', () => {
@@ -63,7 +70,7 @@ describe('buildWhatsAppOrderMessage', () => {
   });
 
   it('mostra subtotal + entrega a confirmar quando feeToConfirm', () => {
-    const msg = buildWhatsAppOrderMessage({ ...base, feeToConfirm: true });
+    const msg = buildWhatsAppOrderMessage({ ...base, feeToConfirm: true, isDelivery: true });
     expect(msg).toContain('Subtotal:');
     expect(msg).toContain('entrega a confirmar');
     expect(msg).not.toContain('Total:');
@@ -78,7 +85,40 @@ describe('buildWhatsAppOrderMessage', () => {
       deliveryNeighborhood: 'Centro',
     });
     expect(msg).toContain('Entrega · hoje às 20:00');
+    expect(msg).toContain('Subtotal:');
+    expect(msg).toContain('Total:');
     expect(msg).toContain('Endereço: Rua X, 100, Centro');
+  });
+
+  it('inclui telefone quando informado', () => {
+    const msg = buildWhatsAppOrderMessage({ ...base, customerPhone: '(11) 99999-9999' });
+    expect(msg).toContain('Telefone: (11) 99999-9999');
+  });
+
+  it('inclui forma de pagamento quando informada', () => {
+    const msg = buildWhatsAppOrderMessage({ ...base, paymentMethod: 'Pix' });
+    expect(msg).toContain('Pagamento: Pix');
+  });
+
+  it('mostra entrega + desconto com cupom no detalhamento', () => {
+    const msg = buildWhatsAppOrderMessage({
+      ...base,
+      isDelivery: true,
+      deliveryFee: 6,
+      discount: 4,
+      couponCode: 'CUPOM10',
+      total: 14,
+    });
+    expect(msg).toContain('Subtotal:');
+    expect(msg).toContain('Entrega: R$ 6,00');
+    expect(msg).toContain('Desconto (CUPOM10):');
+    expect(msg).toContain('Total:');
+  });
+
+  it('não mostra entrega nem desconto quando zero', () => {
+    const msg = buildWhatsAppOrderMessage(base);
+    expect(msg).not.toContain('Desconto');
+    expect(msg).not.toContain('Entrega: R$');
   });
 });
 
