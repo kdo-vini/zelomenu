@@ -7,6 +7,7 @@ import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication } from '../src/domain/zelomenuPublication.js';
 import { deriveWeeklyFromLegacy, normalizeWeeklyHours, type WeeklyHours } from '../src/domain/businessHours.js';
+import { PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -60,6 +61,13 @@ export type BusinessConfig = {
   timezone?: string;
   deliveryConfig: DeliveryConfig | null;
   pixReceiptConfig: PixReceiptConfig | null;
+  /**
+   * Chave Pix da loja + tipo declarado, para montar o Pix Copia e Cola do
+   * pedido (`buildPixBrCode`). `null` quando a chave está vazia OU o tipo
+   * ainda não foi declarado (11 dígitos crus são ambíguos entre cpf/celular
+   * — sem o tipo, não geramos nada).
+   */
+  pixPayment: { key: string; keyType: PixKeyType } | null;
   catalogHierarchy: CatalogCategoriaGroup[];
   products: CatalogProduct[];
 };
@@ -72,6 +80,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   weeklyHours: deriveWeeklyFromLegacy(null, null, null),
   deliveryConfig: null,
   pixReceiptConfig: null,
+  pixPayment: null,
   catalogHierarchy: [],
   products: [],
 };
@@ -127,6 +136,16 @@ function normalizePixReceiptConfig(value: unknown): PixReceiptConfig | null {
     fallback: raw.fallback === 'ask_retry' ? 'ask_retry' : 'escalate_human',
     minConfidence: normalizeNumber(raw.minConfidence) || 0.8,
   };
+}
+
+function isPixKeyType(value: unknown): value is PixKeyType {
+  return typeof value === 'string' && (PIX_KEY_TYPES as readonly string[]).includes(value);
+}
+
+function normalizePixPayment(chavePix: unknown, pixKeyType: unknown): { key: string; keyType: PixKeyType } | null {
+  const key = normalizeText(chavePix);
+  if (!key || !isPixKeyType(pixKeyType)) return null;
+  return { key, keyType: pixKeyType };
 }
 
 type CatalogProductWithPlacement = CatalogProduct & {
@@ -327,15 +346,18 @@ function buildCatalogHierarchy(
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
 
-const PERFIL_BASE_COLUMNS = 'user_id, nome_exibicao, endereco, contato, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone';
+// `chave_pix` já existe (compartilhada com o ZeloChat) — sempre selecionável.
+const PERFIL_BASE_COLUMNS = 'user_id, nome_exibicao, endereco, contato, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone, chave_pix';
 
-/** `horario_semanal` é uma coluna nova (ZeloChat-owned). Se ela ainda não existir
- * neste banco, o select falha com 42703 — nesse caso relemos sem ela e caímos no
- * legado, sem quebrar o carregamento do cardápio. */
-function isMissingColumnError(error: { code?: string; message?: string } | null): boolean {
+/** `horario_semanal` e `zelomenu_pix_key_type` são colunas novas. Se alguma
+ * ainda não existir neste banco, o select falha com 42703 — nesse caso
+ * relemos com um conjunto de colunas reduzido e caímos no legado/default,
+ * sem quebrar o carregamento do cardápio. */
+function isMissingColumnError(error: { code?: string; message?: string } | null, columnNames: string[]): boolean {
   if (!error) return false;
   if (error.code === '42703') return true;
-  return typeof error.message === 'string' && error.message.includes('horario_semanal');
+  const message = error.message ?? '';
+  return columnNames.some((name) => message.includes(name));
 }
 
 export async function loadCatalogFromDb(empresaId: string): Promise<void> {
@@ -343,10 +365,17 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
 
   let perfilRes = await supabase
     .from('empresa_perfil')
-    .select(`${PERFIL_BASE_COLUMNS}, horario_semanal`)
+    .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_pix_key_type`)
     .eq('id', empresaId)
     .maybeSingle();
-  if (perfilRes.error && isMissingColumnError(perfilRes.error)) {
+  if (perfilRes.error && isMissingColumnError(perfilRes.error, ['zelomenu_pix_key_type'])) {
+    perfilRes = await supabase
+      .from('empresa_perfil')
+      .select(`${PERFIL_BASE_COLUMNS}, horario_semanal`)
+      .eq('id', empresaId)
+      .maybeSingle();
+  }
+  if (perfilRes.error && isMissingColumnError(perfilRes.error, ['horario_semanal'])) {
     perfilRes = await supabase
       .from('empresa_perfil')
       .select(PERFIL_BASE_COLUMNS)
@@ -369,6 +398,8 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     dias_fechamento?: unknown;
     horario_semanal?: unknown;
     timezone?: string | null;
+    chave_pix?: string | null;
+    zelomenu_pix_key_type?: string | null;
   };
 
   const userId = normalizeText(row.user_id);
@@ -535,6 +566,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     timezone: normalizeText(row.timezone) || undefined,
     deliveryConfig: normalizeDeliveryConfig(row.delivery_config),
     pixReceiptConfig: normalizePixReceiptConfig(row.pix_receipt_config),
+    pixPayment: normalizePixPayment(row.chave_pix, row.zelomenu_pix_key_type),
     catalogHierarchy,
     products,
   });

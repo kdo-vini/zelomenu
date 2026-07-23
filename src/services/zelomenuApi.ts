@@ -91,6 +91,10 @@ export type ZeloMenuCartSessionPayload = {
     declaredMethod: string | null;
     pixReceiptRequired: boolean;
     pixReceiptApproved: boolean;
+    /** BR Code (Pix Copia e Cola) já com o valor do pedido embutido.
+     * `null` quando a loja não tem chave Pix configurada, o método declarado
+     * não é Pix, ou o total do pedido é zero. */
+    pixCopyPaste: string | null;
   };
   metadata: Record<string, unknown>;
   lastRevalidatedAt: string | null;

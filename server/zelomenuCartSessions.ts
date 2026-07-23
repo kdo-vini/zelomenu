@@ -22,6 +22,7 @@ import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDeliver
 import { normalizeCouponCode, validateCouponRule, applyCoupon } from '../src/domain/zelomenuCoupon.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { toWhatsAppNumber } from '../src/domain/whatsappOrder.js';
+import { buildPixBrCode, isValidPixKeyForType, PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
 import {
   businessDayLabel,
@@ -76,6 +77,51 @@ function isPixReceiptConfigActive(config: ReturnType<typeof getConfig>['pixRecei
 function isPixPaymentMethod(value: string | null | undefined): boolean {
   if (!value) return false;
   return /\bpix\b/i.test(value.normalize('NFD').replace(/[̀-ͯ]/g, ''));
+}
+
+function isPixKeyType(value: unknown): value is PixKeyType {
+  return typeof value === 'string' && (PIX_KEY_TYPES as readonly string[]).includes(value);
+}
+
+/** Best-effort: extrai algo parecido com "cidade" do endereço livre da loja.
+ * O campo 60 do BR Code é só informativo para o app do banco — não quebra o
+ * pagamento se vier impreciso, então não vale a pena um parser sofisticado. */
+function deriveMerchantCityFromAddress(address: string): string {
+  const trimmed = (address ?? '').trim();
+  if (!trimmed) return '';
+  const parts = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+  const last = parts[parts.length - 1] ?? '';
+  return last.replace(/[-/]\s*[A-Za-z]{2}\s*$/, '').trim();
+}
+
+/**
+ * Monta o Pix Copia e Cola do pedido, usando o total TRAVADO da sessão
+ * (nunca a estimativa/preview). `null` sempre que faltar qualquer
+ * pré-requisito (sem chave, método declarado não é Pix, total <= 0) — o
+ * passo simplesmente some da tela, sem afetar o resto do fluxo.
+ */
+function computePixCopyPaste(
+  config: ReturnType<typeof getConfig>,
+  declaredMethod: string | null,
+  total: number,
+): string | null {
+  if (!config.pixPayment) return null;
+  if (!isPixPaymentMethod(declaredMethod)) return null;
+  if (!(total > 0)) return null;
+  try {
+    return buildPixBrCode({
+      key: config.pixPayment.key,
+      keyType: config.pixPayment.keyType,
+      merchantName: config.name,
+      merchantCity: deriveMerchantCityFromAddress(config.address),
+      amount: total,
+    });
+  } catch (error) {
+    // Nunca deixamos uma chave/valor malformado derrubar a tela do carrinho —
+    // o passo de Pix simplesmente não aparece.
+    console.warn('[ZeloMenu] falha ao montar o Pix Copia e Cola:', error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 // ─── Pricing ───────────────────────────────────────────────────────────────────
@@ -213,6 +259,13 @@ const CART_SESSION_COLUMNS = `
 
 // ─── Session types ─────────────────────────────────────────────────────────────
 
+/**
+ * `payment` do payload público ganha `pixCopyPaste`, calculado on-the-fly em
+ * `buildPublicResponse` (nunca persistido em `payment_snapshot` — depende da
+ * chave Pix atual da loja, que pode mudar depois que o pedido foi salvo).
+ */
+type PublicCartPaymentSnapshot = ZeloMenuPaymentSnapshot & { pixCopyPaste: string | null };
+
 type PublicCartSession = {
   id: string;
   orderingId: string;
@@ -223,7 +276,7 @@ type PublicCartSession = {
   cart: ZeloMenuCartSnapshot;
   fulfillment: ZeloMenuFulfillmentSnapshot;
   pricing: ZeloMenuPricingSnapshot;
-  payment: ZeloMenuPaymentSnapshot;
+  payment: PublicCartPaymentSnapshot;
   metadata: Record<string, unknown>;
   lastRevalidatedAt: string | null;
   lastRevalidation: ZeloMenuCartRevalidation | null;
@@ -294,18 +347,25 @@ type ZeloMenuProfileRow = {
   zelomenu_recommendations_enabled?: boolean;
   zelomenu_recommendation_product_ids?: unknown;
   zelomenu_category_suggestions?: unknown;
+  chave_pix?: string | null;
+  zelomenu_pix_key_type?: string | null;
 };
 
+// `chave_pix` já existe (compartilhada com o ZeloChat) — entra direto no core.
 const ZELOMENU_PROFILE_CORE_COLUMNS =
-  'logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_category_order';
+  'logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_category_order, chave_pix';
 const ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS =
   'zelomenu_recommendations_enabled, zelomenu_recommendation_product_ids';
 const ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS =
   'zelomenu_category_suggestions';
+// `zelomenu_pix_key_type` é a coluna nova desta feature — ainda pode não
+// existir num banco sem a migration aplicada, por isso fica no grupo
+// tolerante a coluna ausente (mesmo tratamento das colunas de recomendação).
+const ZELOMENU_PROFILE_PIX_COLUMNS = 'zelomenu_pix_key_type';
 const ZELOMENU_PROFILE_ALL_COLUMNS =
-  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}`;
+  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}`;
 
-function isMissingZeloMenuRecommendationColumn(
+function isMissingZeloMenuOptionalColumn(
   error: { code?: string; message?: string } | null,
 ): boolean {
   if (!error) return false;
@@ -313,7 +373,8 @@ function isMissingZeloMenuRecommendationColumn(
   const message = error.message ?? '';
   return message.includes('zelomenu_recommendations_enabled')
     || message.includes('zelomenu_recommendation_product_ids')
-    || message.includes('zelomenu_category_suggestions');
+    || message.includes('zelomenu_category_suggestions')
+    || message.includes('zelomenu_pix_key_type');
 }
 
 /**
@@ -331,11 +392,11 @@ async function loadZeloMenuProfile(empresaId: string): Promise<ZeloMenuProfileRo
   if (!profileResult.error) {
     return (profileResult.data as ZeloMenuProfileRow | null) ?? {};
   }
-  if (!isMissingZeloMenuRecommendationColumn(profileResult.error)) {
+  if (!isMissingZeloMenuOptionalColumn(profileResult.error)) {
     throw profileResult.error;
   }
 
-  console.warn('[ZeloMenu] recommendation columns are not available yet; using defaults until the migration is applied.');
+  console.warn('[ZeloMenu] recommendation/pix columns are not available yet; using defaults until the migration is applied.');
   const coreResult = await supabase
     .from('empresa_perfil')
     .select(ZELOMENU_PROFILE_CORE_COLUMNS)
@@ -526,7 +587,9 @@ function mapSessionRow(row: SessionRow): PublicCartSession {
     cart: parseCartSnapshot(row.cart_snapshot),
     fulfillment: parseFulfillmentSnapshot(row.fulfillment_snapshot),
     pricing: parsePricingSnapshot(row.pricing_snapshot),
-    payment: parsePaymentSnapshot(row.payment_snapshot),
+    // pixCopyPaste é preenchido depois, em buildPublicResponse, quando o
+    // config (chave Pix atual) já foi carregado.
+    payment: { ...parsePaymentSnapshot(row.payment_snapshot), pixCopyPaste: null },
     metadata: parseMetadata(row.metadata),
     lastRevalidatedAt: row.last_revalidated_at,
     lastRevalidation: parseRevalidation(row.last_revalidation),
@@ -971,6 +1034,10 @@ async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenR
   session.lastRevalidatedAt = revalidation.checkedAt;
   session.lastRevalidation = revalidation;
   session.updatedAt = revalidation.checkedAt;
+  session.payment = {
+    ...session.payment,
+    pixCopyPaste: computePixCopyPaste(config, session.payment.declaredMethod, session.pricing.total),
+  };
 
   const publicMetadata: Record<string, unknown> = {};
   if (session.context === 'public_order' && typeof session.metadata.slug === 'string') {
@@ -1100,6 +1167,10 @@ export type ZeloMenuStoreSettings = {
   categoryOrder: string[];
   availableProducts: Array<{ id: number; name: string; categoryName: string }>;
   availableCategories: string[];
+  /** Chave Pix da loja (mesma `empresa_perfil.chave_pix` editada pelo ZeloChat). */
+  pixKey: string | null;
+  /** `null` quando a chave ainda não tem tipo declarado (ambíguo: cpf x celular). */
+  pixKeyType: PixKeyType | null;
 };
 
 export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
@@ -1116,6 +1187,9 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     for (const sub of cat.subcategorias) for (const p of sub.produtos) if (p.id != null) availableProducts.push({ id: p.id, name: p.name, categoryName: cat.nome });
   }
 
+  const rawPixKeyType = perfil?.zelomenu_pix_key_type;
+  const pixKeyType = isPixKeyType(rawPixKeyType) ? rawPixKeyType : null;
+
   return {
     logoUrl: perfil?.logo_url ?? null,
     companyName: config.name,
@@ -1131,12 +1205,14 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     categoryOrder: Array.isArray(perfil?.zelomenu_category_order) ? (perfil.zelomenu_category_order as string[]) : [],
     availableProducts,
     availableCategories: catalog.map((c) => c.nome),
+    pixKey: sanitizeText(perfil?.chave_pix, 200),
+    pixKeyType,
   };
 }
 
 export async function updateZeloMenuStoreSettings(
   empresaId: string,
-  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder'>>,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType'>>,
 ): Promise<void> {
   const coreUpdate: Record<string, unknown> = {};
   const recommendationUpdate: Record<string, unknown> = {};
@@ -1148,19 +1224,42 @@ export async function updateZeloMenuStoreSettings(
   if ('recommendationProductIds' in patch) recommendationUpdate.zelomenu_recommendation_product_ids = patch.recommendationProductIds;
   if ('categorySuggestions' in patch) recommendationUpdate.zelomenu_category_suggestions = patch.categorySuggestions;
 
+  // Chave Pix + tipo são salvos juntos (o admin manda os dois no mesmo save do
+  // formulário). Chave vazia limpa a chave e o tipo. Chave não-vazia exige um
+  // tipo válido para ELA — é o que resolve a ambiguidade dos 11 dígitos crus
+  // (cpf x celular) e evita gravar um BR Code que o banco vai rejeitar.
+  if ('pixKey' in patch || 'pixKeyType' in patch) {
+    const rawKey = typeof patch.pixKey === 'string' ? patch.pixKey.trim() : '';
+    const keyType = patch.pixKeyType ?? null;
+    if (!rawKey) {
+      coreUpdate.chave_pix = null;
+      recommendationUpdate.zelomenu_pix_key_type = null;
+    } else {
+      if (!keyType || !isValidPixKeyForType(rawKey, keyType)) {
+        throw new Error('PIX_KEY_INVALID');
+      }
+      // Grava como o merchant digitou (só trim) — NÃO normalizado. `chave_pix`
+      // é compartilhada com o ZeloChat (hoje com 11 dígitos crus); reformatar
+      // pra "+5511..." mudaria o dado que o ZeloChat lê/escreve. Desnecessário
+      // de qualquer forma: buildPixBrCode normaliza no momento de montar o código.
+      coreUpdate.chave_pix = rawKey;
+      recommendationUpdate.zelomenu_pix_key_type = keyType;
+    }
+  }
+
   const supabase = getServiceSupabase();
   const update = { ...coreUpdate, ...recommendationUpdate };
   if (Object.keys(update).length === 0) return;
 
   const { error } = await supabase.from('empresa_perfil').update(update).eq('id', empresaId);
   if (!error) return;
-  if (!isMissingZeloMenuRecommendationColumn(error)) throw error;
+  if (!isMissingZeloMenuOptionalColumn(error)) throw error;
 
   if (Object.keys(coreUpdate).length > 0) {
     const { error: coreError } = await supabase.from('empresa_perfil').update(coreUpdate).eq('id', empresaId);
     if (coreError) throw coreError;
   }
-  console.warn('[ZeloMenu] recommendation settings were not persisted because their migration is not applied yet.');
+  console.warn('[ZeloMenu] recommendation/pix-type settings were not persisted because their migration is not applied yet.');
 }
 
 export async function openPublicOrderCartSession(input: {

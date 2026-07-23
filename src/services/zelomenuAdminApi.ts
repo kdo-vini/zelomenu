@@ -6,8 +6,11 @@
 // the SPA and the API from the same origin, so relative paths work everywhere.
 
 import { supabase } from './supabaseClient';
+import type { PixKeyType } from '../domain/pixBrCode';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+export type { PixKeyType };
 
 export type ZeloMenuStoreSettings = {
   logoUrl: string | null;
@@ -22,6 +25,8 @@ export type ZeloMenuStoreSettings = {
   categoryOrder: string[];
   availableProducts: Array<{ id: number; name: string; categoryName: string }>;
   availableCategories: string[];
+  pixKey: string | null;
+  pixKeyType: PixKeyType | null;
 };
 
 export type ZeloMenuSettingsPatch = {
@@ -32,6 +37,8 @@ export type ZeloMenuSettingsPatch = {
   recommendationProductIds?: number[];
   categorySuggestions?: Record<string, number[]>;
   categoryOrder?: string[];
+  pixKey?: string | null;
+  pixKeyType?: PixKeyType | null;
 };
 
 // ─── Auth header ───────────────────────────────────────────────────────────────
@@ -58,6 +65,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   COUPON_INVALID_CODE: 'Código inválido. Use letras, números e hífen (3 a 30 caracteres).',
   COUPON_INVALID_DISCOUNT_VALUE: 'Valor de desconto inválido para o tipo escolhido.',
   COUPON_NOT_FOUND: 'Cupom não encontrado.',
+  PIX_KEY_INVALID: 'Chave Pix inválida para o tipo selecionado.',
 };
 
 // Parse a Response into JSON, throwing a friendly Error (mapped where possible)

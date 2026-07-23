@@ -7,6 +7,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronLeft,
+  Copy,
   CreditCard,
   ImageIcon,
   Loader2,
@@ -355,6 +356,7 @@ export default function ZeloMenuCartPage() {
   const loadRequestRef = useRef(0);
   const [recModalProduct, setRecModalProduct] = useState<ZeloMenuCatalogProduct | null>(null);
   const [recModalSelections, setRecModalSelections] = useState<Record<string, string[]>>({});
+  const pixCodeRef = useRef<HTMLParagraphElement>(null);
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
     const requestId = ++loadRequestRef.current;
@@ -867,6 +869,28 @@ export default function ZeloMenuCartPage() {
     return <Wallet className="h-4 w-4" strokeWidth={1.8} />;
   };
 
+  const copyPixCode = async (code: string) => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard indisponível');
+      await navigator.clipboard.writeText(code);
+      toast.success('Código Pix copiado!');
+    } catch {
+      // Fallback: seleciona o texto para o cliente copiar manualmente
+      // (clipboard API pode estar indisponível em contexto não-seguro/navegador antigo).
+      const el = pixCodeRef.current;
+      const selection = window.getSelection?.();
+      if (el && selection) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        toast.info('Não consegui copiar automaticamente. O código já está selecionado — copie manualmente.');
+      } else {
+        toast.error('Não consegui copiar o código Pix.');
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div className="zelomenu-theme min-h-screen bg-[var(--zm-canvas)] text-[var(--zm-ink)]">
@@ -1060,6 +1084,34 @@ export default function ZeloMenuCartPage() {
                   </div>
                   {!isTableOrder && <p className="mt-1.5 text-[12px] text-[var(--zm-ink-soft)]">{summaryMeta}</p>}
                 </div>
+                {!isTableOrder && orderStatus !== 'rejected' && orderStatus !== 'cancelled' && payload.session.payment.pixCopyPaste && (
+                  <div className="mt-4 w-full max-w-[300px] rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4 text-left">
+                    <div className="flex items-center gap-1.5 text-[var(--zm-brand-deep)]">
+                      <QrCode className="h-4 w-4" strokeWidth={1.8} />
+                      <p className="text-[12.5px] font-semibold">Pix Copia e Cola</p>
+                    </div>
+                    <p className="mt-2 text-[22px] font-bold tabular-nums text-[var(--zm-ink)]">
+                      {toBRL(payload.session.pricing.total)}
+                    </p>
+                    <p
+                      ref={pixCodeRef}
+                      className="mt-2 max-h-24 overflow-y-auto break-all rounded-lg bg-[var(--zm-surface-muted)] p-2.5 font-mono text-[11px] leading-snug text-[var(--zm-ink-soft)]"
+                    >
+                      {payload.session.payment.pixCopyPaste}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void copyPixCode(payload.session.payment.pixCopyPaste as string)}
+                      className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] text-[13.5px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
+                    >
+                      <Copy className="h-4 w-4" strokeWidth={2} />
+                      Copiar código Pix
+                    </button>
+                    <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--zm-ink-soft)]">
+                      Cole no app do seu banco, pague e envie o comprovante no WhatsApp da loja.
+                    </p>
+                  </div>
+                )}
                 <span className="mt-5 inline-flex items-center gap-2 rounded-full bg-[var(--zm-brand-soft)] px-3.5 py-2 text-[12px] font-semibold text-[var(--zm-brand-deep)]">
                   <MessageCircle className="h-3.5 w-3.5" strokeWidth={2} />
                   {isTableOrder ? 'Aguarde o garçom' : 'Aguarde o contato da loja'}
@@ -1074,6 +1126,7 @@ export default function ZeloMenuCartPage() {
                         buildWhatsAppOrderMessage({
                           orderId: payload?.session.orderingId ?? '',
                           customerName: draft.customerName || null,
+                          customerPhone: draft.customerPhone || null,
                           items: estimated.items.map((item) => ({
                             name: formatModifierAwareCartItem(item),
                             quantity: item.quantity,
@@ -1081,7 +1134,11 @@ export default function ZeloMenuCartPage() {
                           })),
                           subtotal: estimated.subtotal,
                           total: estimated.total,
+                          deliveryFee: estimated.deliveryFee,
                           feeToConfirm,
+                          discount: payload.session.pricing.discount,
+                          couponCode: payload.session.pricing.couponCode,
+                          paymentMethod: draft.paymentMethod || null,
                           isDelivery,
                           whenLabel,
                           deliveryAddress: isDelivery ? (draft.deliveryAddress || null) : null,
