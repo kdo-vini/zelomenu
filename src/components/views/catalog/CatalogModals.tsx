@@ -503,6 +503,7 @@ export function ProductPublicationModal({
   const [ordem, setOrdem] = useState('0');
   const [groupsDraft, setGroupsDraft] = useState<ZeloMenuModifierGroupDraft[]>([]);
   const [groupsDirty, setGroupsDirty] = useState(false);
+  const [fieldsDirty, setFieldsDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [err, setErr] = useState<string | null>(null);
   const [aiLoadingDesc, setAiLoadingDesc] = useState(false);
@@ -532,6 +533,7 @@ export function ProductPublicationModal({
     setOrdem(String(initial?.ordem ?? 0));
     setGroupsDraft(toModifierDrafts(modifierGroups, modifierOptionProducts));
     setGroupsDirty(false);
+    setFieldsDirty(false);
     setSaveStatus('idle');
     setErr(null);
     setAiLoadingDesc(false);
@@ -559,17 +561,6 @@ export function ProductPublicationModal({
     if (!product) return Promise.resolve(null);
     return enqueueSave(() => onSavePublication(product.id, patch));
   }, [enqueueSave, onSavePublication, product]);
-
-  useEffect(() => {
-    if (!open || !product || hydratedProductRef.current !== product.id) return;
-    const timer = window.setTimeout(() => {
-      void savePublication({
-        nome_publico: nomePublico,
-        descricao_publica: descricaoPublica,
-      }).catch(() => undefined);
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [descricaoPublica, nomePublico, open, product, savePublication]);
 
   if (!open || !product) return null;
 
@@ -608,6 +599,7 @@ export function ProductPublicationModal({
         await enqueueSave(() => onSaveModifierGroups(productId, groupsDraft));
         setGroupsDirty(false);
       }
+      setFieldsDirty(false);
       return true;
     } catch {
       return false;
@@ -664,6 +656,10 @@ export function ProductPublicationModal({
         }}
         onPointerUp={(event) => {
           swipeRef.current.dragging = false;
+          if (swipeRef.current.suppressed) {
+            cardX.set(0);
+            return;
+          }
           const deltaX = event.clientX - swipeRef.current.startX;
           const velocity = Math.abs(event.movementX);
           if (Math.abs(deltaX) > 70 || velocity > 400) {
@@ -693,7 +689,7 @@ export function ProductPublicationModal({
             <ChevronLeft className="h-4 w-4" />
             <span className="hidden sm:inline">Anterior</span>
           </button>
-          <SaveIndicator status={saveStatus} />
+          <SaveIndicator status={saveStatus} dirty={fieldsDirty || groupsDirty} />
           <button
             type="button"
             onClick={() => void navigateTo(nextProduct)}
@@ -715,10 +711,7 @@ export function ProductPublicationModal({
                 onChange={(checked) => {
                   setVisivelOnline(checked);
                   if (!checked) setPausado(false);
-                  void savePublication({
-                    visivel_online: checked,
-                    pausado_manualmente: checked ? pausado : false,
-                  }).catch(() => undefined);
+                  setFieldsDirty(true);
                 }}
               />
               <ToggleCard
@@ -728,7 +721,7 @@ export function ProductPublicationModal({
                 description="Mantém configurado, mas esconde por enquanto."
                 onChange={(checked) => {
                   setPausado(checked);
-                  void savePublication({ pausado_manualmente: checked }).catch(() => undefined);
+                  setFieldsDirty(true);
                 }}
               />
             </div>
@@ -737,7 +730,10 @@ export function ProductPublicationModal({
               <label className={LABEL_CLS}>Nome público</label>
               <input
                 value={nomePublico}
-                onChange={(event) => setNomePublico(event.target.value)}
+                onChange={(event) => {
+                  setNomePublico(event.target.value);
+                  setFieldsDirty(true);
+                }}
                 placeholder={product.nome}
                 className={INPUT_CLS}
               />
@@ -754,6 +750,7 @@ export function ProductPublicationModal({
                     import('../../../services/zelomenuAdminApi').then((m) =>
                       m.generateZeloMenuProductDescription(name).then((t) => {
                         setDescricaoPublica(t);
+                        setFieldsDirty(true);
                         setAiLoadingDesc(false);
                       }).catch(() => setAiLoadingDesc(false)),
                     );
@@ -771,7 +768,10 @@ export function ProductPublicationModal({
               </div>
               <textarea
                 value={descricaoPublica}
-                onChange={(event) => setDescricaoPublica(event.target.value)}
+                onChange={(event) => {
+                  setDescricaoPublica(event.target.value);
+                  setFieldsDirty(true);
+                }}
                 placeholder="Ingredientes, tamanho ou detalhe importante para o cliente."
                 rows={3}
                 className={`${INPUT_CLS} min-h-24 resize-y`}
@@ -787,12 +787,12 @@ export function ProductPublicationModal({
                 onChange={async (file) => {
                   const uploadedUrl = await enqueueSave(() => uploadImage(product.id, file, currentPhotoUrl));
                   setFotoUrl(uploadedUrl);
-                  await savePublication({ foto_url: uploadedUrl });
+                  setFieldsDirty(true);
                 }}
                 onRemove={async () => {
                   const previous = currentPhotoUrl;
                   setFotoUrl('');
-                  await savePublication({ foto_url: null });
+                  setFieldsDirty(true);
                   if (previous) await deleteImage(previous).catch(() => undefined);
                 }}
               />
@@ -805,14 +805,9 @@ export function ProductPublicationModal({
               <label className={LABEL_CLS}>Link externo da foto</label>
               <input
                 value={fotoUrl}
-                onChange={(event) => setFotoUrl(event.target.value)}
-                onBlur={() => {
-                  const trimmed = fotoUrl.trim();
-                  if (!trimmed || /^https:\/\//i.test(trimmed)) {
-                    void savePublication({ foto_url: trimmed || null }).catch(() => undefined);
-                  } else {
-                    setErr('Use um link de foto começando com https://.');
-                  }
+                onChange={(event) => {
+                  setFotoUrl(event.target.value);
+                  setFieldsDirty(true);
                 }}
                 placeholder="https://..."
                 className={INPUT_CLS}
@@ -826,12 +821,9 @@ export function ProductPublicationModal({
                 min={0}
                 step={1}
                 value={ordem}
-                onChange={(event) => setOrdem(event.target.value)}
-                onBlur={() => {
-                  const parsed = Number.parseInt(ordem, 10);
-                  if (Number.isFinite(parsed) && parsed >= 0) {
-                    void savePublication({ ordem: parsed }).catch(() => undefined);
-                  }
+                onChange={(event) => {
+                  setOrdem(event.target.value);
+                  setFieldsDirty(true);
                 }}
                 className={INPUT_CLS}
               />
@@ -853,7 +845,7 @@ export function ProductPublicationModal({
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-[var(--color-ink)]">Adicionais e variações</p>
-              <p className="text-xs text-[var(--color-ink-muted)]">Salvos ao concluir ou trocar de produto.</p>
+              <p className="text-xs text-[var(--color-ink-muted)]">Salvos ao clicar em "Salvar item", concluir ou trocar de produto.</p>
             </div>
             <button
               type="button"
@@ -889,15 +881,25 @@ export function ProductPublicationModal({
 
         {err && <p className="text-xs text-[var(--color-alert)]">{err}</p>}
         <div className="sticky bottom-0 -mx-5 -mb-5 flex items-center justify-between gap-3 border-t border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4">
-          <SaveIndicator status={saveStatus} />
-          <button
-            type="button"
-            onClick={() => void finish(onClose)}
-            disabled={saveStatus === 'saving'}
-            className="min-h-[44px] rounded-xl bg-[var(--color-brand)] px-6 text-sm font-semibold text-white hover:bg-[var(--color-brand-deep)] disabled:opacity-50"
-          >
-            Concluir
-          </button>
+          <SaveIndicator status={saveStatus} dirty={fieldsDirty || groupsDirty} />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void flushAll()}
+              disabled={saveStatus === 'saving' || (!fieldsDirty && !groupsDirty)}
+              className="min-h-[44px] rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-white disabled:opacity-40"
+            >
+              Salvar item
+            </button>
+            <button
+              type="button"
+              onClick={() => void finish(onClose)}
+              disabled={saveStatus === 'saving'}
+              className="min-h-[44px] rounded-xl bg-[var(--color-brand)] px-6 text-sm font-semibold text-white hover:bg-[var(--color-brand-deep)] disabled:opacity-50"
+            >
+              Concluir
+            </button>
+          </div>
         </div>
       </motion.div>
       </div>
@@ -935,17 +937,20 @@ function toModifierDrafts(
   }));
 }
 
-function SaveIndicator({ status }: { status: 'idle' | 'saving' | 'saved' | 'error' }) {
+function SaveIndicator({ status, dirty }: { status: 'idle' | 'saving' | 'saved' | 'error'; dirty: boolean }) {
   if (status === 'saving') {
     return <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-ink-muted)]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Salvando…</span>;
-  }
-  if (status === 'saved') {
-    return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-brand-deep)]"><Check className="h-3.5 w-3.5" /> Salvo</span>;
   }
   if (status === 'error') {
     return <span className="text-xs font-semibold text-[var(--color-alert)]">Não salvo</span>;
   }
-  return <span className="text-xs text-[var(--color-ink-faint)]">Salvamento automático</span>;
+  if (dirty) {
+    return <span className="text-xs font-semibold text-[var(--color-ink-soft)]">Alterações não salvas</span>;
+  }
+  if (status === 'saved') {
+    return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-brand-deep)]"><Check className="h-3.5 w-3.5" /> Salvo</span>;
+  }
+  return null;
 }
 
 function ToggleCard({
