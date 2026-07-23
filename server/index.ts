@@ -404,18 +404,39 @@ const runtimeEnv = {
 };
 const envScript = `<script>window.__ENV__ = ${JSON.stringify(runtimeEnv)};</script>`;
 
-let cachedHtml: string | null = null;
+// `index.html` ships end-user copy (link previews for `/{slug}` etc. — the
+// links actually shared with customers). `/admin` is the owner-only config
+// panel and gets its own title/description swapped in server-side, since the
+// SPA has a single static index.html and WhatsApp/social crawlers don't run JS.
+const ADMIN_TITLE = 'ZeloMenu — Configuração do Cardápio';
+const ADMIN_DESCRIPTION = 'Painel de configuração do cardápio ZeloMenu.';
 
-function getIndexHtml(): string {
-  if (cachedHtml) return cachedHtml;
-  const html = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
-  cachedHtml = html.replace('</head>', `${envScript}\n  </head>`);
-  return cachedHtml;
+let cachedDefaultHtml: string | null = null;
+let cachedAdminHtml: string | null = null;
+
+function withHeadTags(html: string, title: string, description: string): string {
+  return html
+    .replace(/<title>.*?<\/title>/s, `<title>${title}</title>`)
+    .replace(/<meta name="description" content=".*?"\s*\/?>/s, `<meta name="description" content="${description}" />`);
+}
+
+function getIndexHtml(isAdmin: boolean): string {
+  if (isAdmin) {
+    if (cachedAdminHtml) return cachedAdminHtml;
+    const raw = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
+    cachedAdminHtml = withHeadTags(raw, ADMIN_TITLE, ADMIN_DESCRIPTION).replace('</head>', `${envScript}\n  </head>`);
+    return cachedAdminHtml;
+  }
+  if (cachedDefaultHtml) return cachedDefaultHtml;
+  const raw = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
+  cachedDefaultHtml = raw.replace('</head>', `${envScript}\n  </head>`);
+  return cachedDefaultHtml;
 }
 
 // SPA fallback — any non-API request returns index.html with runtime env
-app.get('*', (_req, res) => {
-  res.type('html').send(getIndexHtml());
+app.get('*', (req, res) => {
+  const isAdmin = req.path === '/admin' || req.path.startsWith('/admin/');
+  res.type('html').send(getIndexHtml(isAdmin));
 });
 
 app.listen(PORT, () => {
