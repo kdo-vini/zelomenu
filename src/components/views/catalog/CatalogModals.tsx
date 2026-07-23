@@ -618,7 +618,7 @@ export function ProductPublicationModal({
   return (
     <ModalShell
       title={product.nome}
-      subtitle={products.length > 1 ? `Produto ${productIndex + 1} de ${products.length} · deslize para navegar` : 'Publicação no ZeloMenu'}
+      subtitle={products.length > 1 ? `Produto ${productIndex + 1} de ${products.length} · deslize para navegar` : 'Visibilidade no cardápio'}
       onClose={() => void finish(onClose)}
       wide
     >
@@ -703,27 +703,30 @@ export function ProductPublicationModal({
 
         <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_260px]">
           <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <ToggleCard
-                checked={visivelOnline}
-                title="Publicado no ZeloMenu"
-                description="Aparece no link quando estiver disponível."
-                onChange={(checked) => {
-                  setVisivelOnline(checked);
-                  if (!checked) setPausado(false);
-                  setFieldsDirty(true);
-                }}
-              />
-              <ToggleCard
-                checked={pausado}
-                disabled={!visivelOnline}
-                title="Pausar temporariamente"
-                description="Mantém configurado, mas esconde por enquanto."
-                onChange={(checked) => {
-                  setPausado(checked);
-                  setFieldsDirty(true);
-                }}
-              />
+            <div className="sticky top-0 z-10 bg-[var(--color-surface)] -mx-5 px-5 pb-4 border-b border-[var(--color-line)] mb-4">
+              <p className="mb-2 text-[13px] font-bold text-[var(--color-ink)]">Visibilidade</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <ToggleCard
+                  checked={visivelOnline}
+                  title="Publicado no cardápio"
+                  description="Aparece no link quando estiver disponível."
+                  onChange={(checked) => {
+                    setVisivelOnline(checked);
+                    if (!checked) setPausado(false);
+                    setFieldsDirty(true);
+                  }}
+                />
+                <ToggleCard
+                  checked={pausado}
+                  disabled={!visivelOnline}
+                  title="Pausar temporariamente"
+                  description="Mantém configurado, mas esconde por enquanto."
+                  onChange={(checked) => {
+                    setPausado(checked);
+                    setFieldsDirty(true);
+                  }}
+                />
+              </div>
             </div>
 
             <div>

@@ -20,6 +20,8 @@ import {
   X,
 } from 'lucide-react';
 import { SortableList } from '../zelomenu/SortableList';
+import { getFriendlyErrorMessage } from '../../services/errorMessages';
+import { ConfirmModal } from '../ConfirmModal';
 import type {
   Categoria,
   ProdutoRow,
@@ -103,7 +105,7 @@ type DeleteState =
   | null;
 
 type ProdutoWithPublication = ProdutoRow & ZeloMenuPublicationProduct;
-type PublicationActionState = 'paused' | 'resumed';
+type PublicationActionState = 'paused' | 'resumed' | 'publish';
 
 export const CatalogView = ({
   isAuthenticated,
@@ -142,6 +144,19 @@ export const CatalogView = ({
   const [bulkFeedback, setBulkFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
   const [reorderBusy, setReorderBusy] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<ZeloMenuPublicationStatus | null>(null);
+  const [undoAction, setUndoAction] = useState<{
+    type: 'published' | 'paused' | 'resumed';
+    changedIds: number[];
+    previousStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }>;
+    message: string;
+  } | null>(null);
+  const actionTokenRef = useRef(0);
+  const productsSectionRef = useRef<HTMLDivElement>(null);
+  const [confirmCategoryAction, setConfirmCategoryAction] = useState<{
+    ids: number[];
+    state: PublicationActionState;
+  } | null>(null);
 
   const normalized = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -149,13 +164,22 @@ export const CatalogView = ({
     return produtos.filter((p) => p.nome.toLowerCase().includes(normalized));
   }, [produtos, normalized]);
 
+  const displayProducts = useMemo(() => {
+    if (!statusFilter) return filtered;
+    return filtered.filter((p) => {
+      const pub = productPublications[p.id] ?? null;
+      const details = getZeloMenuPublicationStatus({ ...p, publication: pub });
+      return details.status === statusFilter;
+    });
+  }, [filtered, statusFilter, productPublications]);
+
   const tree = useMemo(
-    () => buildTree(categorias, subcategorias, filtered, productPublications),
-    [categorias, subcategorias, filtered, productPublications],
+    () => buildTree(categorias, subcategorias, displayProducts, productPublications),
+    [categorias, subcategorias, displayProducts, productPublications],
   );
   const orphanProducts = useMemo(
-    () => sortProductsForMenu(filtered.filter((p) => p.id_categoria == null), productPublications),
-    [filtered, productPublications],
+    () => sortProductsForMenu(displayProducts.filter((p) => p.id_categoria == null), productPublications),
+    [displayProducts, productPublications],
   );
   const visibleProducts = useMemo(
     () => [
@@ -190,13 +214,70 @@ export const CatalogView = ({
     upsertProductPublication,
   });
 
+  const handlePublishProducts = async (productIds: Iterable<number>) => {
+    setBulkFeedback(null);
+    const ids = [...new Set(productIds)].filter((id) => {
+      const pub = productPublications[id];
+      return !pub?.visivel_online;
+    });
+    if (ids.length === 0) return;
+
+    const prevStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }> = {};
+    for (const id of ids) {
+      const pub = productPublications[id];
+      prevStates[id] = { visivel_online: pub?.visivel_online ?? false, pausado_manualmente: pub?.pausado_manualmente ?? false };
+    }
+
+    const actionToken = ++actionTokenRef.current;
+    let changed = 0;
+    const failed: Array<{ productId: number; reason: string }> = [];
+    for (const id of ids) {
+      try {
+        await upsertProductPublication(id, { visivel_online: true, pausado_manualmente: false });
+        changed++;
+      } catch (e) {
+        failed.push({ productId: id, reason: getFriendlyErrorMessage(e) || 'Não foi possível publicar.' });
+      }
+    }
+    if (actionToken !== actionTokenRef.current) return;
+
+    const plural = changed === 1 ? '' : 's';
+    let message = `${changed} produto${plural} publicado${plural}.`;
+    if (failed.length > 0) {
+      message += ` ${failed.length} não ${failed.length === 1 ? 'pôde' : 'puderam'} ser publicado${failed.length === 1 ? '' : 's'}.`;
+    }
+    setBulkFeedback({ tone: failed.length > 0 ? 'error' : 'success', message });
+
+    if (changed > 0 && failed.length === 0) {
+      setUndoAction({
+        type: 'published',
+        changedIds: ids.filter((id) => !failed.some((f) => f.productId === id)),
+        previousStates: prevStates,
+        message,
+      });
+    }
+    void refresh();
+  };
+
   const handlePublicationState = async (
     productIds: Iterable<number>,
-    state: 'paused' | 'resumed',
+    state: 'paused' | 'resumed' | 'publish',
   ) => {
+    if (state === 'publish') {
+      void handlePublishProducts(productIds);
+      return;
+    }
     setBulkFeedback(null);
+    const ids = [...new Set(productIds)];
+    const prevStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }> = {};
+    for (const id of ids) {
+      const pub = productPublications[id];
+      prevStates[id] = { visivel_online: pub?.visivel_online ?? false, pausado_manualmente: pub?.pausado_manualmente ?? false };
+    }
+    const actionToken = ++actionTokenRef.current;
     const result = await bulk.runForProductIds(productIds, { type: 'set-publication', state });
     if (result.total === 0) return;
+    if (actionToken !== actionTokenRef.current) return;
 
     const actionLabel = state === 'paused' ? 'pausado' : 'retomado';
     const plural = result.changed === 1 ? '' : 's';
@@ -208,53 +289,70 @@ export const CatalogView = ({
       message += ` ${result.failed.length} não ${result.failed.length === 1 ? 'pôde' : 'puderam'} ser atualizado${result.failed.length === 1 ? '' : 's'}.`;
     }
     setBulkFeedback({ tone: result.failed.length > 0 ? 'error' : 'success', message });
+
+    if (result.changed > 0 && result.failed.length === 0) {
+      setUndoAction({
+        type: state,
+        changedIds: ids.filter((id) => !result.failed.some((f) => f.productId === id)),
+        previousStates: prevStates,
+        message,
+      });
+    }
+  };
+
+
+  const handleUndo = async () => {
+    if (!undoAction) return;
+    const token = ++actionTokenRef.current;
+    setUndoAction(null);
+    setBulkFeedback(null);
+
+    let undoneCount = 0;
+    const failed: Array<{ productId: number; reason: string }> = [];
+    for (const id of undoAction.changedIds) {
+      const prev = undoAction.previousStates[id];
+      if (!prev) continue;
+      try {
+        await upsertProductPublication(id, prev);
+        undoneCount++;
+      } catch (e) {
+        failed.push({ productId: id, reason: getFriendlyErrorMessage(e) || 'Não foi possível desfazer.' });
+      }
+    }
+    if (token !== actionTokenRef.current) return;
+
+    const plural = undoneCount === 1 ? '' : 's';
+    let msg = `Desfeito: ${undoneCount} produto${plural} voltou${plural === '' ? '' : 'ram'} ao estado anterior.`;
+    if (failed.length > 0) {
+      msg += ` ${failed.length} não ${failed.length === 1 ? 'pôde' : 'puderam'} ser restaurado${failed.length === 1 ? '' : 's'}.`;
+    }
+    setBulkFeedback({ tone: failed.length > 0 ? 'error' : 'success', message: msg });
+    void refresh();
   };
 
   const handleProductPublicationToggle = (product: ProdutoRow) => {
+    if (bulk.busyAction !== null) return;
+    setUndoAction(null);
     const publication = productPublications[product.id];
-    if (!publication?.visivel_online || bulk.busyAction !== null) return;
-    void handlePublicationState([product.id], publication.pausado_manualmente ? 'resumed' : 'paused');
+    if (!publication?.visivel_online) {
+      void handlePublicationState([product.id], 'publish');
+    } else {
+      void handlePublicationState([product.id], publication.pausado_manualmente ? 'resumed' : 'paused');
+    }
   };
 
   const handleBulkPublish = async () => {
-    const result = await bulk.run({ type: 'set-publication', state: 'published' });
-    if (result.total === 0) return;
-    if (result.failed.length === 0) {
-      setBulkFeedback({
-        tone: 'success',
-        message: `${result.changed} produto${result.changed === 1 ? '' : 's'} publicado${result.changed === 1 ? '' : 's'} no link.`,
-      });
-      return;
-    }
-    setBulkFeedback({
-      tone: 'error',
-      message: `${result.changed} produto${result.changed === 1 ? '' : 's'} publicado${result.changed === 1 ? '' : 's'}, mas ${result.failed.length} não puderam ser atualizados.`,
-    });
+    void handlePublishProducts(bulk.selectedIds);
   };
 
   const handleBulkPause = () => {
+    setUndoAction(null);
     void handlePublicationState(bulk.selectedIds, 'paused');
   };
 
   const handleBulkResume = () => {
+    setUndoAction(null);
     void handlePublicationState(bulk.selectedIds, 'resumed');
-  };
-
-  const handleBulkDelete = async () => {
-    const result = await bulk.run({ type: 'delete' });
-    setBulkDeleteConfirm(false);
-    if (result.total === 0) return;
-    if (result.failed.length === 0) {
-      setBulkFeedback({
-        tone: 'success',
-        message: `${result.changed} produto${result.changed === 1 ? '' : 's'} excluído${result.changed === 1 ? '' : 's'}.`,
-      });
-      return;
-    }
-    setBulkFeedback({
-      tone: 'error',
-      message: `${result.changed} produto${result.changed === 1 ? '' : 's'} excluído${result.changed === 1 ? '' : 's'}, mas ${result.failed.length} falharam.`,
-    });
   };
 
   const toggleCat = (id: number) => {
@@ -294,6 +392,7 @@ export const CatalogView = ({
   };
 
   return (
+    <>
     <div className="flex flex-1 flex-col overflow-y-auto p-4 sm:p-6 lg:p-8">
       <div className="space-y-6">
         <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -516,7 +615,22 @@ export const CatalogView = ({
           )}
 
           {isAuthenticated && (loading || categorias.length > 0 || produtos.length > 0) && (
-            <div className="space-y-3">
+            <div ref={productsSectionRef} className="space-y-3">
+              {statusFilter && (
+                <div className="flex items-center gap-2 rounded-lg bg-[var(--color-brand-soft)]/40 px-3 py-2">
+                  <span className="text-xs font-medium text-[var(--color-brand-deep)]">
+                    Filtrando: <strong>{publicationTone(statusFilter).label}</strong>
+                  </span>
+                  <button
+                    onClick={() => setStatusFilter(null)}
+                    className="ml-auto flex min-h-[36px] items-center gap-1 rounded-md px-2 text-xs font-semibold text-[var(--color-brand-deep)] hover:bg-[var(--color-brand-soft)]"
+                    aria-label="Limpar filtro"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Todos os produtos
+                  </button>
+                </div>
+              )}
               {reorderMode ? (
                 <SortableList
                   items={tree}
@@ -566,7 +680,10 @@ export const CatalogView = ({
                   onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
                   productPublications={productPublications}
                   onConfigurePublication={(p) => setModal({ kind: 'publication', product: p })}
-                  onSetCategoryPublication={(ids, state) => void handlePublicationState(ids, state)}
+                  onSetCategoryPublication={(ids, state) => {
+                    setUndoAction(null);
+                    setConfirmCategoryAction({ ids, state });
+                  }}
                   onToggleProductPublication={handleProductPublicationToggle}
                   publicationActionBusy={bulk.busyAction !== null}
                   reorderMode
@@ -617,7 +734,10 @@ export const CatalogView = ({
                   onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
                   productPublications={productPublications}
                   onConfigurePublication={(p) => setModal({ kind: 'publication', product: p })}
-                  onSetCategoryPublication={(ids, state) => void handlePublicationState(ids, state)}
+                  onSetCategoryPublication={(ids, state) => {
+                    setUndoAction(null);
+                    setConfirmCategoryAction({ ids, state });
+                  }}
                   onToggleProductPublication={handleProductPublicationToggle}
                   publicationActionBusy={bulk.busyAction !== null}
                   reorderMode={false}
@@ -726,6 +846,14 @@ export const CatalogView = ({
             setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria })
           }
           onConfigurePublication={(produto) => setModal({ kind: 'publication', product: produto })}
+          statusFilter={statusFilter}
+          onSetStatusFilter={(status) => {
+            setStatusFilter(status);
+            setBulkFeedback(null);
+            if (status !== null && productsSectionRef.current) {
+              productsSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          }}
         />
       </div>
 
@@ -822,9 +950,113 @@ export const CatalogView = ({
         title="Excluir produtos selecionados?"
         message={`Excluir ${bulk.selectedCount} produto${bulk.selectedCount === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`}
         onClose={() => setBulkDeleteConfirm(false)}
-        onConfirm={handleBulkDelete}
+        onConfirm={async () => {
+          setBulkDeleteConfirm(false);
+          const result = await bulk.run({ type: 'delete' });
+          if (result.total === 0) return;
+          if (result.failed.length === 0) {
+            setBulkFeedback({
+              tone: 'success',
+              message: `${result.changed} produto${result.changed === 1 ? '' : 's'} excluído${result.changed === 1 ? '' : 's'}.`,
+            });
+            return;
+          }
+          setBulkFeedback({
+            tone: 'error',
+            message: `${result.changed} produto${result.changed === 1 ? '' : 's'} excluído${result.changed === 1 ? '' : 's'}, mas ${result.failed.length} falharam.`,
+          });
+        }}
       />
+
     </div>
+
+      {confirmCategoryAction && (
+        <ConfirmModal
+          open
+          title={
+            confirmCategoryAction.state === 'publish'
+              ? 'Publicar produtos?'
+              : confirmCategoryAction.state === 'paused'
+                ? 'Pausar produtos?'
+                : 'Retomar produtos?'
+          }
+          message={`${confirmCategoryAction.ids.length} produto${confirmCategoryAction.ids.length === 1 ? '' : 's'} será${confirmCategoryAction.ids.length === 1 ? '' : 'o'} ${
+            confirmCategoryAction.state === 'publish' ? 'publicado' : confirmCategoryAction.state === 'paused' ? 'pausado' : 'retomado'
+          }${confirmCategoryAction.ids.length === 1 ? '' : 's'} no cardápio.`}
+          destructive={false}
+          confirmLabel={
+            confirmCategoryAction.state === 'publish'
+              ? 'Publicar'
+              : confirmCategoryAction.state === 'paused'
+                ? 'Pausar'
+                : 'Retomar'
+          }
+          onClose={() => setConfirmCategoryAction(null)}
+          onConfirm={async () => {
+            const action = confirmCategoryAction;
+            setConfirmCategoryAction(null);
+            if (action) void handlePublicationState(action.ids, action.state);
+          }}
+        />
+      )}
+
+      {undoAction && (
+        <div
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 shadow-lg flex items-center gap-3 max-w-[95vw]"
+          role="alert"
+          aria-live="polite"
+        >
+          <span className="text-sm text-[var(--color-ink)]">{undoAction.message}</span>
+          <button
+            onClick={handleUndo}
+            className="min-h-[44px] shrink-0 rounded-lg bg-[var(--color-brand)] px-4 text-sm font-semibold text-white hover:bg-[var(--color-brand-deep)]"
+          >
+            Desfazer
+          </button>
+          <button onClick={() => setUndoAction(null)} className="min-h-[44px] text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]" aria-label="Dispensar">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {bulk.selectionMode && (
+        <div className="fixed bottom-0 inset-x-0 z-40 border-t border-[var(--color-line)] bg-[var(--color-surface)] px-4 pb-[env(safe-area-inset-bottom,8px)] pt-3 shadow-lg md:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-semibold text-[var(--color-ink)]">{bulk.selectedCount} selecionado{bulk.selectedCount !== 1 ? 's' : ''}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBulkPublish}
+                disabled={bulk.busyAction !== null || bulk.selectedCount === 0}
+                className="min-h-[44px] rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)]/50 px-3 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Publicar
+              </button>
+              <button
+                onClick={handleBulkPause}
+                disabled={bulk.busyAction !== null || bulk.selectedCount === 0}
+                className="min-h-[44px] rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Pausar
+              </button>
+              <button
+                onClick={handleBulkResume}
+                disabled={bulk.busyAction !== null || bulk.selectedCount === 0}
+                className="min-h-[44px] rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Retomar
+              </button>
+              <button
+                onClick={() => setBulkDeleteConfirm(true)}
+                disabled={bulk.busyAction === 'delete' || bulk.selectedCount === 0}
+                className="min-h-[44px] rounded-lg border border-[var(--color-alert-soft)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-alert)] transition-colors hover:bg-[var(--color-alert-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
@@ -902,25 +1134,6 @@ function withPublication(
   };
 }
 
-function getCategoryPublicationAction(
-  productIds: number[],
-  productPublications: Record<number, ZeloMenuProductPublicationRow>,
-): { state: PublicationActionState; label: string } | null {
-  let activeCount = 0;
-  let pausedCount = 0;
-
-  for (const productId of productIds) {
-    const publication = productPublications[productId];
-    if (!publication?.visivel_online) continue;
-    if (publication.pausado_manualmente) pausedCount += 1;
-    else activeCount += 1;
-  }
-
-  if (activeCount > 0) return { state: 'paused', label: 'Pausar categoria' };
-  if (pausedCount > 0) return { state: 'resumed', label: 'Retomar categoria' };
-  return null;
-}
-
 type CategoriaCardProps = {
   node: TreeNode;
   expanded: boolean;
@@ -980,7 +1193,9 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
   const totalProdutos = node.produtosDireto.length + node.subcategorias.reduce((acc, s) => acc + s.produtos.length, 0);
   const categoryIds = getCategoryProductIds(node);
   const categorySelectionState = getSelectionState(categoryIds, selectedIds);
-  const categoryPublicationAction = getCategoryPublicationAction(categoryIds, productPublications);
+  const categoryActions = getCategoryActions(categoryIds, productPublications);
+  const allCategoryProducts = useMemo(() => [...node.produtosDireto, ...node.subcategorias.flatMap((s) => s.produtos)], [node]);
+  const categorySummary = totalProdutos > 0 ? getCategorySummary(categoryIds, productPublications, allCategoryProducts) : '';
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]">
@@ -1001,29 +1216,30 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
 
-        <button onClick={toggle} className="flex-1 text-left">
+        <button onClick={toggle} className="min-w-0 flex-1 text-left">
           <span className="text-sm font-bold text-[var(--color-ink)]">{node.categoria.nome}</span>
           <span className="ml-2 text-xs text-[var(--color-ink-muted)]">
             {totalProdutos} {totalProdutos === 1 ? 'produto' : 'produtos'}
             {node.subcategorias.length > 0 ? ` · ${node.subcategorias.length} subcategoria${node.subcategorias.length === 1 ? '' : 's'}` : ''}
           </span>
+          {categorySummary && (
+            <span className="ml-2 hidden text-[11px] text-[var(--color-ink-faint)] sm:inline">{categorySummary}</span>
+          )}
         </button>
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {categoryPublicationAction && (
+          {categoryActions.map((action) => (
             <button
+              key={action.state}
               type="button"
-              onClick={() => onSetCategoryPublication(categoryIds, categoryPublicationAction.state)}
+              onClick={() => onSetCategoryPublication(categoryIds, action.state)}
               disabled={publicationActionBusy}
               className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2.5 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-              title={categoryPublicationAction.state === 'paused'
-                ? 'Pausar os produtos com publicação ativa desta categoria'
-                : 'Retomar os produtos pausados desta categoria'}
             >
-              {categoryPublicationAction.state === 'paused' ? <PauseCircle className="h-3.5 w-3.5" /> : <PlayCircle className="h-3.5 w-3.5" />}
-              <span>{categoryPublicationAction.label}</span>
+              {action.state === 'paused' ? <PauseCircle className="h-3.5 w-3.5" /> : action.state === 'resumed' ? <PlayCircle className="h-3.5 w-3.5" /> : <Globe2 className="h-3.5 w-3.5" />}
+              <span>{action.label}</span>
             </button>
-          )}
+          ))}
           <IconBtn title="Nova subcategoria" onClick={onNewSubcategoria}>
             <FolderPlus className="h-4 w-4" />
           </IconBtn>
@@ -1078,9 +1294,13 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
             </div>
           ))}
 
-          {node.subcategorias.map(({ subcategoria, produtos }) => (
+          {node.subcategorias.map(({ subcategoria, produtos }) => {
+            const subIds = produtos.map((p) => p.id);
+            const subActions = getCategoryActions(subIds, productPublications);
+            const subSummary = produtos.length > 0 ? getCategorySummary(subIds, productPublications, produtos) : '';
+            return (
             <div key={subcategoria.id} className="px-4 py-3">
-              <div className="mb-2 flex items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
                 {selectionMode && produtos.length > 0 && (
                   <SelectionCheckbox
                     checked={getSelectionState(produtos.map((p) => p.id), selectedIds) === 'all'}
@@ -1095,7 +1315,22 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                 <span className="text-[11px] text-[var(--color-ink-faint)]">
                   {produtos.length} {produtos.length === 1 ? 'produto' : 'produtos'}
                 </span>
+                {subSummary && !selectionMode && (
+                  <span className="hidden text-[11px] text-[var(--color-ink-faint)] sm:inline">{subSummary}</span>
+                )}
                 <div className="ml-auto flex items-center gap-1">
+                  {subActions.map((action) => (
+                    <button
+                      key={action.state}
+                      type="button"
+                      onClick={() => onSetCategoryPublication(subIds, action.state)}
+                      disabled={publicationActionBusy}
+                      className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {action.state === 'paused' ? <PauseCircle className="h-3 w-3" /> : action.state === 'resumed' ? <PlayCircle className="h-3 w-3" /> : <Globe2 className="h-3 w-3" />}
+                      <span className="hidden sm:inline">{action.label}</span>
+                    </button>
+                  ))}
                   <IconBtn title="Novo produto nesta subcategoria" onClick={() => onNewProduto(subcategoria.id)}>
                     <Plus className="h-3.5 w-3.5" />
                   </IconBtn>
@@ -1150,7 +1385,8 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                   </p>
                 )}
             </div>
-          ))}
+          );
+        })}
 
           {node.produtosDireto.length === 0 && node.subcategorias.length === 0 && (
             <div className="px-4 py-5 text-center text-xs text-[var(--color-ink-muted)]">
@@ -1239,27 +1475,39 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
         </span>
       )}
 
-      {!selectionMode && publication?.visivel_online && onTogglePublication && (
-        <button
-          type="button"
-          onClick={onTogglePublication}
-          disabled={publicationActionBusy}
-          className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-          title={publication.pausado_manualmente ? 'Retomar produto no ZeloMenu' : 'Pausar produto no ZeloMenu'}
-          aria-label={publication.pausado_manualmente ? `Retomar ${produto.nome}` : `Pausar ${produto.nome}`}
-        >
-          {publication.pausado_manualmente ? <PlayCircle className="h-3.5 w-3.5" /> : <PauseCircle className="h-3.5 w-3.5" />}
-          <span className="hidden sm:inline">{publication.pausado_manualmente ? 'Retomar' : 'Pausar'}</span>
-        </button>
+      {!selectionMode && onTogglePublication && (
+        publication?.visivel_online ? (
+          <button
+            type="button"
+            onClick={onTogglePublication}
+            disabled={publicationActionBusy}
+            className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={publication.pausado_manualmente ? `Retomar ${produto.nome}` : `Pausar ${produto.nome}`}
+          >
+            {publication.pausado_manualmente ? <PlayCircle className="h-3.5 w-3.5" /> : <PauseCircle className="h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">{publication.pausado_manualmente ? 'Retomar' : 'Pausar'}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onTogglePublication}
+            disabled={publicationActionBusy}
+            className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={`Publicar ${produto.nome} no cardápio`}
+          >
+            <Globe2 className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Publicar</span>
+          </button>
+        )
       )}
 
       {!selectionMode && (
-        <div className="flex items-center gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-          <IconBtn title="Publicação no ZeloMenu" onClick={onConfigurePublication}>
-            <Globe2 className="h-3.5 w-3.5" />
-          </IconBtn>
+        <div className="flex items-center gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100" role="toolbar" aria-label="Ações do produto">
           <IconBtn title="Editar produto" onClick={onEdit}>
             <Pencil className="h-3.5 w-3.5" />
+          </IconBtn>
+          <IconBtn title="Configurar publicação" onClick={onConfigurePublication}>
+            <Globe2 className="h-3.5 w-3.5" />
           </IconBtn>
           <IconBtn title="Excluir produto" onClick={onDelete} destructive>
             <Trash2 className="h-3.5 w-3.5" />
@@ -1276,6 +1524,8 @@ type ZeloMenuPublicationPanelProps = {
   issues: Array<{ produto: ProdutoWithPublication; details: ReturnType<typeof getZeloMenuPublicationStatus> }>;
   onEditProduto: (produto: ProdutoRow) => void;
   onConfigurePublication: (produto: ProdutoRow) => void;
+  statusFilter: ZeloMenuPublicationStatus | null;
+  onSetStatusFilter: (status: ZeloMenuPublicationStatus | null) => void;
 };
 
 const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
@@ -1284,6 +1534,8 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
   issues,
   onEditProduto,
   onConfigurePublication,
+  statusFilter,
+  onSetStatusFilter,
 }) => {
   const readyPercent = totalProdutos > 0 ? Math.round((summary.published / totalProdutos) * 100) : 0;
 
@@ -1295,7 +1547,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
             <Globe2 className="h-5 w-5" strokeWidth={1.9} />
           </div>
           <div>
-            <h3 className="text-[15px] font-bold text-[var(--color-ink)]">Publicação no ZeloMenu</h3>
+            <h3 className="text-[15px] font-bold text-[var(--color-ink)]">Visibilidade no cardápio</h3>
             <p className="mt-1 max-w-2xl text-[13px] leading-5 text-[var(--color-ink-muted)]">
               Produtos prontos para o link, itens inativos e ajustes que deixam o cardápio mais claro para o cliente.
             </p>
@@ -1304,11 +1556,11 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
       </div>
 
       <div className="mt-5 -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 md:mx-0 md:grid md:snap-none md:grid-cols-5 md:overflow-visible md:px-0 md:pb-0">
-        <PublicationMetric label="Publicados" value={summary.published} detail={`${readyPercent}% do cardápio`} tone="published" />
-        <PublicationMetric label="Não publicados" value={summary.unpublished} detail="Fora do link" tone="unpublished" />
-        <PublicationMetric label="Pausados" value={summary.paused} detail="Ocultos por agora" tone="paused" />
-        <PublicationMetric label="Sem estoque" value={summary.outOfStock} detail="Bloqueados pelo estoque" tone="out_of_stock" />
-        <PublicationMetric label="Sem categoria" value={summary.missingCategory} detail="Precisam de organização" tone="missing_category" />
+        <PublicationMetric label="Publicados" value={summary.published} detail={`${readyPercent}% do cardápio`} tone="published" active={statusFilter === 'published'} onClick={() => onSetStatusFilter(statusFilter === 'published' ? null : 'published')} />
+        <PublicationMetric label="Não publicados" value={summary.unpublished} detail="Fora do link" tone="unpublished" active={statusFilter === 'unpublished'} onClick={() => onSetStatusFilter(statusFilter === 'unpublished' ? null : 'unpublished')} />
+        <PublicationMetric label="Pausados" value={summary.paused} detail="Ocultos por agora" tone="paused" active={statusFilter === 'paused'} onClick={() => onSetStatusFilter(statusFilter === 'paused' ? null : 'paused')} />
+        <PublicationMetric label="Sem estoque" value={summary.outOfStock} detail="Bloqueados pelo estoque" tone="out_of_stock" active={statusFilter === 'out_of_stock'} onClick={() => onSetStatusFilter(statusFilter === 'out_of_stock' ? null : 'out_of_stock')} />
+        <PublicationMetric label="Sem categoria" value={summary.missingCategory} detail="Precisam de organização" tone="missing_category" active={statusFilter === 'missing_category'} onClick={() => onSetStatusFilter(statusFilter === 'missing_category' ? null : 'missing_category')} />
       </div>
 
       {issues.length > 0 ? (
@@ -1356,6 +1608,26 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
           Produtos ativos estão prontos para aparecer no link do cardápio.
         </div>
       )}
+
+      {totalProdutos > 0 && summary.published === 0 && (
+        <div className="mt-4 rounded-xl border border-[var(--color-warn-soft)] bg-[var(--color-warn-soft)]/30 px-4 py-3">
+          <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Ainda não publicado</p>
+          <ul className="space-y-2 text-[12px] text-[var(--color-ink-soft)]">
+            <li className="flex items-start gap-2">
+              <Globe2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-warn)]" />
+              <span>
+                Publique um produto — clique em <strong className="text-[var(--color-ink)]">Publicar</strong> ao lado do nome ou abra a publicação para configurar.
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <FolderPlus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-warn)]" />
+              <span>
+                Organize os produtos em categorias para o cardápio ficar mais claro.
+              </span>
+            </li>
+          </ul>
+        </div>
+      )}
     </section>
   );
 };
@@ -1365,21 +1637,36 @@ function PublicationMetric({
   value,
   detail,
   tone,
+  active = false,
+  onClick,
 }: {
   label: string;
   value: number;
   detail: string;
   tone: ZeloMenuPublicationStatus;
+  active?: boolean;
+  onClick?: () => void;
 }) {
+  const Component = onClick ? 'button' : 'div';
   return (
-    <div className="min-h-[44px] w-[44vw] min-w-[140px] shrink-0 snap-start rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 py-3 sm:w-[38vw] md:w-auto md:min-w-0 md:shrink">
+    <Component
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      aria-pressed={active}
+      className={`min-h-[44px] w-[44vw] min-w-[140px] shrink-0 snap-start rounded-xl border px-3 py-3 text-left sm:w-[38vw] md:w-auto md:min-w-0 md:shrink ${
+        active
+          ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)]/30 ring-1 ring-[var(--color-brand)]/30'
+          : 'border-[var(--color-line)] bg-[var(--color-surface-muted)] hover:border-[var(--color-line-strong)]'
+      } ${onClick ? 'cursor-pointer transition-colors hover:bg-[var(--color-surface)]' : ''}`}
+      aria-label={`Filtrar por ${label.toLowerCase()}`}
+    >
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">{label}</span>
+        <span className={`text-[12px] font-semibold ${active ? 'text-[var(--color-brand-deep)]' : 'text-[var(--color-ink-soft)]'}`}>{label}</span>
         <PublicationStatusIcon status={tone} />
       </div>
       <p className="text-2xl font-bold tabular-nums text-[var(--color-ink)]">{value}</p>
       <p className="mt-0.5 text-[11.5px] text-[var(--color-ink-muted)]">{detail}</p>
-    </div>
+    </Component>
   );
 }
 
@@ -1520,6 +1807,53 @@ function getCategoryProductIds(node: TreeNode): number[] {
     ...node.produtosDireto.map((produto) => produto.id),
     ...node.subcategorias.flatMap((subNode) => subNode.produtos.map((produto) => produto.id)),
   ];
+}
+
+function getCategoryActions(
+  productIds: number[],
+  productPublications: Record<number, ZeloMenuProductPublicationRow>,
+): { state: PublicationActionState; label: string; publishIds?: number[] }[] {
+  let activeCount = 0;
+  let pausedCount = 0;
+  const unpublishedIds: number[] = [];
+
+  for (const productId of productIds) {
+    const publication = productPublications[productId];
+    if (!publication?.visivel_online) {
+      unpublishedIds.push(productId);
+      continue;
+    }
+    if (publication.pausado_manualmente) pausedCount += 1;
+    else activeCount += 1;
+  }
+
+  const actions: { state: PublicationActionState; label: string; publishIds?: number[] }[] = [];
+  if (activeCount > 0) actions.push({ state: 'paused', label: 'Pausar' });
+  if (pausedCount > 0) actions.push({ state: 'resumed', label: 'Retomar' });
+  if (unpublishedIds.length > 0) actions.push({ state: 'publish', label: 'Publicar', publishIds: unpublishedIds });
+  return actions;
+}
+
+function getCategorySummary(
+  productIds: number[],
+  productPublications: Record<number, ZeloMenuProductPublicationRow>,
+  produtos: ProdutoRow[],
+): string {
+  let published = 0, paused = 0, unpublished = 0;
+  for (const id of productIds) {
+    const product = produtos.find((p) => p.id === id);
+    if (!product) continue;
+    const pub = productPublications[id] ?? null;
+    const status = getZeloMenuPublicationStatus({ ...product, publication: pub }).status;
+    if (status === 'published') published++;
+    else if (status === 'paused') paused++;
+    else unpublished++;
+  }
+  const parts: string[] = [];
+  if (published > 0) parts.push(`${published} publicado${published === 1 ? '' : 's'}`);
+  if (paused > 0) parts.push(`${paused} pausado${paused === 1 ? '' : 's'}`);
+  if (unpublished > 0) parts.push(`${unpublished} não publicado${unpublished === 1 ? '' : 's'}`);
+  return parts.join(' · ');
 }
 
 function getSelectionState(productIds: number[], selectedIds: ReadonlySet<number>): SelectionState {

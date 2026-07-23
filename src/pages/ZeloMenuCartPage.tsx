@@ -333,6 +333,68 @@ function syncStoreCacheFromResponse(response: ZeloMenuPublicCartResponse): void 
   });
 }
 
+// ── Tela "pedido confirmado" — copy dinâmica por status ─────────────────────
+
+function resolveConfirmedStatusCopy(
+  orderStatus: string,
+  isDelivery: boolean,
+  isTableOrder: boolean,
+): { title: string; description: string } {
+  if (isTableOrder) {
+    return { title: 'Pedido enviado!', description: 'Seu pedido já está na fila da cozinha.' };
+  }
+  switch (orderStatus) {
+    case 'pending_review':
+      return { title: 'Seu pedido foi enviado à loja', description: 'Estamos aguardando a confirmação da loja.' };
+    case 'pending_payment':
+      return { title: 'Falta o pagamento via Pix', description: 'Pague com o Pix abaixo e envie o comprovante.' };
+    case 'accepted':
+      return { title: 'Pedido confirmado!', description: 'A loja aceitou seu pedido.' };
+    case 'preparing':
+      return { title: 'Seu pedido está em preparo', description: 'A loja já começou a preparar seu pedido.' };
+    case 'ready':
+      return {
+        title: 'Seu pedido está pronto!',
+        description: isDelivery ? 'Logo sai para entrega.' : 'Você já pode retirar na loja.',
+      };
+    case 'out_for_delivery':
+      return { title: 'Saiu para entrega', description: 'Seu pedido está a caminho.' };
+    case 'delivered':
+      return {
+        title: isDelivery ? 'Pedido entregue' : 'Pedido retirado',
+        description: 'Esperamos que você aproveite!',
+      };
+    case 'rejected':
+      return { title: 'Pedido não aceito', description: 'Infelizmente a loja não pôde aceitar seu pedido.' };
+    case 'cancelled':
+      return { title: 'Pedido cancelado', description: 'Este pedido foi cancelado.' };
+    default:
+      return { title: 'Pedido enviado!', description: 'A loja recebeu seu pedido.' };
+  }
+}
+
+function resolveConfirmedNextStep(orderStatus: string, isDelivery: boolean): string | null {
+  switch (orderStatus) {
+    case 'pending_review':
+      return 'A loja vai confirmar seu pedido em instantes. Você será avisado automaticamente.';
+    case 'pending_payment':
+      return 'Depois de pagar, envie o comprovante no WhatsApp da loja.';
+    case 'accepted':
+      return 'A loja já confirmou e vai começar o preparo do seu pedido em instantes.';
+    case 'preparing':
+      return isDelivery ? 'Avisamos quando sair para entrega.' : 'Avisamos quando estiver pronto.';
+    case 'ready':
+      return isDelivery
+        ? 'Seu pedido vai sair para entrega em instantes.'
+        : 'Assim que chegar, é só falar com a loja para retirar.';
+    case 'out_for_delivery':
+      return 'O entregador está a caminho. Fique de olho no WhatsApp para combinar a entrega.';
+    default:
+      // rejected, cancelled, delivered (e outros estados terminais) não têm próximo passo.
+      return null;
+  }
+}
+
 export default function ZeloMenuCartPage() {
   const { token = '' } = useParams();
   const toast = useToast();
@@ -429,6 +491,11 @@ export default function ZeloMenuCartPage() {
     return estimateDraftTotals(draft, payload.catalog, payload.business.deliveryNeighborhoods);
   }, [payload, draft]);
 
+  const confirmedProductsById = useMemo(
+    () => (payload ? catalogProductMap(payload.catalog) : new Map<number, ZeloMenuCatalogProduct>()),
+    [payload],
+  );
+
   const isStale = payload?.link.tokenStatus === 'stale';
   const isOpen = payload?.session.state === 'cart_open';
   const isPublicOrder = payload?.session.context === 'public_order';
@@ -436,7 +503,19 @@ export default function ZeloMenuCartPage() {
   const isConfirmed = payload?.session.state === 'confirmed_waiting_review' || payload?.session.state === 'confirmed_waiting_payment';
   const isWaitingPayment = payload?.session.state === 'confirmed_waiting_payment';
   const orderStatus = payload?.order?.status ?? (isWaitingPayment ? 'pending_payment' : 'pending_review');
-  const showMascot = isConfirmed && !isTableOrder && orderStatus !== 'rejected' && orderStatus !== 'cancelled';
+
+  // ── Auto-switch to scheduled mode when store is closed but accepts scheduling ──
+  useEffect(() => {
+    const bh = payload?.business?.businessHours;
+    if (!bh || !isOpen || isConfirmed) return;
+    if (scheduleMode === 'asap' && bh.configured === true && bh.openNow === false) {
+      const canSchedule = bh.nextOpen || (Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0);
+      if (canSchedule) {
+        setScheduleMode('scheduled');
+      }
+    }
+  }, [payload?.business?.businessHours, isOpen, isConfirmed]);
+
   const paymentSelection = draft?.paymentMethod && isKnownPaymentMethod(draft.paymentMethod)
     ? draft.paymentMethod
     : draft?.paymentMethod
@@ -469,14 +548,12 @@ export default function ZeloMenuCartPage() {
     // "Pra já" — check if store is currently open
     if (scheduleMode === 'asap') {
       if (bh.openNow === false) {
-        if (bh.nextOpen) {
-          return `Loja fechada agora. Próximo horário: ${bh.nextOpen.day} às ${bh.nextOpen.start}.`;
+        const canSchedule = bh.nextOpen || (Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0);
+        if (canSchedule) {
+          // Don't block — user should switch to scheduled mode via "Agendar retirada"
+          return null;
         }
-        if (hasWindows) {
-          const windowsStr = bh.todayWindows!.map((w) => `${w.start}–${w.end}`).join(' e ');
-          return `Loja fechada agora (horários de hoje: ${windowsStr}). Para pedir, selecione Agendar e escolha um horário de funcionamento.`;
-        }
-        return `Loja fechada agora (${bh.label}). Para pedir, selecione Agendar e escolha um horário de funcionamento.`;
+        return `Loja fechada agora${bh.nextOpen ? `. Próximo horário: ${bh.nextOpen.day} às ${bh.nextOpen.start}.` : '.'}`;
       }
       return null;
     }
@@ -952,9 +1029,16 @@ export default function ZeloMenuCartPage() {
     footSub = parts.join('\u00A0·\u00A0');
   }
 
+  // Context-aware CTA labels based on step and store state
+  const bh = payload?.business?.businessHours;
+  const storeClosedWithSchedule = bh?.configured && !bh.openNow && (bh.nextOpen || (Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0));
   const ctaLabel = isTableOrder
     ? (confirming ? 'Enviando…' : 'Enviar pedido')
-    : step < 2 ? 'Continuar' : confirming ? 'Confirmando…' : 'Confirmar pedido';
+    : step === 0
+      ? (storeClosedWithSchedule ? 'Agendar retirada' : 'Escolher retirada')
+      : step === 1
+        ? 'Revisar pedido'
+        : confirming ? 'Confirmando…' : 'Confirmar pedido';
   const ctaDisabled = isTableOrder
     ? (draft.items.length === 0 || confirming)
     : step === 0 ? draft.items.length === 0 : step === 2 ? (!canConfirm || confirming) : false;
@@ -977,164 +1061,32 @@ export default function ZeloMenuCartPage() {
   const iconBtnCls = 'flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[var(--zm-surface-muted)] text-[var(--zm-ink)] transition active:scale-90';
 
   return (
-    <div className="zelomenu-theme flex min-h-[100dvh] justify-center bg-[var(--zm-canvas)] text-[var(--zm-ink)] sm:items-center sm:p-6">
-      <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--zm-surface)] sm:h-[min(780px,92dvh)] sm:rounded-[28px] sm:border sm:border-[var(--zm-line)] sm:shadow-[0_30px_70px_-30px_rgba(16,20,24,0.35)]" style={{ maxWidth: showMascot ? '860px' : '460px' }}>
+    <div className="zelomenu-theme flex min-h-[100dvh] justify-center bg-[var(--zm-canvas)] text-[var(--zm-ink)]">
+      <div className="flex min-h-[100dvh] w-full max-w-[480px] flex-col bg-[var(--zm-canvas)] sm:my-6 sm:h-[min(780px,92dvh)] sm:min-h-0 sm:overflow-hidden sm:rounded-[28px] sm:border sm:border-[var(--zm-line)] sm:bg-[var(--zm-surface)] sm:shadow-[0_30px_70px_-30px_rgba(16,20,24,0.35)]">
         {isConfirmed ? (
           <div className="flex h-full flex-col">
-            <div className={`flex-1 ${showMascot ? 'flex flex-col sm:flex-row' : 'flex flex-col'}`}>
-              {showMascot && (
-                <div className="hidden sm:flex w-[42%] flex-none items-center justify-center overflow-hidden rounded-l-[28px] bg-[#DDD3F9]">
-                  <img
-                    src="/zelomenu-mascot-chef.webp"
-                    alt="Mascote do ZeloMenu comemorando o pedido enviado"
-                    width={820}
-                    height={820}
-                    decoding="async"
-                    className="h-full w-full object-contain"
-                  />
-                </div>
-              )}
-              <div className={`flex flex-1 flex-col ${showMascot ? 'items-center justify-center px-7 text-center sm:overflow-y-auto' : 'items-center justify-center px-7 text-center'}`}>
-                {showMascot && (
-                  <div className="sm:hidden mb-4 w-full max-w-[280px] overflow-hidden rounded-2xl bg-[#DDD3F9]">
-                    <img
-                      src="/zelomenu-mascot-chef.webp"
-                      alt="Mascote do ZeloMenu comemorando o pedido enviado"
-                      width={820}
-                      height={820}
-                      decoding="async"
-                      className="h-44 w-full object-contain"
-                    />
-                  </div>
-                )}
-                {!showMascot && (
-                  <div className="mb-3 flex h-[78px] w-[78px] items-center justify-center rounded-full bg-[var(--zm-brand-soft)] text-[var(--zm-brand)]">
-                    <CheckCircle2 className="h-10 w-10" strokeWidth={1.8} />
-                  </div>
-                )}
-                <h2 className="text-[20px] font-semibold tracking-tight">
-                  {isTableOrder ? 'Pedido enviado!' : orderStatus === 'rejected' ? 'Pedido não aceito' : orderStatus === 'cancelled' ? 'Pedido cancelado' : 'Pedido enviado!'}
-                </h2>
+            <div className="flex-1 overflow-y-auto overscroll-contain">
+              <figure className="w-full" style={{ aspectRatio: '941 / 472' }}>
+                <img
+                  src="/zelomenu-pedido-enviado-hero.webp"
+                  alt="ZeloMenu acompanhando o seu pedido"
+                  width={941}
+                  height={472}
+                  decoding="async"
+                  className="h-full w-full object-cover"
+                />
+              </figure>
+
+              <div className="relative z-[1] -mt-[18px] rounded-t-[26px] bg-[var(--zm-surface)] px-5 pb-8 pt-7">
                 {(() => {
-                  if (orderStatus === 'rejected' || orderStatus === 'cancelled') {
-                    return (
-                      <p className="mt-1.5 max-w-[280px] text-[13.5px] leading-relaxed text-[var(--zm-ink-soft)]">
-                        {isTableOrder
-                          ? 'Seu pedido já está na fila da cozinha. Aguarde o garçom.'
-                          : orderStatus === 'rejected'
-                            ? 'Infelizmente a loja não pôde aceitar seu pedido.'
-                            : 'Este pedido foi cancelado.'}
-                      </p>
-                    );
-                  }
+                  const isTerminalBad = orderStatus === 'rejected' || orderStatus === 'cancelled';
+                  const { title, description } = resolveConfirmedStatusCopy(orderStatus, isDelivery, isTableOrder);
+                  const nextStepText = resolveConfirmedNextStep(orderStatus, isDelivery);
                   const orderInfo = resolveOrderStatus(orderStatus, isDelivery);
-                  return (
-                    <div className="mt-5 w-full max-w-[260px]">
-                      <div className="flex flex-col">
-                        {orderInfo.steps.map((step, i) => {
-                          const isCompleted = i < orderInfo.currentStepIndex;
-                          const isActive = i === orderInfo.currentStepIndex;
-                          return (
-                            <div key={step.key} className="flex gap-3">
-                              <div className="flex flex-col items-center">
-                                <div className={`flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 ${
-                                  isCompleted
-                                    ? 'border-[var(--zm-brand)] bg-[var(--zm-brand)]'
-                                    : isActive
-                                      ? 'border-[var(--zm-brand)] bg-[var(--zm-brand)]'
-                                      : 'border-[var(--zm-line-strong)] bg-transparent'
-                                }`}>
-                                  {isCompleted ? (
-                                    <CheckCircle2 className="h-3.5 w-3.5 text-white" strokeWidth={3} />
-                                  ) : isActive ? (
-                                    <span className="h-2 w-2 rounded-full bg-white" />
-                                  ) : null}
-                                </div>
-                                {i < orderInfo.steps.length - 1 && (
-                                  <div className={`w-0.5 flex-1 min-h-[20px] ${isCompleted ? 'bg-[var(--zm-brand)]' : 'bg-[var(--zm-line)]'}`} />
-                                )}
-                              </div>
-                              <div className={`pb-5 text-left text-[13px] leading-snug ${
-                                isCompleted
-                                  ? 'font-medium text-[var(--zm-brand-deep)]'
-                                  : isActive
-                                    ? 'font-semibold text-[var(--zm-ink)]'
-                                    : 'text-[var(--zm-ink-soft)]'
-                              }`}>
-                                {step.label}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--zm-ink-soft)]">
-                        {isTableOrder
-                          ? 'Seu pedido já está na fila da cozinha. Aguarde o garçom.'
-                          : orderStatus === 'pending_payment'
-                            ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
-                            : orderStatus === 'pending_review'
-                              ? 'A loja recebeu seu pedido. Aguarde o aceite antes do preparo.'
-                              : orderStatus === 'accepted'
-                                ? 'Pedido aceito pela loja.'
-                                : orderStatus === 'preparing'
-                                  ? 'Seu pedido está sendo preparado.'
-                                  : orderStatus === 'ready'
-                                    ? 'Seu pedido está pronto.'
-                                    : orderStatus === 'out_for_delivery'
-                                      ? 'Seu pedido saiu para entrega.'
-                                      : orderStatus === 'delivered'
-                                        ? 'Pedido concluído. Obrigado!'
-                                        : 'A loja atualizou o seu pedido.'}
-                      </p>
-                    </div>
-                  );
-                })()}
-                <div className="mt-5 w-full max-w-[300px] rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4 text-left">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] text-[var(--zm-ink-soft)]">{itemCount} {itemCount === 1 ? 'item' : 'itens'}</span>
-                    <span className="text-[14px] font-semibold tabular-nums text-[var(--zm-ink)]">
-                      {feeToConfirm ? `${toBRL(estimated.subtotal)} + entrega` : toBRL(estimated.total)}
-                    </span>
-                  </div>
-                  {!isTableOrder && <p className="mt-1.5 text-[12px] text-[var(--zm-ink-soft)]">{summaryMeta}</p>}
-                </div>
-                {!isTableOrder && orderStatus !== 'rejected' && orderStatus !== 'cancelled' && payload.session.payment.pixCopyPaste && (
-                  <div className="mt-4 w-full max-w-[300px] rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4 text-left">
-                    <div className="flex items-center gap-1.5 text-[var(--zm-brand-deep)]">
-                      <QrCode className="h-4 w-4" strokeWidth={1.8} />
-                      <p className="text-[12.5px] font-semibold">Pix Copia e Cola</p>
-                    </div>
-                    <p className="mt-2 text-[22px] font-bold tabular-nums text-[var(--zm-ink)]">
-                      {toBRL(payload.session.pricing.total)}
-                    </p>
-                    <p
-                      ref={pixCodeRef}
-                      className="mt-2 max-h-24 overflow-y-auto break-all rounded-lg bg-[var(--zm-surface-muted)] p-2.5 font-mono text-[11px] leading-snug text-[var(--zm-ink-soft)]"
-                    >
-                      {payload.session.payment.pixCopyPaste}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void copyPixCode(payload.session.payment.pixCopyPaste as string)}
-                      className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] text-[13.5px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
-                    >
-                      <Copy className="h-4 w-4" strokeWidth={2} />
-                      Copiar código Pix
-                    </button>
-                    <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--zm-ink-soft)]">
-                      Cole no app do seu banco, pague e envie o comprovante no WhatsApp da loja.
-                    </p>
-                  </div>
-                )}
-                <span className="mt-5 inline-flex items-center gap-2 rounded-full bg-[var(--zm-brand-soft)] px-3.5 py-2 text-[12px] font-semibold text-[var(--zm-brand-deep)]">
-                  <MessageCircle className="h-3.5 w-3.5" strokeWidth={2} />
-                  {isTableOrder ? 'Aguarde o garçom' : 'Aguarde o contato da loja'}
-                </span>
-                {!isTableOrder && (() => {
                   const slug = payload?.session?.metadata?.slug;
                   const storeSlug = typeof slug === 'string' ? slug : null;
                   const whatsapp = payload?.business.whatsapp ?? null;
-                  const whatsappHref = isPublicOrder && whatsapp
+                  const whatsappHref = !isTableOrder && !isTerminalBad && isPublicOrder && whatsapp
                     ? buildWhatsAppOrderLink(
                         whatsapp,
                         buildWhatsAppOrderMessage({
@@ -1161,29 +1113,199 @@ export default function ZeloMenuCartPage() {
                         }),
                       )
                     : null;
-                  if (!whatsappHref && !storeSlug) return null;
+                  const pickupDescription = isDelivery
+                    ? [draft.deliveryAddress, draft.deliveryNeighborhood].filter(Boolean).join(', ') || whenLabel
+                    : (whenLabel === 'o quanto antes' ? 'Assim que ficar pronto' : whenLabel);
+
                   return (
-                    <div className="mt-6 flex w-full max-w-[300px] flex-col gap-2.5">
-                      {whatsappHref && (
-                        <a
-                          href={whatsappHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] px-6 text-[14px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
-                        >
-                          <MessageCircle className="h-4 w-4" strokeWidth={2} />
-                          Enviar pedido no WhatsApp
-                        </a>
+                    <>
+                      <header className="text-center">
+                        <h2 className="text-[21px] font-semibold leading-tight tracking-tight">{title}</h2>
+                        <p className="mx-auto mt-2 max-w-[320px] text-[13.5px] leading-relaxed text-[var(--zm-ink-soft)]">
+                          {description}
+                        </p>
+                      </header>
+
+                      {!isTerminalBad && (
+                        <ol className="mt-6" aria-label="Andamento do pedido">
+                          {orderInfo.steps.map((step, i) => {
+                            const isCompleted = i < orderInfo.currentStepIndex;
+                            const isActive = i === orderInfo.currentStepIndex;
+                            const isDone = isCompleted || isActive;
+                            const isLast = i === orderInfo.steps.length - 1;
+                            return (
+                              <li key={step.key} className={`relative flex gap-3.5 ${isLast ? '' : 'pb-6'}`}>
+                                {!isLast && (
+                                  <span
+                                    aria-hidden="true"
+                                    className={`absolute bottom-0 left-[11px] top-6 w-0.5 ${isCompleted ? 'bg-[var(--zm-brand)]' : 'bg-[var(--zm-line-strong)]'}`}
+                                  />
+                                )}
+                                <span className={`relative z-[1] flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 ${
+                                  isDone
+                                    ? 'border-[var(--zm-brand)] bg-[var(--zm-brand)]'
+                                    : 'border-[var(--zm-line-strong)] bg-[var(--zm-surface)]'
+                                }`}>
+                                  {isDone && <CheckCircle2 className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
+                                </span>
+                                <div className="flex flex-1 items-center justify-between gap-2">
+                                  <span className={`text-[13.5px] ${
+                                    isActive
+                                      ? 'font-semibold text-[var(--zm-ink)]'
+                                      : isCompleted
+                                        ? 'font-medium text-[var(--zm-ink)]'
+                                        : 'text-[var(--zm-ink-soft)]'
+                                  }`}>
+                                    {step.label}
+                                  </span>
+                                  {isActive && (
+                                    <span className="flex-none rounded-full bg-[var(--zm-brand-soft)] px-2.5 py-1 text-[11px] font-bold text-[var(--zm-brand-deep)]">
+                                      Agora
+                                    </span>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ol>
                       )}
-                      {storeSlug && (
-                        <Link
-                          to={buildPublicStorePath(storeSlug)}
-                          className="inline-flex h-11 items-center justify-center rounded-xl border border-[var(--zm-line-strong)] bg-[var(--zm-surface)] px-6 text-[14px] font-semibold text-[var(--zm-brand)] transition-colors hover:bg-[var(--zm-brand-soft)] active:scale-90"
-                        >
-                          Voltar ao cardápio
-                        </Link>
+
+                      {!isTerminalBad && (
+                        <section className="mt-1 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4 shadow-[0_18px_44px_rgba(38,22,86,0.08)]">
+                          <div className="mb-3.5 flex items-center justify-between">
+                            <p className="text-[13px] font-bold">Seu pedido</p>
+                            <span className="text-[12px] text-[var(--zm-ink-soft)]">
+                              {itemCount} {itemCount === 1 ? 'item' : 'itens'}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-3">
+                            {estimated.items.map((item) => {
+                              const key = estimatedItemKey(item);
+                              const product = item.productId != null ? confirmedProductsById.get(item.productId) : null;
+                              return (
+                                <div key={key} className="flex items-center gap-3.5">
+                                  <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-[var(--zm-brand-soft)] text-[26px]">
+                                    {product?.photoUrl ? (
+                                      <img src={product.photoUrl} alt="" className="h-full w-full object-cover" />
+                                    ) : (
+                                      <span role="img" aria-label="Produto">🍔</span>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[14.5px] font-bold leading-tight">
+                                      {formatModifierAwareCartItem(item)}
+                                    </p>
+                                    <p className="mt-0.5 text-[12.5px] text-[var(--zm-ink-soft)]">
+                                      {item.quantity} {item.quantity === 1 ? 'unidade' : 'unidades'}
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <div className="mt-4 flex items-center gap-3 border-t border-[var(--zm-line)] pt-4">
+                            <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-[var(--zm-brand-soft)] text-[var(--zm-brand)]">
+                              {isDelivery
+                                ? <Bike className="h-[21px] w-[21px]" strokeWidth={1.9} />
+                                : <ShoppingBag className="h-[21px] w-[21px]" strokeWidth={1.9} />}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-bold">{isDelivery ? 'Entrega' : 'Retirada'}</p>
+                              <p className="mt-0.5 truncate text-[12px] text-[var(--zm-ink-soft)]">{pickupDescription}</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex items-baseline justify-between border-t border-[var(--zm-line)] pt-4">
+                            <span className="text-[14px] font-bold">Total</span>
+                            <span className="text-[19px] font-extrabold tabular-nums">
+                              {feeToConfirm ? `${toBRL(estimated.subtotal)} + entrega` : toBRL(estimated.total)}
+                            </span>
+                          </div>
+                        </section>
                       )}
-                    </div>
+
+                      {!isTableOrder && orderStatus !== 'rejected' && orderStatus !== 'cancelled' && payload.session.payment.pixCopyPaste && (
+                        <div className="mt-4 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4">
+                          <div className="flex items-center gap-1.5 text-[var(--zm-brand-deep)]">
+                            <QrCode className="h-4 w-4" strokeWidth={1.8} />
+                            <p className="text-[12.5px] font-semibold">Pix Copia e Cola</p>
+                          </div>
+                          <p className="mt-2 text-[22px] font-bold tabular-nums text-[var(--zm-ink)]">
+                            {toBRL(payload.session.pricing.total)}
+                          </p>
+                          <p
+                            ref={pixCodeRef}
+                            className="mt-2 max-h-24 overflow-y-auto break-all rounded-lg bg-[var(--zm-surface-muted)] p-2.5 font-mono text-[11px] leading-snug text-[var(--zm-ink-soft)]"
+                          >
+                            {payload.session.payment.pixCopyPaste}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void copyPixCode(payload.session.payment.pixCopyPaste as string)}
+                            className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] text-[13.5px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
+                          >
+                            <Copy className="h-4 w-4" strokeWidth={2} />
+                            Copiar código Pix
+                          </button>
+                          <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--zm-ink-soft)]">
+                            Cole no app do seu banco, pague e envie o comprovante no WhatsApp da loja.
+                          </p>
+                        </div>
+                      )}
+
+                      {!isTerminalBad && nextStepText && (
+                        <aside className="mt-4 flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[var(--zm-brand-soft)] to-[var(--zm-surface)] p-4">
+                          <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-[var(--zm-brand)] text-white">
+                            <MessageCircle className="h-5 w-5" strokeWidth={1.9} />
+                          </span>
+                          <div>
+                            <p className="text-[13px] font-bold">Próximo passo</p>
+                            <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--zm-ink-soft)]">{nextStepText}</p>
+                          </div>
+                        </aside>
+                      )}
+
+                      <div className="mt-5 flex flex-col gap-2.5">
+                        {isTerminalBad ? (
+                          storeSlug && (
+                            <Link
+                              to={buildPublicStorePath(storeSlug)}
+                              className="inline-flex h-[52px] items-center justify-center rounded-2xl border border-[var(--zm-line-strong)] bg-[var(--zm-surface)] px-6 text-[14px] font-bold text-[var(--zm-brand)] transition-colors hover:bg-[var(--zm-brand-soft)] active:scale-95"
+                            >
+                              Ver cardápio
+                            </Link>
+                          )
+                        ) : isTableOrder ? (
+                          <span className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand-soft)] px-4 text-[13px] font-semibold text-[var(--zm-brand-deep)]">
+                            <MessageCircle className="h-4 w-4" strokeWidth={2} />
+                            Aguarde o garçom
+                          </span>
+                        ) : (
+                          <>
+                            {whatsappHref && (
+                              <a
+                                href={whatsappHref}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex h-[52px] items-center justify-center gap-2 rounded-2xl bg-[var(--zm-brand)] px-6 text-[14px] font-bold text-white shadow-[0_12px_28px_rgba(110,58,255,0.28)] transition-opacity hover:opacity-90 active:scale-95"
+                              >
+                                <MessageCircle className="h-[21px] w-[21px]" strokeWidth={1.9} />
+                                Conversar com a loja
+                              </a>
+                            )}
+                            {storeSlug && (
+                              <Link
+                                to={buildPublicStorePath(storeSlug)}
+                                className="inline-flex h-[52px] items-center justify-center rounded-2xl border border-[var(--zm-line-strong)] bg-[var(--zm-surface)] px-6 text-[14px] font-bold text-[var(--zm-brand)] transition-colors hover:bg-[var(--zm-brand-soft)] active:scale-95"
+                              >
+                                Ver cardápio
+                              </Link>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </>
                   );
                 })()}
               </div>
@@ -1193,7 +1315,7 @@ export default function ZeloMenuCartPage() {
         ) : (
           <div className="flex h-full flex-col">
             {/* header */}
-            <div className="flex-none border-b border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 pb-3 pt-3">
+            <div className="flex-none border-b border-[var(--zm-line)] bg-[var(--zm-canvas)] px-3 pb-3 pt-3 sm:bg-[var(--zm-surface)]">
               <div className="flex items-center gap-2">
                 <button type="button" onClick={goBack} aria-label={step === 0 ? 'Fechar' : 'Voltar'} className={iconBtnCls}>
                   {step === 0
@@ -1239,7 +1361,7 @@ export default function ZeloMenuCartPage() {
                       }`}>
                         <span className={`flex h-4 w-4 flex-none items-center justify-center rounded-full text-[9px] font-bold text-white ${
                           status === 'active'
-                            ? 'bg-[var(--zm-ink)]'
+                            ? 'bg-[var(--zm-brand)]'
                             : status === 'done'
                               ? 'bg-[var(--zm-brand)]'
                               : 'bg-[var(--zm-line-strong)]'
@@ -1767,7 +1889,7 @@ export default function ZeloMenuCartPage() {
                   type="button"
                   onClick={goNext}
                   disabled={ctaDisabled}
-                  className={`flex h-[50px] flex-1 items-center justify-center gap-2 rounded-2xl text-[14.5px] font-semibold text-white transition-transform active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 ${isTableOrder || step === 2 ? 'bg-[var(--zm-brand)]' : 'bg-[var(--zm-ink)]'}`}
+                  className="flex h-[50px] flex-1 items-center justify-center gap-2 rounded-2xl bg-[var(--zm-brand)] text-[14.5px] font-semibold text-white transition-transform active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {confirming && step === 2 ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
                   {ctaLabel}

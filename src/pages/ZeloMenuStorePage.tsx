@@ -283,34 +283,39 @@ export function ZeloMenuStorePage({
 
           {/* Category pill tabs */}
           {!searchQuery && visibleCategories.length > 1 ? (
-            <div
-              ref={tabsRef}
-              className="flex gap-1.5 overflow-x-auto px-4 pb-3"
-              style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } as CSSProperties}
-            >
-              {visibleCategories.map((group) => (
-                <button
-                  key={group.nome}
-                  type="button"
-                  data-tab={group.nome}
-                  onClick={() => scrollToCategory(group.nome)}
-                  className="shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                  style={{
-                    background: activeCategory === group.nome ? 'var(--zm-brand)' : 'var(--zm-canvas)',
-                    color: activeCategory === group.nome ? '#fff' : 'var(--zm-ink-soft)',
-                    transition: 'background 0.2s, color 0.2s',
-                  }}
-                >
-                  {group.nome}
-                </button>
-              ))}
+            <div className="relative">
+              <div
+                ref={tabsRef}
+                className="flex gap-1.5 overflow-x-auto px-4 pb-3"
+                style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } as CSSProperties}
+              >
+                {visibleCategories.map((group) => (
+                  <button
+                    key={group.nome}
+                    type="button"
+                    data-tab={group.nome}
+                    onClick={() => scrollToCategory(group.nome)}
+                    className="shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                    style={{
+                      background: activeCategory === group.nome ? 'var(--zm-brand)' : 'var(--zm-canvas)',
+                      color: activeCategory === group.nome ? '#fff' : 'var(--zm-ink-soft)',
+                      transition: 'background 0.2s, color 0.2s',
+                    }}
+                  >
+                    {group.nome}
+                  </button>
+                ))}
+              </div>
+              {/* Gradient fade on right edge to hint at more options */}
+              <div className="pointer-events-none absolute inset-y-0 right-0 w-10"
+                   style={{ background: 'linear-gradient(to left, var(--zm-surface), transparent)' }} />
             </div>
           ) : null}
         </div>
       </header>
 
       {/* ── Catalog body ──────────────────────────────────────────────────── */}
-      <main className="mx-auto max-w-5xl px-4 py-5">
+      <main className="mx-auto max-w-5xl px-4 pb-28 pt-5">
 
         {/* Mesa unavailability notice */}
         {mesaUnavailableMessage ? (
@@ -325,21 +330,21 @@ export function ZeloMenuStorePage({
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warn)]" strokeWidth={2} />
               <div className="min-w-0">
                 <p className="text-[13px] font-semibold text-[var(--zm-ink)]">
-                  Fora do horário de atendimento
+                  Loja fechada agora
                 </p>
                 <p className="mt-0.5 text-[12px] leading-5 text-[var(--zm-ink-soft)]">
                   {businessHours?.nextOpen
-                    ? `Próximo horário: ${businessHours.nextOpen.day} às ${businessHours.nextOpen.start}. Você pode montar o pedido e agendar.`
-                    : `Você pode montar o pedido agora e agendar para um horário disponível${businessHours?.label ? ` (${businessHours.label}).` : '.'}`}
+                    ? `Abre ${businessHours.nextOpen.day} às ${businessHours.nextOpen.start}. Você pode montar e agendar seu pedido.`
+                    : `Você pode montar seu pedido agora e agendar para um horário disponível${businessHours?.label ? ` (${businessHours.label}).` : '.'}`}
                 </p>
               </div>
             </div>
           </section>
         ) : null}
 
-        {/* Welcome text */}
+        {/* Welcome text — clamped to 3 lines to avoid long AI-generated text */}
         {!searchQuery && store.business.welcomeText ? (
-          <p className="mb-5 text-[14px] leading-relaxed text-[var(--zm-ink-soft)]">
+          <p className="mb-5 line-clamp-3 text-[14px] leading-relaxed text-[var(--zm-ink-soft)]">
             {store.business.welcomeText}
           </p>
         ) : null}
@@ -444,7 +449,7 @@ export function ZeloMenuStorePage({
                 </span>
                 <span className="flex items-center gap-2 text-[14px] font-semibold">
                   {cart.submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
-                  {cart.submitting ? 'Abrindo pedido…' : 'Continuar pedido'}
+                  {cart.submitting ? 'Abrindo pedido…' : 'Ver sacola'}
                 </span>
               </div>
               <span className="text-[15px] font-bold">{toBRL(cart.subtotal)}</span>
@@ -667,7 +672,7 @@ function PhotoRow({
         </div>
       </div>
 
-      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-[var(--zm-canvas)]">
+      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-[var(--zm-line)]">
         {product.photoUrl ? (
           <img
             src={product.photoUrl}
