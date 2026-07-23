@@ -39,6 +39,7 @@ import {
   type ZeloMenuModifierSelectionInput,
   type ZeloMenuSelectedModifierGroup,
 } from '../domain/zelomenuModifiers';
+import { resolveOrderStatus } from '../domain/zelomenuOrderStatus';
 import { resolveDeliveryFeeForNeighborhood } from '../domain/zelomenuDelivery';
 import {
   businessDayLabel,
@@ -433,6 +434,7 @@ export default function ZeloMenuCartPage() {
   const isConfirmed = payload?.session.state === 'confirmed_waiting_review' || payload?.session.state === 'confirmed_waiting_payment';
   const isWaitingPayment = payload?.session.state === 'confirmed_waiting_payment';
   const orderStatus = payload?.order?.status ?? (isWaitingPayment ? 'pending_payment' : 'pending_review');
+  const showMascot = isConfirmed && !isTableOrder && orderStatus !== 'rejected' && orderStatus !== 'cancelled';
   const paymentSelection = draft?.paymentMethod && isKnownPaymentMethod(draft.paymentMethod)
     ? draft.paymentMethod
     : draft?.paymentMethod
@@ -867,10 +869,10 @@ export default function ZeloMenuCartPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-ink)]">
+      <div className="zelomenu-theme min-h-screen bg-[var(--zm-canvas)] text-[var(--zm-ink)]">
         <div className="mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-6">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)]" strokeWidth={1.8} />
-          <p className="mt-4 text-[14px] text-[var(--color-ink-muted)]">Carregando seu carrinho…</p>
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--zm-brand)]" strokeWidth={1.8} />
+          <p className="mt-4 text-[14px] text-[var(--zm-ink-soft)]">Carregando seu carrinho…</p>
         </div>
       </div>
     );
@@ -878,17 +880,17 @@ export default function ZeloMenuCartPage() {
 
   if (error && !payload) {
     return (
-      <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-ink)]">
+      <div className="zelomenu-theme min-h-screen bg-[var(--zm-canvas)] text-[var(--zm-ink)]">
         <div className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center px-6 text-center">
           <div className="rounded-full bg-[var(--color-alert-soft)] p-4 text-[var(--color-alert)]">
             <AlertTriangle className="h-8 w-8" strokeWidth={1.8} />
           </div>
           <h1 className="mt-5 text-[22px] font-semibold">Não consegui abrir este carrinho</h1>
-          <p className="mt-2 max-w-xl text-[14px] text-[var(--color-ink-muted)]">{error}</p>
+          <p className="mt-2 max-w-xl text-[14px] text-[var(--zm-ink-soft)]">{error}</p>
           <button
             type="button"
             onClick={() => void load('initial')}
-            className="mt-6 inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--color-brand)] px-4 text-[14px] font-medium text-white"
+            className="mt-6 inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--zm-brand)] px-4 text-[14px] font-medium text-white"
           >
             <RefreshCw className="h-4 w-4" strokeWidth={1.8} />
             Tentar de novo
@@ -939,119 +941,188 @@ export default function ZeloMenuCartPage() {
     : [prettyDate || null, effectivePickupTime || null].filter(Boolean).join(' às ') || 'a combinar';
   const summaryMeta = `${isDelivery ? 'Entrega' : 'Retirada'} · ${whenLabel}${isDelivery && draft.deliveryNeighborhood ? ` · ${draft.deliveryNeighborhood}` : ''}`;
 
-  const inputCls = 'h-11 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-[14px] text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)]';
+  const inputCls = 'h-11 w-full rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)]';
   const invalidInputCls = 'border-[var(--color-alert)] focus:border-[var(--color-alert)]';
-  const labelCls = 'text-[11.5px] font-semibold text-[var(--color-ink-muted)]';
+  const labelCls = 'text-[11.5px] font-semibold text-[var(--zm-ink-soft)]';
   const requiredMark = <span className="text-[var(--color-alert)]" aria-hidden="true">*</span>;
   const fieldError = (message: string | undefined) => showErrors && message
     ? <span role="alert" className="text-[11px] text-[var(--color-alert)]">{message}</span>
     : null;
   const segCls = (active: boolean) =>
-    `flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${active ? 'bg-[var(--color-surface)] text-[var(--color-ink)] shadow-sm' : 'text-[var(--color-ink-muted)]'}`;
-  const iconBtnCls = 'flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[var(--color-surface-muted)] text-[var(--color-ink)] transition active:scale-90';
+    `flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${active ? 'bg-[var(--zm-surface)] text-[var(--zm-ink)] shadow-sm' : 'text-[var(--zm-ink-soft)]'}`;
+  const iconBtnCls = 'flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[var(--zm-surface-muted)] text-[var(--zm-ink)] transition active:scale-90';
 
   return (
-    <div className="flex min-h-[100dvh] justify-center bg-[var(--color-canvas)] text-[var(--color-ink)] sm:items-center sm:p-6">
-      <div className="flex h-[100dvh] w-full max-w-[460px] flex-col overflow-hidden bg-[var(--color-surface)] sm:h-[min(780px,92dvh)] sm:rounded-[28px] sm:border sm:border-[var(--color-line)] sm:shadow-[0_30px_70px_-30px_rgba(16,20,24,0.35)]">
+    <div className="zelomenu-theme flex min-h-[100dvh] justify-center bg-[var(--zm-canvas)] text-[var(--zm-ink)] sm:items-center sm:p-6">
+      <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--zm-surface)] sm:h-[min(780px,92dvh)] sm:rounded-[28px] sm:border sm:border-[var(--zm-line)] sm:shadow-[0_30px_70px_-30px_rgba(16,20,24,0.35)]" style={{ maxWidth: showMascot ? '860px' : '460px' }}>
         {isConfirmed ? (
           <div className="flex h-full flex-col">
-            <div className="flex flex-1 flex-col items-center justify-center px-7 text-center">
-              <div className="mb-3 flex h-[78px] w-[78px] items-center justify-center rounded-full bg-[var(--color-brand-soft)] text-[var(--color-brand)]">
-                <CheckCircle2 className="h-10 w-10" strokeWidth={1.8} />
-              </div>
-              <h2 className="text-[20px] font-semibold tracking-tight">
-                {isTableOrder ? 'Pedido enviado!' : orderStatus === 'rejected' ? 'Pedido não aceito' : orderStatus === 'cancelled' ? 'Pedido cancelado' : 'Pedido enviado!'}
-              </h2>
-              <p className="mt-1.5 max-w-[280px] text-[13.5px] leading-relaxed text-[var(--color-ink-muted)]">
-                {isTableOrder
-                  ? 'Seu pedido já está na fila da cozinha. Aguarde o garçom.'
-                  : orderStatus === 'pending_payment'
-                    ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
-                    : orderStatus === 'pending_review'
-                      ? 'A loja recebeu seu pedido. Aguarde o aceite antes do preparo.'
-                      : orderStatus === 'accepted'
-                        ? 'Pedido aceito pela loja.'
-                        : orderStatus === 'preparing'
-                          ? 'Seu pedido está sendo preparado.'
-                          : orderStatus === 'ready'
-                            ? 'Seu pedido está pronto.'
-                            : orderStatus === 'out_for_delivery'
-                              ? 'Seu pedido saiu para entrega.'
-                              : orderStatus === 'delivered'
-                                ? 'Pedido concluído. Obrigado!'
-                                : 'A loja atualizou o seu pedido.'}
-              </p>
-              <div className="mt-5 w-full max-w-[300px] rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 text-left">
-                <div className="flex items-center justify-between">
-                  <span className="text-[13px] text-[var(--color-ink-soft)]">{itemCount} {itemCount === 1 ? 'item' : 'itens'}</span>
-                  <span className="text-[14px] font-semibold tabular-nums text-[var(--color-ink)]">
-                    {feeToConfirm ? `${toBRL(estimated.subtotal)} + entrega` : toBRL(estimated.total)}
-                  </span>
+            <div className={`flex-1 ${showMascot ? 'flex flex-col sm:flex-row' : 'flex flex-col'}`}>
+              {showMascot && (
+                <div className="hidden sm:flex w-[42%] flex-none items-center justify-center overflow-hidden rounded-l-[28px] bg-[var(--zm-brand-soft)]">
+                  <img src="/zelomenu-mascot-chef.png" alt="" className="h-full w-full object-cover" />
                 </div>
-                {!isTableOrder && <p className="mt-1.5 text-[12px] text-[var(--color-ink-muted)]">{summaryMeta}</p>}
-              </div>
-              <span className="mt-5 inline-flex items-center gap-2 rounded-full bg-[var(--color-brand-soft)] px-3.5 py-2 text-[12px] font-semibold text-[var(--color-brand-deep)]">
-                <MessageCircle className="h-3.5 w-3.5" strokeWidth={2} />
-                {isTableOrder ? 'Aguarde o garçom' : 'Aguarde o contato da loja'}
-              </span>
-              {!isTableOrder && (() => {
-                const slug = payload?.session?.metadata?.slug;
-                const storeSlug = typeof slug === 'string' ? slug : null;
-                const whatsapp = payload?.business.whatsapp ?? null;
-                const whatsappHref = isPublicOrder && whatsapp
-                  ? buildWhatsAppOrderLink(
-                      whatsapp,
-                      buildWhatsAppOrderMessage({
-                        orderId: payload?.session.orderingId ?? '',
-                        customerName: draft.customerName || null,
-                        items: estimated.items.map((item) => ({
-                          name: item.productName,
-                          quantity: item.quantity,
-                          lineTotal: item.lineTotal,
-                        })),
-                        subtotal: estimated.subtotal,
-                        total: estimated.total,
-                        feeToConfirm,
-                        isDelivery,
-                        whenLabel,
-                        deliveryAddress: isDelivery ? (draft.deliveryAddress || null) : null,
-                        deliveryNeighborhood: isDelivery ? (draft.deliveryNeighborhood || null) : null,
-                        observations: draft.observations || null,
-                      }),
-                    )
-                  : null;
-                if (!whatsappHref && !storeSlug) return null;
-                return (
-                  <div className="mt-6 flex w-full max-w-[300px] flex-col gap-2.5">
-                    {whatsappHref && (
-                      <a
-                        href={whatsappHref}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--color-brand)] px-6 text-[14px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
-                      >
-                        <MessageCircle className="h-4 w-4" strokeWidth={2} />
-                        Enviar pedido no WhatsApp
-                      </a>
-                    )}
-                    {storeSlug && (
-                      <Link
-                        to={buildPublicStorePath(storeSlug)}
-                        className="inline-flex h-11 items-center justify-center rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-6 text-[14px] font-semibold text-[var(--color-brand)] transition-colors hover:bg-[var(--color-brand-soft)] active:scale-90"
-                      >
-                        Voltar ao cardápio
-                      </Link>
-                    )}
+              )}
+              <div className={`flex flex-1 flex-col ${showMascot ? 'items-center justify-center px-7 text-center sm:overflow-y-auto' : 'items-center justify-center px-7 text-center'}`}>
+                {showMascot && (
+                  <div className="sm:hidden mb-3 mx-auto h-20 w-20 overflow-hidden rounded-full">
+                    <img src="/zelomenu-mascot-chef.png" alt="" className="relative h-[170px] w-[170px] max-w-none" style={{ left: '-45px', top: '-25px' }} />
                   </div>
-                );
-              })()}
+                )}
+                {!showMascot && (
+                  <div className="mb-3 flex h-[78px] w-[78px] items-center justify-center rounded-full bg-[var(--zm-brand-soft)] text-[var(--zm-brand)]">
+                    <CheckCircle2 className="h-10 w-10" strokeWidth={1.8} />
+                  </div>
+                )}
+                <h2 className="text-[20px] font-semibold tracking-tight">
+                  {isTableOrder ? 'Pedido enviado!' : orderStatus === 'rejected' ? 'Pedido não aceito' : orderStatus === 'cancelled' ? 'Pedido cancelado' : 'Pedido enviado!'}
+                </h2>
+                {(() => {
+                  if (orderStatus === 'rejected' || orderStatus === 'cancelled') {
+                    return (
+                      <p className="mt-1.5 max-w-[280px] text-[13.5px] leading-relaxed text-[var(--zm-ink-soft)]">
+                        {isTableOrder
+                          ? 'Seu pedido já está na fila da cozinha. Aguarde o garçom.'
+                          : orderStatus === 'rejected'
+                            ? 'Infelizmente a loja não pôde aceitar seu pedido.'
+                            : 'Este pedido foi cancelado.'}
+                      </p>
+                    );
+                  }
+                  const orderInfo = resolveOrderStatus(orderStatus, isDelivery);
+                  return (
+                    <div className="mt-5 w-full max-w-[260px]">
+                      <div className="flex flex-col">
+                        {orderInfo.steps.map((step, i) => {
+                          const isCompleted = i < orderInfo.currentStepIndex;
+                          const isActive = i === orderInfo.currentStepIndex;
+                          return (
+                            <div key={step.key} className="flex gap-3">
+                              <div className="flex flex-col items-center">
+                                <div className={`flex h-6 w-6 flex-none items-center justify-center rounded-full border-2 ${
+                                  isCompleted
+                                    ? 'border-[var(--zm-brand)] bg-[var(--zm-brand)]'
+                                    : isActive
+                                      ? 'border-[var(--zm-brand)] bg-[var(--zm-brand)]'
+                                      : 'border-[var(--zm-line-strong)] bg-transparent'
+                                }`}>
+                                  {isCompleted ? (
+                                    <CheckCircle2 className="h-3.5 w-3.5 text-white" strokeWidth={3} />
+                                  ) : isActive ? (
+                                    <span className="h-2 w-2 rounded-full bg-white" />
+                                  ) : null}
+                                </div>
+                                {i < orderInfo.steps.length - 1 && (
+                                  <div className={`w-0.5 flex-1 min-h-[20px] ${isCompleted ? 'bg-[var(--zm-brand)]' : 'bg-[var(--zm-line)]'}`} />
+                                )}
+                              </div>
+                              <div className={`pb-5 text-left text-[13px] leading-snug ${
+                                isCompleted
+                                  ? 'font-medium text-[var(--zm-brand-deep)]'
+                                  : isActive
+                                    ? 'font-semibold text-[var(--zm-ink)]'
+                                    : 'text-[var(--zm-ink-soft)]'
+                              }`}>
+                                {step.label}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--zm-ink-soft)]">
+                        {isTableOrder
+                          ? 'Seu pedido já está na fila da cozinha. Aguarde o garçom.'
+                          : orderStatus === 'pending_payment'
+                            ? 'Agora envie o comprovante do Pix no WhatsApp para a loja conferir e preparar.'
+                            : orderStatus === 'pending_review'
+                              ? 'A loja recebeu seu pedido. Aguarde o aceite antes do preparo.'
+                              : orderStatus === 'accepted'
+                                ? 'Pedido aceito pela loja.'
+                                : orderStatus === 'preparing'
+                                  ? 'Seu pedido está sendo preparado.'
+                                  : orderStatus === 'ready'
+                                    ? 'Seu pedido está pronto.'
+                                    : orderStatus === 'out_for_delivery'
+                                      ? 'Seu pedido saiu para entrega.'
+                                      : orderStatus === 'delivered'
+                                        ? 'Pedido concluído. Obrigado!'
+                                        : 'A loja atualizou o seu pedido.'}
+                      </p>
+                    </div>
+                  );
+                })()}
+                <div className="mt-5 w-full max-w-[300px] rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4 text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] text-[var(--zm-ink-soft)]">{itemCount} {itemCount === 1 ? 'item' : 'itens'}</span>
+                    <span className="text-[14px] font-semibold tabular-nums text-[var(--zm-ink)]">
+                      {feeToConfirm ? `${toBRL(estimated.subtotal)} + entrega` : toBRL(estimated.total)}
+                    </span>
+                  </div>
+                  {!isTableOrder && <p className="mt-1.5 text-[12px] text-[var(--zm-ink-soft)]">{summaryMeta}</p>}
+                </div>
+                <span className="mt-5 inline-flex items-center gap-2 rounded-full bg-[var(--zm-brand-soft)] px-3.5 py-2 text-[12px] font-semibold text-[var(--zm-brand-deep)]">
+                  <MessageCircle className="h-3.5 w-3.5" strokeWidth={2} />
+                  {isTableOrder ? 'Aguarde o garçom' : 'Aguarde o contato da loja'}
+                </span>
+                {!isTableOrder && (() => {
+                  const slug = payload?.session?.metadata?.slug;
+                  const storeSlug = typeof slug === 'string' ? slug : null;
+                  const whatsapp = payload?.business.whatsapp ?? null;
+                  const whatsappHref = isPublicOrder && whatsapp
+                    ? buildWhatsAppOrderLink(
+                        whatsapp,
+                        buildWhatsAppOrderMessage({
+                          orderId: payload?.session.orderingId ?? '',
+                          customerName: draft.customerName || null,
+                          items: estimated.items.map((item) => ({
+                            name: formatModifierAwareCartItem(item),
+                            quantity: item.quantity,
+                            lineTotal: item.lineTotal,
+                          })),
+                          subtotal: estimated.subtotal,
+                          total: estimated.total,
+                          feeToConfirm,
+                          isDelivery,
+                          whenLabel,
+                          deliveryAddress: isDelivery ? (draft.deliveryAddress || null) : null,
+                          deliveryNeighborhood: isDelivery ? (draft.deliveryNeighborhood || null) : null,
+                          observations: draft.observations || null,
+                        }),
+                      )
+                    : null;
+                  if (!whatsappHref && !storeSlug) return null;
+                  return (
+                    <div className="mt-6 flex w-full max-w-[300px] flex-col gap-2.5">
+                      {whatsappHref && (
+                        <a
+                          href={whatsappHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] px-6 text-[14px] font-semibold text-white transition-opacity hover:opacity-90 active:scale-95"
+                        >
+                          <MessageCircle className="h-4 w-4" strokeWidth={2} />
+                          Enviar pedido no WhatsApp
+                        </a>
+                      )}
+                      {storeSlug && (
+                        <Link
+                          to={buildPublicStorePath(storeSlug)}
+                          className="inline-flex h-11 items-center justify-center rounded-xl border border-[var(--zm-line-strong)] bg-[var(--zm-surface)] px-6 text-[14px] font-semibold text-[var(--zm-brand)] transition-colors hover:bg-[var(--zm-brand-soft)] active:scale-90"
+                        >
+                          Voltar ao cardápio
+                        </Link>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
             <PublicFooter />
           </div>
         ) : (
           <div className="flex h-full flex-col">
             {/* header */}
-            <div className="flex-none border-b border-[var(--color-line)] bg-[var(--color-surface)] px-3 pb-3 pt-3">
+            <div className="flex-none border-b border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 pb-3 pt-3">
               <div className="flex items-center gap-2">
                 <button type="button" onClick={goBack} aria-label={step === 0 ? 'Fechar' : 'Voltar'} className={iconBtnCls}>
                   {step === 0
@@ -1062,7 +1133,7 @@ export default function ZeloMenuCartPage() {
                   <p className="truncate text-[15px] font-semibold leading-tight">
                     {isTableOrder ? 'Meu pedido' : STEP_TITLES[step]}
                   </p>
-                  <p className="truncate text-[11.5px] text-[var(--color-ink-muted)]">
+                  <p className="truncate text-[11.5px] text-[var(--zm-ink-soft)]">
                     {payload.business.name}
                   </p>
                 </div>
@@ -1090,23 +1161,23 @@ export default function ZeloMenuCartPage() {
                     <div key={s.n} className="min-w-0 flex-1">
                       <div className={`mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold ${
                         status === 'todo'
-                          ? 'text-[var(--color-ink-faint)]'
+                          ? 'text-[var(--zm-ink-soft)/50]'
                           : status === 'active'
-                            ? 'text-[var(--color-ink)]'
-                            : 'text-[var(--color-brand-deep)]'
+                            ? 'text-[var(--zm-ink)]'
+                            : 'text-[var(--zm-brand-deep)]'
                       }`}>
                         <span className={`flex h-4 w-4 flex-none items-center justify-center rounded-full text-[9px] font-bold text-white ${
                           status === 'active'
-                            ? 'bg-[var(--color-ink)]'
+                            ? 'bg-[var(--zm-ink)]'
                             : status === 'done'
-                              ? 'bg-[var(--color-brand)]'
-                              : 'bg-[var(--color-line-strong)]'
+                              ? 'bg-[var(--zm-brand)]'
+                              : 'bg-[var(--zm-line-strong)]'
                         }`}>{s.n}</span>
                         <span className="truncate">{s.label}</span>
                       </div>
-                      <div className="h-[3px] overflow-hidden rounded-full bg-[var(--color-line)]">
+                      <div className="h-[3px] overflow-hidden rounded-full bg-[var(--zm-line)]">
                         <div
-                          className="h-full rounded-full bg-[var(--color-brand)] origin-left transition-transform duration-[420ms] ease-out motion-reduce:transition-none"
+                          className="h-full rounded-full bg-[var(--zm-brand)] origin-left transition-transform duration-[420ms] ease-out motion-reduce:transition-none"
                           style={{ transform: `scaleX(${status === 'todo' ? 0 : 1})` }}
                         />
                       </div>
@@ -1121,7 +1192,7 @@ export default function ZeloMenuCartPage() {
               <div className="flex-none border-b border-[var(--color-warn-soft)] bg-[var(--color-warn-soft)] px-4 py-2.5">
                 <div className="flex gap-2">
                   <AlertTriangle className="mt-px h-4 w-4 flex-none text-[var(--color-warn)]" strokeWidth={1.8} />
-                  <p className="text-[12px] leading-snug text-[var(--color-ink-soft)]">
+                  <p className="text-[12px] leading-snug text-[var(--zm-ink-soft)]">
                     Este link ficou desatualizado. Você ainda pode revisar, mas para salvar mudanças peça um link novo.
                   </p>
                 </div>
@@ -1139,14 +1210,14 @@ export default function ZeloMenuCartPage() {
                   <div className="flex flex-col gap-3.5 p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-[13px] font-semibold">
-                        <ShoppingCart className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+                        <ShoppingCart className="h-4 w-4 text-[var(--zm-ink-soft)]" strokeWidth={1.8} />
                         Itens do pedido
                       </div>
                       {draft.items.length > 0 && (
                         <button
                           type="button"
                           onClick={clearItems}
-                          className="flex items-center gap-1 text-[12px] text-[var(--color-ink-muted)] transition-colors hover:text-[var(--color-alert)] active:scale-95"
+                          className="flex items-center gap-1 text-[12px] text-[var(--zm-ink-soft)] transition-colors hover:text-[var(--color-alert)] active:scale-95"
                           aria-label="Limpar carrinho"
                         >
                           <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
@@ -1155,27 +1226,35 @@ export default function ZeloMenuCartPage() {
                       )}
                     </div>
                     {draft.items.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface-muted)] px-4 py-7 text-center">
-                        <p className="text-[14px] font-medium text-[var(--color-ink-soft)]">Seu carrinho está vazio.</p>
-                        <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">Volte ao cardápio para escolher os itens.</p>
+                      <div className="rounded-xl border border-dashed border-[var(--zm-line)] bg-[var(--zm-surface-muted)] px-4 py-7 text-center">
+                        <p className="text-[14px] font-medium text-[var(--zm-ink-soft)]">Seu carrinho está vazio.</p>
+                        <p className="mt-1 text-[13px] text-[var(--zm-ink-soft)]">Volte ao cardápio para escolher os itens.</p>
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2.5">
                         {estimated.items.map((item) => {
                           const key = estimatedItemKey(item);
-                          const label = formatModifierAwareCartItem(item);
                           return (
-                            <div key={key} className="flex items-center gap-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5">
+                            <div key={key} className="flex items-center gap-3 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-2.5">
                               <div className="flex min-w-0 flex-1 flex-col">
-                                <p className="truncate text-[13.5px] font-semibold leading-tight">{label}</p>
-                                <p className="mt-0.5 text-[11.5px] tabular-nums text-[var(--color-ink-muted)]">{toBRL(item.unitPrice)} cada</p>
+                                <p className="text-[13.5px] font-semibold leading-tight">{item.productName}</p>
+                                {item.selectedModifiers && item.selectedModifiers.length > 0 && (
+                                  <div className="mt-1 space-y-0.5">
+                                    {item.selectedModifiers.map((group) => (
+                                      <p key={group.groupId} className="text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">
+                                        {group.groupName}: {group.selectedOptions.map((opt) => opt.quantity > 1 ? `${opt.quantity}x ${opt.optionName}` : opt.optionName).join(', ')}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                                <p className="mt-0.5 text-[11.5px] tabular-nums text-[var(--zm-ink-soft)]">{toBRL(item.unitPrice)} cada</p>
                               </div>
-                              <div className="inline-flex h-9 flex-none items-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]">
+                              <div className="inline-flex h-9 flex-none items-center rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)]">
                                 <button
                                   type="button"
                                   onClick={() => changeItemQuantity(key, item.quantity - 1)}
-                                  className={`flex h-9 w-9 items-center justify-center transition-transform active:scale-90 ${item.quantity <= 1 ? 'text-[var(--color-alert)]' : 'text-[var(--color-ink-soft)]'}`}
-                                  aria-label={`Diminuir ${label}`}
+                                  className={`flex h-9 w-9 items-center justify-center transition-transform active:scale-90 ${item.quantity <= 1 ? 'text-[var(--color-alert)]' : 'text-[var(--zm-ink-soft)]'}`}
+                                  aria-label={`Diminuir ${item.productName}`}
                                 >
                                   {item.quantity <= 1
                                     ? <Trash2 className="h-4 w-4" strokeWidth={1.8} />
@@ -1185,7 +1264,7 @@ export default function ZeloMenuCartPage() {
                                   type="text"
                                   inputMode="numeric"
                                   pattern="[0-9]*"
-                                  aria-label={`Quantidade de ${label}`}
+                                  aria-label={`Quantidade de ${item.productName}`}
                                   value={quantityDrafts[key] ?? String(item.quantity)}
                                   onFocus={(event) => event.currentTarget.select()}
                                   onChange={(event) => editItemQuantity(key, event.target.value)}
@@ -1194,13 +1273,13 @@ export default function ZeloMenuCartPage() {
                                     if (event.key === 'Enter') event.currentTarget.blur();
                                   }}
                                   readOnly={!isOpen}
-                                  className="h-9 w-9 border-x border-[var(--color-line)] bg-transparent px-0 text-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)] outline-none focus:bg-[var(--color-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand)]"
+                                  className="h-9 w-9 border-x border-[var(--zm-line)] bg-transparent px-0 text-center text-[13px] font-semibold tabular-nums text-[var(--zm-ink)] outline-none focus:bg-[var(--zm-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--zm-brand)]"
                                 />
                                 <button
                                   type="button"
                                   onClick={() => changeItemQuantity(key, item.quantity + 1)}
-                                  className="flex h-9 w-9 items-center justify-center text-[var(--color-ink-soft)] transition-transform active:scale-90"
-                                  aria-label={`Aumentar ${label}`}
+                                  className="flex h-9 w-9 items-center justify-center text-[var(--zm-ink-soft)] transition-transform active:scale-90"
+                                  aria-label={`Aumentar ${item.productName}`}
                                 >
                                   <Plus className="h-4 w-4" strokeWidth={1.8} />
                                 </button>
@@ -1226,23 +1305,23 @@ export default function ZeloMenuCartPage() {
                       if (suggestions.length === 0) return null;
                       return (
                         <div className="mt-1">
-                          <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Complete seu pedido</p>
+                          <p className="mb-2 text-[13px] font-semibold text-[var(--zm-ink)]">Complete seu pedido</p>
                           <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
                             {suggestions.map((p) => (
                               <div
                                 key={p.id}
-                                className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2"
+                                className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-2"
                                 style={{ scrollSnapAlign: 'start' }}
                               >
                                 {p.photoUrl ? (
                                   <img src={p.photoUrl} alt={p.name} className="mb-1.5 h-[72px] w-full rounded-lg object-cover" />
                                 ) : (
-                                  <div className="mb-1.5 flex h-[72px] items-center justify-center rounded-lg bg-[var(--color-surface-muted)] text-[var(--color-ink-faint)]">
+                                  <div className="mb-1.5 flex h-[72px] items-center justify-center rounded-lg bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)/50]">
                                     <ImageIcon className="h-6 w-6" strokeWidth={1.4} />
                                   </div>
                                 )}
-                                <p className="line-clamp-2 text-[12px] font-medium leading-tight text-[var(--color-ink)]">{p.name}</p>
-                                <p className="mt-0.5 text-[11px] tabular-nums text-[var(--color-ink-muted)]">{toBRL(p.basePrice)}</p>
+                                <p className="line-clamp-2 text-[12px] font-medium leading-tight text-[var(--zm-ink)]">{p.name}</p>
+                                <p className="mt-0.5 text-[11px] tabular-nums text-[var(--zm-ink-soft)]">{toBRL(p.basePrice)}</p>
                                 <button
                                   type="button"
                                   disabled={!isOpen}
@@ -1271,7 +1350,7 @@ export default function ZeloMenuCartPage() {
                                       toast.success('Adicionado ao pedido');
                                     }
                                   }}
-                                  className="mt-auto flex h-8 w-full items-center justify-center gap-1 rounded-lg bg-[var(--color-brand)] text-[12px] font-bold text-white transition-transform active:scale-95 disabled:opacity-40"
+                                  className="mt-auto flex h-8 w-full items-center justify-center gap-1 rounded-lg bg-[var(--zm-brand)] text-[12px] font-bold text-white transition-transform active:scale-95 disabled:opacity-40"
                                 >
                                   <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
                                   Adicionar
@@ -1285,14 +1364,14 @@ export default function ZeloMenuCartPage() {
 
                     {isTableOrder && (
                       <label className="flex flex-col gap-1.5">
-                        <span className="text-[11.5px] font-semibold text-[var(--color-ink-muted)]">Observações (opcional)</span>
+                        <span className="text-[11.5px] font-semibold text-[var(--zm-ink-soft)]">Observações (opcional)</span>
                         <textarea
                           value={draft.observations}
                           onChange={(event) => updateField('observations', event.target.value)}
                           readOnly={!isOpen}
                           placeholder="Ex: sem cebola, ponto da carne bem passado…"
                           rows={3}
-                          className="w-full resize-none rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2.5 text-[14px] text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)]"
+                          className="w-full resize-none rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 py-2.5 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)]"
                         />
                       </label>
                     )}
@@ -1304,7 +1383,7 @@ export default function ZeloMenuCartPage() {
                   <div className="flex flex-col p-4">
                     <div className="flex flex-col gap-2">
                       <span className={labelCls}>Como você quer receber?</span>
-                      <div className="flex gap-1 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-1">
+                      <div className="flex gap-1 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface-muted)] p-1">
                         <button
                           type="button"
                           disabled={!isOpen || !deliveryEnabled}
@@ -1327,7 +1406,7 @@ export default function ZeloMenuCartPage() {
                         </button>
                       </div>
                       {!deliveryEnabled ? (
-                        <span className="text-[11px] text-[var(--color-ink-muted)]">Esta loja está só com retirada no momento.</span>
+                        <span className="text-[11px] text-[var(--zm-ink-soft)]">Esta loja está só com retirada no momento.</span>
                       ) : null}
                     </div>
 
@@ -1354,7 +1433,7 @@ export default function ZeloMenuCartPage() {
                         readOnly={!isOpen || !isPublicOrder}
                         required
                         aria-invalid={showErrors && Boolean(detailErrors.customerPhone)}
-                        className={`${inputCls} ${isPublicOrder ? '' : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'} ${showErrors && detailErrors.customerPhone ? invalidInputCls : ''}`}
+                        className={`${inputCls} ${isPublicOrder ? '' : 'bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]'} ${showErrors && detailErrors.customerPhone ? invalidInputCls : ''}`}
                         placeholder="(XX) XXXXX-XXXX"
                       />
                       {fieldError(detailErrors.customerPhone)}
@@ -1379,7 +1458,7 @@ export default function ZeloMenuCartPage() {
                               ))}
                             </datalist>
                             {feeToConfirm ? (
-                              <span className="text-[11px] leading-snug text-[var(--color-ink-muted)]">
+                              <span className="text-[11px] leading-snug text-[var(--zm-ink-soft)]">
                                 Bairro fora da tabela — a taxa de entrega será confirmada pela loja.
                               </span>
                             ) : null}
@@ -1404,7 +1483,7 @@ export default function ZeloMenuCartPage() {
 
                     <div className="mt-4 flex flex-col gap-2">
                       <span className={labelCls}>Quando?</span>
-                      <div className="flex gap-1 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-1">
+                      <div className="flex gap-1 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface-muted)] p-1">
                         <button type="button" disabled={!isOpen} onClick={enableAsap} aria-pressed={scheduleMode === 'asap'} className={segCls(scheduleMode === 'asap')}>
                           <Zap className="h-4 w-4" strokeWidth={1.8} />
                           Pra já
@@ -1415,8 +1494,8 @@ export default function ZeloMenuCartPage() {
                         </button>
                       </div>
                       {scheduleMode === 'asap' ? (
-                        <p className="text-[11.5px] leading-snug text-[var(--color-ink-muted)]">
-                          {isDelivery ? 'Entrega o quanto antes.' : 'Retirada o quanto antes.'} Data e horário serão preenchidos automaticamente. É uma encomenda para outro momento? Toque em <span className="font-semibold text-[var(--color-ink-soft)]">Agendar</span>.
+                        <p className="text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">
+                          {isDelivery ? 'Entrega o quanto antes.' : 'Retirada o quanto antes.'} Data e horário serão preenchidos automaticamente. É uma encomenda para outro momento? Toque em <span className="font-semibold text-[var(--zm-ink-soft)]">Agendar</span>.
                         </p>
                       ) : (
                         <div className="grid grid-cols-2 gap-3">
@@ -1462,7 +1541,7 @@ export default function ZeloMenuCartPage() {
                 <section inert={step !== 2} className="h-full w-1/3 overflow-y-auto">
                   <div className="flex flex-col gap-4 p-4">
                     <div className="flex items-center gap-2 text-[13px] font-semibold">
-                      <Wallet className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+                      <Wallet className="h-4 w-4 text-[var(--zm-ink-soft)]" strokeWidth={1.8} />
                       Forma de pagamento
                     </div>
                     <div className="flex flex-col gap-2">
@@ -1475,13 +1554,13 @@ export default function ZeloMenuCartPage() {
                             disabled={!isOpen}
                             onClick={() => updateField('paymentMethod', opt === 'Outro' ? '' : opt)}
                             aria-pressed={selected}
-                            className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)]' : 'border-[var(--color-line)] bg-[var(--color-surface)]'}`}
+                            className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-[var(--zm-brand)] bg-[var(--zm-brand-soft)]' : 'border-[var(--zm-line)] bg-[var(--zm-surface)]'}`}
                           >
-                            <span className={`flex h-[18px] w-[18px] flex-none items-center justify-center rounded-full border-2 ${selected ? 'border-[var(--color-brand)]' : 'border-[var(--color-line-strong)]'}`}>
-                              {selected ? <span className="h-2 w-2 rounded-full bg-[var(--color-brand)]" /> : null}
+                            <span className={`flex h-[18px] w-[18px] flex-none items-center justify-center rounded-full border-2 ${selected ? 'border-[var(--zm-brand)]' : 'border-[var(--zm-line-strong)]'}`}>
+                              {selected ? <span className="h-2 w-2 rounded-full bg-[var(--zm-brand)]" /> : null}
                             </span>
-                            <span className={selected ? 'text-[var(--color-brand-deep)]' : 'text-[var(--color-ink-muted)]'}>{paymentIcon(opt)}</span>
-                            <span className="text-[13.5px] font-semibold text-[var(--color-ink)]">{opt}</span>
+                            <span className={selected ? 'text-[var(--zm-brand-deep)]' : 'text-[var(--zm-ink-soft)]'}>{paymentIcon(opt)}</span>
+                            <span className="text-[13.5px] font-semibold text-[var(--zm-ink)]">{opt}</span>
                           </button>
                         );
                       })}
@@ -1501,7 +1580,7 @@ export default function ZeloMenuCartPage() {
                     ) : null}
 
                     {payload.business.pixEnabled && /pix/i.test(draft.paymentMethod) ? (
-                      <div className="flex items-start gap-2 rounded-xl border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)] p-3 text-[12px] leading-relaxed text-[var(--color-brand-deep)]">
+                      <div className="flex items-start gap-2 rounded-xl border border-[var(--zm-brand-soft)] bg-[var(--zm-brand-soft)] p-3 text-[12px] leading-relaxed text-[var(--zm-brand-deep)]">
                         <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-none" strokeWidth={2} />
                         <span>O comprovante do Pix será conferido pela loja antes de preparar.</span>
                       </div>
@@ -1514,14 +1593,14 @@ export default function ZeloMenuCartPage() {
                         onChange={(event) => updateField('observations', event.target.value)}
                         readOnly={!isOpen}
                         rows={3}
-                        className="w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-3 text-[14px] text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)]"
+                        className="w-full rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 py-3 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)]"
                         placeholder="Ex.: sem cebola, troco para R$ 100, deixar na portaria"
                       />
                     </label>
 
                     {/* Coupon input */}
                     <label className="block">
-                      <span className="mb-1 block text-[12px] font-medium text-[var(--color-ink-muted)]">
+                      <span className="mb-1 block text-[12px] font-medium text-[var(--zm-ink-soft)]">
                         Cupom de desconto
                       </span>
                       <div className="flex gap-2">
@@ -1532,13 +1611,13 @@ export default function ZeloMenuCartPage() {
                           placeholder="Código do cupom"
                           disabled={!isOpen}
                           maxLength={30}
-                          className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-3 text-[14px] text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)] disabled:opacity-50"
+                          className="block w-full rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 py-3 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)] disabled:opacity-50"
                         />
                         {draft.couponCode && (
                           <button
                             type="button"
                             onClick={() => setDraft((prev) => prev ? { ...prev, couponCode: '' } : prev)}
-                            className="self-start rounded-lg p-3 text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-line)]"
+                            className="self-start rounded-lg p-3 text-[var(--zm-ink-soft)] transition-colors hover:bg-[var(--zm-line)]"
                           >
                             <X className="h-4 w-4" />
                           </button>
@@ -1547,15 +1626,15 @@ export default function ZeloMenuCartPage() {
                     </label>
 
                     <div className="flex items-center gap-2 text-[13px] font-semibold">
-                      <ShoppingCart className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+                      <ShoppingCart className="h-4 w-4 text-[var(--zm-ink-soft)]" strokeWidth={1.8} />
                       Resumo
                     </div>
-                    <div className="flex flex-col gap-2.5 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-3.5">
-                      <div className="flex items-center justify-between text-[13px] text-[var(--color-ink-soft)]">
+                    <div className="flex flex-col gap-2.5 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3.5">
+                      <div className="flex items-center justify-between text-[13px] text-[var(--zm-ink-soft)]">
                         <span>Itens</span>
                         <span className="tabular-nums">{toBRL(estimated.subtotal)}</span>
                       </div>
-                      <div className="flex items-center justify-between text-[13px] text-[var(--color-ink-soft)]">
+                      <div className="flex items-center justify-between text-[13px] text-[var(--zm-ink-soft)]">
                         <span>{isDelivery ? 'Entrega' : 'Retirada'}</span>
                         <span className="tabular-nums">
                           {isDelivery ? (feeToConfirm ? 'a confirmar' : toBRL(fee)) : 'sem taxa'}
@@ -1567,11 +1646,11 @@ export default function ZeloMenuCartPage() {
                           <span className="tabular-nums">-{toBRL(payload.session.pricing.discount)}</span>
                         </div>
                       )}
-                      <div className="flex items-center justify-between border-t border-[var(--color-line)] pt-2.5 text-[15px] font-bold text-[var(--color-ink)]">
+                      <div className="flex items-center justify-between border-t border-[var(--zm-line)] pt-2.5 text-[15px] font-bold text-[var(--zm-ink)]">
                         <span>Total</span>
                         <span className="tabular-nums">{feeToConfirm ? `${toBRL(payload.session.pricing.subtotal)} +` : toBRL(payload.session.pricing.total)}</span>
                       </div>
-                      <p className="text-[11.5px] leading-relaxed text-[var(--color-ink-muted)]">{summaryMeta}</p>
+                      <p className="text-[11.5px] leading-relaxed text-[var(--zm-ink-soft)]">{summaryMeta}</p>
                     </div>
                   </div>
                 </section>
@@ -1579,12 +1658,12 @@ export default function ZeloMenuCartPage() {
             </div>
 
             {/* footer — total ao vivo + CTA sempre visível */}
-            <div className="flex-none border-t border-[var(--color-line)] bg-[var(--color-surface)] px-4 pb-5 pt-3">
+            <div className="flex-none border-t border-[var(--zm-line)] bg-[var(--zm-surface)] px-4 pb-5 pt-3">
               <div className="mb-2 flex min-h-4 justify-end" aria-live="polite">
                 {saveStatus === 'saving' ? (
-                  <span className="text-[10.5px] text-[var(--color-ink-muted)]">Salvando alterações…</span>
+                  <span className="text-[10.5px] text-[var(--zm-ink-soft)]">Salvando alterações…</span>
                 ) : saveStatus === 'saved' ? (
-                  <span className="text-[10.5px] text-[var(--color-brand-deep)]">Alterações salvas</span>
+                  <span className="text-[10.5px] text-[var(--zm-brand-deep)]">Alterações salvas</span>
                 ) : saveStatus === 'error' ? (
                   <button
                     type="button"
@@ -1603,21 +1682,21 @@ export default function ZeloMenuCartPage() {
                   <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-[var(--color-alert)]" strokeWidth={1.8} />
                   <div className="flex flex-col gap-1">
                     <p className="text-[12px] font-semibold text-[var(--color-alert)]">Não é possível confirmar agora</p>
-                    <p className="text-[11.5px] leading-snug text-[var(--color-ink-soft)]">{scheduleTimeError}</p>
+                    <p className="text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">{scheduleTimeError}</p>
                   </div>
                 </div>
               ) : null}
               <div className="flex items-center gap-3">
                 <div className="flex flex-col leading-tight">
-                  <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">{isTableOrder || step === 0 ? 'Subtotal' : 'Total'}</span>
+                  <span className="text-[11px] font-semibold text-[var(--zm-ink-soft)]">{isTableOrder || step === 0 ? 'Subtotal' : 'Total'}</span>
                   <span className="text-[19px] font-bold tabular-nums tracking-tight">{footValue}</span>
-                  {footSub ? <span className="text-[10.5px] text-[var(--color-ink-faint)]">{footSub}</span> : null}
+                  {footSub ? <span className="text-[10.5px] text-[var(--zm-ink-soft)/50]">{footSub}</span> : null}
                 </div>
                 <button
                   type="button"
                   onClick={goNext}
                   disabled={ctaDisabled}
-                  className={`flex h-[50px] flex-1 items-center justify-center gap-2 rounded-2xl text-[14.5px] font-semibold text-white transition-transform active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 ${isTableOrder || step === 2 ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-ink)]'}`}
+                  className={`flex h-[50px] flex-1 items-center justify-center gap-2 rounded-2xl text-[14.5px] font-semibold text-white transition-transform active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 ${isTableOrder || step === 2 ? 'bg-[var(--zm-brand)]' : 'bg-[var(--zm-ink)]'}`}
                 >
                   {confirming && step === 2 ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
                   {ctaLabel}

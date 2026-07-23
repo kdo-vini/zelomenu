@@ -182,22 +182,22 @@ export function ZeloMenuStorePage({
   // ── Loading / error states ──────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[var(--color-canvas)]">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)]" strokeWidth={1.8} />
-        <p className="text-[13px] text-[var(--color-ink-muted)]">Carregando cardápio…</p>
+      <div className="zelomenu-theme flex min-h-screen flex-col items-center justify-center gap-3 bg-[var(--zm-canvas)]">
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--zm-brand)]" strokeWidth={1.8} />
+        <p className="text-[13px] text-[var(--zm-ink-soft)]">Carregando cardápio…</p>
       </div>
     );
   }
 
   if (error && !store) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-canvas)] px-6">
-        <div className="max-w-sm rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-6 text-center">
+      <div className="zelomenu-theme flex min-h-screen items-center justify-center bg-[var(--zm-canvas)] px-6">
+        <div className="max-w-sm rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-6 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-alert-soft)]">
             <AlertTriangle className="h-6 w-6 text-[var(--color-alert)]" strokeWidth={1.8} />
           </div>
-          <h2 className="text-[16px] font-semibold text-[var(--color-ink)]">Cardápio indisponível</h2>
-          <p className="mt-1 text-[14px] text-[var(--color-ink-muted)]">{error}</p>
+          <h2 className="text-[16px] font-semibold text-[var(--zm-ink)]">Cardápio indisponível</h2>
+          <p className="mt-1 text-[14px] text-[var(--zm-ink-soft)]">{error}</p>
         </div>
       </div>
     );
@@ -210,7 +210,7 @@ export function ZeloMenuStorePage({
   const outsideBusinessHours = businessHours?.configured === true && businessHours.openNow === false;
 
   return (
-    <div className="min-h-screen bg-[var(--color-canvas)]" style={{ paddingBottom: 'max(7rem, calc(7rem + env(safe-area-inset-bottom)))' }}>
+    <div className="zelomenu-theme min-h-screen bg-[var(--zm-canvas)]" style={{ paddingBottom: 'max(7rem, calc(7rem + env(safe-area-inset-bottom)))' }}>
 
       {/* ── Mesa banner ────────────────────────────────────────────────────── */}
       {mesaBanner ? (
@@ -220,7 +220,7 @@ export function ZeloMenuStorePage({
       ) : null}
 
       {/* ── Sticky header ──────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-20 border-b border-[var(--color-line)] bg-[var(--color-surface)]">
+      <header className="sticky top-0 z-20 border-b border-[var(--zm-line)] bg-[var(--zm-surface)]">
         <div className="mx-auto max-w-5xl">
 
           {/* Store identity row */}
@@ -241,20 +241,20 @@ export function ZeloMenuStorePage({
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <h1 className="truncate text-[17px] font-bold leading-tight text-[var(--color-ink)]">
+              <h1 className="truncate text-[17px] font-bold leading-tight text-[var(--zm-ink)]">
                 {store.business.name || 'Cardápio'}
               </h1>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 {store.business.address ? (
-                  <p className="truncate text-[11px] text-[var(--color-ink-muted)]">{store.business.address}</p>
+                  <p className="truncate text-[11px] text-[var(--zm-ink-soft)]">{store.business.address}</p>
                 ) : null}
                 {store.business.deliveryEnabled ? (
-                  <span className="shrink-0 rounded-full bg-[var(--color-brand-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-brand-deep)]">
+                  <span className="shrink-0 rounded-full bg-[var(--zm-brand-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--zm-brand-deep)]">
                     Entrega
                   </span>
                 ) : null}
                 {store.business.pixEnabled ? (
-                  <span className="shrink-0 rounded-full bg-[var(--color-canvas)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)]">
+                  <span className="shrink-0 rounded-full bg-[var(--zm-canvas)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--zm-ink-soft)/50]">
                     Pix
                   </span>
                 ) : null}
@@ -264,18 +264,18 @@ export function ZeloMenuStorePage({
 
           {/* Search bar */}
           <div className="px-4 pb-2.5">
-            <div className="flex h-10 items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 focus-within:border-[var(--color-brand)]" style={{ transition: 'border-color 0.15s' }}>
-              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-muted)]" strokeWidth={2} />
+            <div className="flex h-10 items-center gap-2 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-canvas)] px-3 focus-within:border-[var(--zm-brand)]" style={{ transition: 'border-color 0.15s' }}>
+              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--zm-ink-soft)]" strokeWidth={2} />
               <input
                 type="search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Buscar no cardápio…"
-                className="flex-1 bg-transparent text-[13px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-muted)] outline-none"
+                className="flex-1 bg-transparent text-[13px] text-[var(--zm-ink)] placeholder:text-[var(--zm-ink-soft)] outline-none"
               />
               {searchQuery ? (
                 <button type="button" onClick={() => setSearchQuery('')} className="shrink-0 rounded p-0.5">
-                  <X className="h-3.5 w-3.5 text-[var(--color-ink-muted)]" strokeWidth={2} />
+                  <X className="h-3.5 w-3.5 text-[var(--zm-ink-soft)]" strokeWidth={2} />
                 </button>
               ) : null}
             </div>
@@ -296,8 +296,8 @@ export function ZeloMenuStorePage({
                   onClick={() => scrollToCategory(group.nome)}
                   className="shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
                   style={{
-                    background: activeCategory === group.nome ? 'var(--color-brand)' : 'var(--color-canvas)',
-                    color: activeCategory === group.nome ? '#fff' : 'var(--color-ink-soft)',
+                    background: activeCategory === group.nome ? 'var(--zm-brand)' : 'var(--zm-canvas)',
+                    color: activeCategory === group.nome ? '#fff' : 'var(--zm-ink-soft)',
                     transition: 'background 0.2s, color 0.2s',
                   }}
                 >
@@ -324,10 +324,10 @@ export function ZeloMenuStorePage({
             <div className="flex gap-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warn)]" strokeWidth={2} />
               <div className="min-w-0">
-                <p className="text-[13px] font-semibold text-[var(--color-ink)]">
+                <p className="text-[13px] font-semibold text-[var(--zm-ink)]">
                   Fora do horário de atendimento
                 </p>
-                <p className="mt-0.5 text-[12px] leading-5 text-[var(--color-ink-soft)]">
+                <p className="mt-0.5 text-[12px] leading-5 text-[var(--zm-ink-soft)]">
                   {businessHours?.nextOpen
                     ? `Próximo horário: ${businessHours.nextOpen.day} às ${businessHours.nextOpen.start}. Você pode montar o pedido e agendar.`
                     : `Você pode montar o pedido agora e agendar para um horário disponível${businessHours?.label ? ` (${businessHours.label}).` : '.'}`}
@@ -339,7 +339,7 @@ export function ZeloMenuStorePage({
 
         {/* Welcome text */}
         {!searchQuery && store.business.welcomeText ? (
-          <p className="mb-5 text-[14px] leading-relaxed text-[var(--color-ink-soft)]">
+          <p className="mb-5 text-[14px] leading-relaxed text-[var(--zm-ink-soft)]">
             {store.business.welcomeText}
           </p>
         ) : null}
@@ -350,7 +350,7 @@ export function ZeloMenuStorePage({
           if (featured.length === 0) return null;
           return (
             <div className="mb-8">
-              <h2 className="mb-3 text-[15px] font-bold text-[var(--color-ink)]">Destaques</h2>
+              <h2 className="mb-3 text-[15px] font-bold text-[var(--zm-ink)]">Destaques</h2>
               <div
                 className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1"
                 style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } as CSSProperties}
@@ -367,9 +367,9 @@ export function ZeloMenuStorePage({
 
         {filteredCatalog.length === 0 ? (
           <div className="flex flex-col items-center py-16 text-center">
-            <Search className="mb-3 h-10 w-10 text-[var(--color-line-strong)]" strokeWidth={1.5} />
-            <p className="text-[15px] font-semibold text-[var(--color-ink-soft)]">Nenhum item encontrado</p>
-            <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">Tente um termo diferente</p>
+            <Search className="mb-3 h-10 w-10 text-[var(--zm-line-strong)]" strokeWidth={1.5} />
+            <p className="text-[15px] font-semibold text-[var(--zm-ink-soft)]">Nenhum item encontrado</p>
+            <p className="mt-1 text-[13px] text-[var(--zm-ink-soft)]">Tente um termo diferente</p>
           </div>
         ) : (
           <div className="space-y-8">
@@ -382,7 +382,7 @@ export function ZeloMenuStorePage({
                   data-category={group.nome}
                   ref={(el) => { sectionRefs.current[group.nome] = el; }}
                 >
-                  <h2 className="mb-3 text-[15px] font-bold text-[var(--color-ink)]">{group.nome}</h2>
+                  <h2 className="mb-3 text-[15px] font-bold text-[var(--zm-ink)]">{group.nome}</h2>
 
                   {group.produtosDireto.length > 0 ? (
                     <ProductGrid
@@ -398,7 +398,7 @@ export function ZeloMenuStorePage({
                   {group.subcategorias.map((sub) =>
                     sub.produtos.length > 0 ? (
                       <div key={sub.nome} className="mt-4">
-                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--zm-ink-soft)]">
                           {sub.nome}
                         </p>
                         <ProductGrid
@@ -433,7 +433,7 @@ export function ZeloMenuStorePage({
               onClick={() => void cart.continueToCart()}
               disabled={cart.submitting || !!mesaUnavailableMessage}
               className="flex w-full items-center justify-between rounded-2xl px-5 py-4 text-white shadow-2xl disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ background: 'var(--color-brand)' }}
+              style={{ background: 'var(--zm-brand)' }}
             >
               <div className="flex items-center gap-3">
                 <span
@@ -508,7 +508,7 @@ function ProductGrid({
     );
   }
   return (
-    <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
+    <div className="overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)]">
       {products.map((p, i) => (
         <div key={p.id}>
           <ListRow
@@ -560,7 +560,7 @@ function QtyControl({
           <button
             type="button"
             onClick={() => onSetQty(plainKey, 0)}
-            className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--color-line)]`}
+            className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--zm-line)]`}
             aria-label="Remover"
           >
             <X className={stepIcon} strokeWidth={2.5} />
@@ -569,7 +569,7 @@ function QtyControl({
             type="button"
             onClick={onAdd}
             className={`flex ${stepBtn} min-w-fit items-center justify-center rounded-full px-2.5 text-[13px] font-bold text-white`}
-            style={{ background: 'var(--color-brand)' }}
+            style={{ background: 'var(--zm-brand)' }}
             aria-label={`Editar quantidade de ${product.name}`}
           >
             {qty}
@@ -582,7 +582,7 @@ function QtyControl({
         <button
           type="button"
           onClick={() => onChangeQty(plainKey, -1)}
-          className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--color-line)]`}
+          className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--zm-line)]`}
           aria-label="Diminuir"
         >
           <Minus className={stepIcon} strokeWidth={2.5} />
@@ -592,7 +592,7 @@ function QtyControl({
           type="button"
           onClick={() => onChangeQty(plainKey, 1)}
           className={`flex ${stepBtn} items-center justify-center rounded-full text-white`}
-          style={{ background: 'var(--color-brand)' }}
+          style={{ background: 'var(--zm-brand)' }}
           aria-label="Aumentar"
         >
           <Plus className={stepIcon} strokeWidth={2.5} />
@@ -606,7 +606,7 @@ function QtyControl({
       type="button"
       onClick={onAdd}
       className={`flex ${addBtn} items-center justify-center rounded-full text-white`}
-      style={{ background: 'var(--color-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
+      style={{ background: 'var(--zm-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
       onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
       onMouseUp={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
@@ -640,18 +640,18 @@ function PhotoRow({
   const isUnit = product.unitBased === true;
 
   return (
-    <div className="flex gap-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
+    <div className="flex gap-3 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3">
       <div className="flex min-w-0 flex-1 flex-col">
-        <p className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[var(--color-ink)]">
+        <p className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[var(--zm-ink)]">
           {product.name}
         </p>
         {product.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--color-ink-muted)]">
+          <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">
             {product.description}
           </p>
         ) : null}
         <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-          <p className="text-[13px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
+          <p className="text-[13px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
             {toBRL(product.basePrice)}
           </p>
           <QtyControl
@@ -667,7 +667,7 @@ function PhotoRow({
         </div>
       </div>
 
-      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-[var(--color-canvas)]">
+      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-[var(--zm-canvas)]">
         {product.photoUrl ? (
           <img
             src={product.photoUrl}
@@ -677,13 +677,13 @@ function PhotoRow({
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
-            <ShoppingBag className="h-6 w-6 text-[var(--color-line-strong)]" strokeWidth={1.5} />
+            <ShoppingBag className="h-6 w-6 text-[var(--zm-line-strong)]" strokeWidth={1.5} />
           </div>
         )}
         {qty > 0 ? (
           <span
             className="absolute right-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white"
-            style={{ background: 'var(--color-brand)' }}
+            style={{ background: 'var(--zm-brand)' }}
           >
             {qty}
           </span>
@@ -715,8 +715,8 @@ function FeaturedCard({
   const isUnit = product.unitBased === true;
 
   return (
-    <div className="flex h-full w-[148px] flex-col overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
-      <div className="relative h-[110px] w-full overflow-hidden bg-[var(--color-canvas)]">
+    <div className="flex h-full w-[148px] flex-col overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)]">
+      <div className="relative h-[110px] w-full overflow-hidden bg-[var(--zm-canvas)]">
         {product.photoUrl ? (
           <img
             src={product.photoUrl}
@@ -726,24 +726,24 @@ function FeaturedCard({
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
-            <ShoppingBag className="h-7 w-7 text-[var(--color-line-strong)]" strokeWidth={1.5} />
+            <ShoppingBag className="h-7 w-7 text-[var(--zm-line-strong)]" strokeWidth={1.5} />
           </div>
         )}
         {qty > 0 ? (
           <span
             className="absolute right-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white"
-            style={{ background: 'var(--color-brand)' }}
+            style={{ background: 'var(--zm-brand)' }}
           >
             {qty}
           </span>
         ) : null}
       </div>
       <div className="flex flex-1 flex-col gap-1 p-2.5">
-        <p className="line-clamp-2 text-[12.5px] font-semibold leading-snug text-[var(--color-ink)]">
+        <p className="line-clamp-2 text-[12.5px] font-semibold leading-snug text-[var(--zm-ink)]">
           {product.name}
         </p>
         <div className="mt-auto flex items-center justify-between gap-1 pt-1.5">
-          <p className="text-[12.5px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
+          <p className="text-[12.5px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
             {toBRL(product.basePrice)}
           </p>
           <QtyControl
@@ -785,10 +785,10 @@ function ListRow({
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 ${divider ? 'border-b border-[var(--color-line)]' : ''}`}
+      className={`flex items-center gap-3 px-4 py-3 ${divider ? 'border-b border-[var(--zm-line)]' : ''}`}
     >
       {product.photoUrl ? (
-        <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--color-canvas)] p-1.5">
+        <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--zm-canvas)] p-1.5">
           <img
             src={product.photoUrl}
             alt={product.name}
@@ -798,13 +798,13 @@ function ListRow({
         </div>
       ) : null}
       <div className="min-w-0 flex-1">
-        <p className="text-[14px] font-semibold text-[var(--color-ink)]">{product.name}</p>
+        <p className="text-[14px] font-semibold text-[var(--zm-ink)]">{product.name}</p>
         {product.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-[var(--color-ink-muted)]">
+          <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-[var(--zm-ink-soft)]">
             {product.description}
           </p>
         ) : null}
-        <p className="mt-1 text-[13px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
+        <p className="mt-1 text-[13px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
           {toBRL(product.basePrice)}
         </p>
       </div>

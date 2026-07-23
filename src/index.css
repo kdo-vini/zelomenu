@@ -33,6 +33,26 @@
   --color-warn-soft: #fbf0d8;
 }
 
+/*
+ * ZeloMenu brand theme — applied to the public storefront only (not admin).
+ * Scoped via .zelomenu-theme on the top-level wrapper of ZeloMenuStorePage
+ * and ZeloMenuCartPage. These --zm-* tokens replace the old green brand
+ * with the new lilac/purple palette.
+ */
+.zelomenu-theme {
+  --zm-brand: #6E3AFF;
+  --zm-brand-deep: #5A2EEA;
+  --zm-brand-soft: #E9E2FF;
+  --zm-canvas: #F5F2FF;
+  --zm-surface: #FFFFFF;
+  --zm-surface-muted: #ECEEF3;
+  --zm-ink: #0B1D3A;
+  --zm-ink-soft: #5B6475;
+  --zm-line: #E6E8EF;
+  --zm-line-strong: #d1d5dd;
+  --zm-accent: #C8F000;
+}
+
 html,
 body,
 #root {
