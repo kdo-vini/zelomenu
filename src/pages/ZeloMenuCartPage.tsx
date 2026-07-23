@@ -983,14 +983,28 @@ export default function ZeloMenuCartPage() {
           <div className="flex h-full flex-col">
             <div className={`flex-1 ${showMascot ? 'flex flex-col sm:flex-row' : 'flex flex-col'}`}>
               {showMascot && (
-                <div className="hidden sm:flex w-[42%] flex-none items-center justify-center overflow-hidden rounded-l-[28px] bg-[var(--zm-brand-soft)]">
-                  <img src="/zelomenu-mascot-chef.png" alt="" className="h-full w-full object-cover" />
+                <div className="hidden sm:flex w-[42%] flex-none items-center justify-center overflow-hidden rounded-l-[28px] bg-[#DDD3F9]">
+                  <img
+                    src="/zelomenu-mascot-chef.webp"
+                    alt="Mascote do ZeloMenu comemorando o pedido enviado"
+                    width={820}
+                    height={820}
+                    decoding="async"
+                    className="h-full w-full object-contain"
+                  />
                 </div>
               )}
               <div className={`flex flex-1 flex-col ${showMascot ? 'items-center justify-center px-7 text-center sm:overflow-y-auto' : 'items-center justify-center px-7 text-center'}`}>
                 {showMascot && (
-                  <div className="sm:hidden mb-3 mx-auto h-20 w-20 overflow-hidden rounded-full">
-                    <img src="/zelomenu-mascot-chef.png" alt="" className="relative h-[170px] w-[170px] max-w-none" style={{ left: '-45px', top: '-25px' }} />
+                  <div className="sm:hidden mb-4 w-full max-w-[280px] overflow-hidden rounded-2xl bg-[#DDD3F9]">
+                    <img
+                      src="/zelomenu-mascot-chef.webp"
+                      alt="Mascote do ZeloMenu comemorando o pedido enviado"
+                      width={820}
+                      height={820}
+                      decoding="async"
+                      className="h-44 w-full object-contain"
+                    />
                   </div>
                 )}
                 {!showMascot && (
