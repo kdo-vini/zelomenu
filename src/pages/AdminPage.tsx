@@ -9,6 +9,7 @@ import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCar
 import { ZeloMenuCouponsCard } from '../components/zelomenu/ZeloMenuCouponsCard';
 import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
 import { MesasAdminSection } from '../components/zelomenu/MesasAdminSection';
+import { SettingsPage } from './SettingsPage';
 import { AdminLayout, type NavSection } from '../components/AdminLayout';
 import { OnboardingWizard, ONBOARDING_KEY } from '../components/OnboardingWizard';
 import { getZeloMenuSlug } from '../services/zelomenuAdminApi';
@@ -60,7 +61,7 @@ export function AdminPage() {
 
   const [activeSection, setActiveSection] = useState<NavSection>(() => {
     const hash = window.location.hash.replace('#', '') as NavSection;
-    return hash === 'publication' ? 'publication' : 'catalog';
+    return hash === 'publication' || hash === 'settings' ? hash : 'catalog';
   });
 
   const handleNavigate = (section: NavSection) => {
@@ -138,6 +139,7 @@ export function AdminPage() {
       onNavigate={handleNavigate}
       catalogContent={catalogContent}
       publicationContent={<PublicationPage />}
+      settingsContent={<SettingsPage />}
       mesasContent={showMesas && slug ? <MesasAdminSection slug={slug} /> : undefined}
     />
   );

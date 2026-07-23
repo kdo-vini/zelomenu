@@ -44,6 +44,7 @@ const FULL_DAY_LABELS: Record<string, string> = {
 };
 
 import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
+import { shouldAutoAcceptPublicOrder } from '../src/domain/zelomenuOrderAcceptance.js';
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
 
@@ -349,6 +350,7 @@ type ZeloMenuProfileRow = {
   zelomenu_category_suggestions?: unknown;
   chave_pix?: string | null;
   zelomenu_pix_key_type?: string | null;
+  zelomenu_auto_accept_orders?: boolean;
 };
 
 // `chave_pix` já existe (compartilhada com o ZeloChat) — entra direto no core.
@@ -362,8 +364,9 @@ const ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS =
 // existir num banco sem a migration aplicada, por isso fica no grupo
 // tolerante a coluna ausente (mesmo tratamento das colunas de recomendação).
 const ZELOMENU_PROFILE_PIX_COLUMNS = 'zelomenu_pix_key_type';
+const ZELOMENU_PROFILE_ORDER_COLUMNS = 'zelomenu_auto_accept_orders';
 const ZELOMENU_PROFILE_ALL_COLUMNS =
-  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}`;
+  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}`;
 
 function isMissingZeloMenuOptionalColumn(
   error: { code?: string; message?: string } | null,
@@ -374,7 +377,8 @@ function isMissingZeloMenuOptionalColumn(
   return message.includes('zelomenu_recommendations_enabled')
     || message.includes('zelomenu_recommendation_product_ids')
     || message.includes('zelomenu_category_suggestions')
-    || message.includes('zelomenu_pix_key_type');
+    || message.includes('zelomenu_pix_key_type')
+    || message.includes('zelomenu_auto_accept_orders');
 }
 
 /**
@@ -396,7 +400,7 @@ async function loadZeloMenuProfile(empresaId: string): Promise<ZeloMenuProfileRo
     throw profileResult.error;
   }
 
-  console.warn('[ZeloMenu] recommendation/pix columns are not available yet; using defaults until the migration is applied.');
+  console.warn('[ZeloMenu] optional settings columns are not available yet; using defaults until the migration is applied.');
   const coreResult = await supabase
     .from('empresa_perfil')
     .select(ZELOMENU_PROFILE_CORE_COLUMNS)
@@ -1171,6 +1175,7 @@ export type ZeloMenuStoreSettings = {
   pixKey: string | null;
   /** `null` quando a chave ainda não tem tipo declarado (ambíguo: cpf x celular). */
   pixKeyType: PixKeyType | null;
+  autoAcceptOrders: boolean;
 };
 
 export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
@@ -1207,15 +1212,17 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     availableCategories: catalog.map((c) => c.nome),
     pixKey: sanitizeText(perfil?.chave_pix, 200),
     pixKeyType,
+    autoAcceptOrders: perfil?.zelomenu_auto_accept_orders ?? false,
   };
 }
 
 export async function updateZeloMenuStoreSettings(
   empresaId: string,
-  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType'>>,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType' | 'autoAcceptOrders'>>,
 ): Promise<void> {
   const coreUpdate: Record<string, unknown> = {};
   const recommendationUpdate: Record<string, unknown> = {};
+  const orderUpdate: Record<string, unknown> = {};
   if ('welcomeText' in patch) coreUpdate.zelomenu_welcome_text = patch.welcomeText ?? null;
   if ('featuredEnabled' in patch) coreUpdate.zelomenu_featured_enabled = patch.featuredEnabled;
   if ('featuredProductIds' in patch) coreUpdate.zelomenu_featured_product_ids = patch.featuredProductIds;
@@ -1223,6 +1230,7 @@ export async function updateZeloMenuStoreSettings(
   if ('recommendationsEnabled' in patch) recommendationUpdate.zelomenu_recommendations_enabled = patch.recommendationsEnabled;
   if ('recommendationProductIds' in patch) recommendationUpdate.zelomenu_recommendation_product_ids = patch.recommendationProductIds;
   if ('categorySuggestions' in patch) recommendationUpdate.zelomenu_category_suggestions = patch.categorySuggestions;
+  if ('autoAcceptOrders' in patch) orderUpdate.zelomenu_auto_accept_orders = patch.autoAcceptOrders;
 
   // Chave Pix + tipo são salvos juntos (o admin manda os dois no mesmo save do
   // formulário). Chave vazia limpa a chave e o tipo. Chave não-vazia exige um
@@ -1248,18 +1256,22 @@ export async function updateZeloMenuStoreSettings(
   }
 
   const supabase = getServiceSupabase();
-  const update = { ...coreUpdate, ...recommendationUpdate };
+  const update = { ...coreUpdate, ...recommendationUpdate, ...orderUpdate };
   if (Object.keys(update).length === 0) return;
 
   const { error } = await supabase.from('empresa_perfil').update(update).eq('id', empresaId);
   if (!error) return;
   if (!isMissingZeloMenuOptionalColumn(error)) throw error;
 
+  if (Object.keys(orderUpdate).length > 0) {
+    throw new Error('AUTO_ACCEPT_SETTINGS_UNAVAILABLE');
+  }
+
   if (Object.keys(coreUpdate).length > 0) {
     const { error: coreError } = await supabase.from('empresa_perfil').update(coreUpdate).eq('id', empresaId);
     if (coreError) throw coreError;
   }
-  console.warn('[ZeloMenu] recommendation/pix-type settings were not persisted because their migration is not applied yet.');
+  console.warn('[ZeloMenu] optional ZeloMenu settings were not persisted because their migration is not applied yet.');
 }
 
 export async function openPublicOrderCartSession(input: {
@@ -1418,6 +1430,42 @@ export async function updatePublicCartSession(
   return buildPublicResponse(normalized, data as SessionRow, tokenRow);
 }
 
+async function tryAutoAcceptPublicOrder(input: {
+  empresaId: string;
+  orderId: string;
+  status: string;
+  revision: number;
+}): Promise<{ status: string; revision: number; accepted: boolean }> {
+  if (!Number.isSafeInteger(input.revision)) {
+    return { status: input.status, revision: input.revision, accepted: false };
+  }
+
+  const profile = await loadZeloMenuProfile(input.empresaId);
+  if (!shouldAutoAcceptPublicOrder({ enabled: profile.zelomenu_auto_accept_orders === true, orderStatus: input.status })) {
+    return { status: input.status, revision: input.revision, accepted: false };
+  }
+
+  const { data, error } = await getServiceSupabase().rpc('accept_zelo_order', {
+    p_order_id: input.orderId,
+    p_expected_revision: input.revision,
+    p_actor_id: null,
+  });
+  if (error) {
+    // Auto-accept is deliberately best-effort. A stock conflict or a race with
+    // an operator must leave the order visible for manual review, not make the
+    // customer's checkout look like it failed after materialization.
+    console.error('[ZeloMenu] auto-accept failed; order remains in review:', error);
+    return { status: input.status, revision: input.revision, accepted: false };
+  }
+
+  const result = data as { status?: string; revision?: number } | null;
+  return {
+    status: result?.status ?? 'accepted',
+    revision: Number.isSafeInteger(result?.revision) ? Number(result?.revision) : input.revision + 1,
+    accepted: true,
+  };
+}
+
 export async function confirmPublicCartSession(token: string, expectedRevision: number, idempotencyKey: string): Promise<PublicCartConfirmResponse | null> {
   const normalized = normalizePublicCartToken(token);
   if (!normalized) return null;
@@ -1432,8 +1480,21 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
   if (sessionRow.state !== 'cart_open') {
     const isAlreadyConfirmed = sessionRow.state === 'confirmed_waiting_review' || sessionRow.state === 'confirmed_waiting_payment' || sessionRow.state === 'accepted';
     if (!isAlreadyConfirmed) throw new Error('CART_ALREADY_CLOSED');
-    const payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
-    return { ...payload, confirmation: { confirmed: true, alreadyConfirmed: true, state: payload.session.state, customerMessage: null } };
+    let payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
+    let state = payload.session.state;
+    if (sessionRow.context === 'public_order' && payload.order?.status === 'pending_review') {
+      const autoAccepted = await tryAutoAcceptPublicOrder({
+        empresaId: sessionRow.empresa_id,
+        orderId: payload.order.id,
+        status: payload.order.status,
+        revision: payload.order.revision,
+      });
+      if (autoAccepted.accepted) {
+        payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
+        state = 'accepted';
+      }
+    }
+    return { ...payload, confirmation: { confirmed: true, alreadyConfirmed: true, state, customerMessage: null } };
   }
 
   const current = mapSessionRow(sessionRow);
@@ -1602,20 +1663,37 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     const codes = ['CART_NOT_FOUND', 'STALE_CART_TOKEN', 'REVISION_CONFLICT', 'CART_ALREADY_CLOSED', 'IDEMPOTENCY_KEY_REQUIRED', 'TABLE_SESSION_EXPIRED', 'PRODUCT_STOCK_EXCEEDED', 'COMANDA_CLOSED'];
     throw new Error(codes.find((code) => confirmationError.message.includes(code)) || 'ORDER_MATERIALIZATION_FAILED');
   }
-  const atomic = confirmation as { orderStatus?: string; sessionState?: ZeloMenuCartState; state?: ZeloMenuCartState; alreadyConfirmed?: boolean };
+  const atomic = confirmation as { sessionState?: ZeloMenuCartState; state?: ZeloMenuCartState; alreadyConfirmed?: boolean };
   const atomicRow = await findSessionById(sessionRow.id);
   if (!atomicRow) {
     if (couponRedemptionId) void releaseCouponRedemption(couponRedemptionId).catch(() => {});
     throw new Error('ORDER_MATERIALIZATION_FAILED');
   }
 
+  const atomicPayload = await buildPublicResponse(normalized, atomicRow, tokenRow);
+  const autoAccepted = sessionRow.context === 'public_order' && atomicPayload.order
+    ? await tryAutoAcceptPublicOrder({
+      empresaId: sessionRow.empresa_id,
+      orderId: atomicPayload.order.id,
+      status: atomicPayload.order.status,
+      revision: atomicPayload.order.revision,
+    })
+    : { status: atomicPayload.order?.status ?? '', revision: atomicPayload.order?.revision ?? Number.NaN, accepted: false };
+
   // Se a confirmação foi bem-sucedida e temos reserva, attach order_id
   if (couponRedemptionId && atomicRow.ordering_id) {
     void attachOrderToRedemption(couponRedemptionId, atomicRow.ordering_id).catch(() => {});
   }
 
-  const atomicPayload = await buildPublicResponse(normalized, atomicRow, tokenRow);
-  return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed === true, state: atomic.sessionState ?? atomic.state ?? atomicRow.state, customerMessage: atomicRow.context === 'table_order' ? 'Pedido enviado! Aguarde o garçom.' : `Pedido enviado para a loja! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. Aguarde a confirmação.` } };
+  const finalState: ZeloMenuCartState = autoAccepted.status === 'accepted'
+    ? 'accepted'
+    : atomic.sessionState ?? atomic.state ?? atomicRow.state;
+  const customerMessage = atomicRow.context === 'table_order'
+    ? 'Pedido enviado! Aguarde o garçom.'
+    : autoAccepted.accepted
+      ? `Pedido confirmado! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. A loja já recebeu o seu pedido.`
+      : `Pedido enviado para a loja! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. Aguarde a confirmação.`;
+  return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed === true, state: finalState, customerMessage } };
 
 }
 

@@ -27,6 +27,7 @@ export type ZeloMenuStoreSettings = {
   availableCategories: string[];
   pixKey: string | null;
   pixKeyType: PixKeyType | null;
+  autoAcceptOrders: boolean;
 };
 
 export type ZeloMenuSettingsPatch = {
@@ -39,6 +40,7 @@ export type ZeloMenuSettingsPatch = {
   categoryOrder?: string[];
   pixKey?: string | null;
   pixKeyType?: PixKeyType | null;
+  autoAcceptOrders?: boolean;
 };
 
 // ─── Auth header ───────────────────────────────────────────────────────────────
@@ -66,6 +68,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   COUPON_INVALID_DISCOUNT_VALUE: 'Valor de desconto inválido para o tipo escolhido.',
   COUPON_NOT_FOUND: 'Cupom não encontrado.',
   PIX_KEY_INVALID: 'Chave Pix inválida para o tipo selecionado.',
+  AUTO_ACCEPT_SETTINGS_UNAVAILABLE: 'A configuração de pedidos ainda não está disponível. Atualize o painel e tente novamente.',
 };
 
 // Parse a Response into JSON, throwing a friendly Error (mapped where possible)

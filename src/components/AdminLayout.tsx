@@ -1,10 +1,10 @@
 import { type ReactNode, useState } from 'react';
-import { Menu, ShoppingBag, Globe2, LayoutGrid, LogOut, X } from 'lucide-react';
+import { Menu, ShoppingBag, Globe2, LayoutGrid, LogOut, Settings, X } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 
 // ─── Navigation definition ─────────────────────────────────────────────────
 
-export type NavSection = 'catalog' | 'publication' | 'mesas';
+export type NavSection = 'catalog' | 'publication' | 'settings' | 'mesas';
 
 interface NavItem {
   id: NavSection;
@@ -15,6 +15,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'catalog', label: 'Cardápio', icon: ShoppingBag },
   { id: 'publication', label: 'Publicação', icon: Globe2 },
+  { id: 'settings', label: 'Configurações', icon: Settings },
   { id: 'mesas', label: 'Mesas', icon: LayoutGrid },
 ];
 
@@ -25,12 +26,13 @@ interface AdminLayoutProps {
   onNavigate: (section: NavSection) => void;
   catalogContent: ReactNode;
   publicationContent: ReactNode;
+  settingsContent: ReactNode;
   mesasContent?: ReactNode;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent, mesasContent }: AdminLayoutProps) {
+export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent, settingsContent, mesasContent }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const visibleNavItems = NAV_ITEMS.filter(
@@ -169,6 +171,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         <main className="flex-1 overflow-y-auto">
           {activeSection === 'catalog' && catalogContent}
           {activeSection === 'publication' && publicationContent}
+          {activeSection === 'settings' && settingsContent}
           {activeSection === 'mesas' && mesasContent}
         </main>
 
