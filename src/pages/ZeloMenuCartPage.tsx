@@ -1062,10 +1062,10 @@ export default function ZeloMenuCartPage() {
 
   return (
     <div className="zelomenu-theme flex min-h-[100dvh] justify-center bg-[var(--zm-canvas)] text-[var(--zm-ink)]">
-      <div className="flex min-h-[100dvh] w-full max-w-[480px] flex-col bg-[var(--zm-canvas)] sm:my-6 sm:h-[min(780px,92dvh)] sm:min-h-0 sm:overflow-hidden sm:rounded-[28px] sm:border sm:border-[var(--zm-line)] sm:bg-[var(--zm-surface)] sm:shadow-[0_30px_70px_-30px_rgba(16,20,24,0.35)]">
+      <div className="flex h-[100dvh] w-full max-w-[480px] flex-col overflow-hidden bg-[var(--zm-canvas)] sm:my-6 sm:h-[min(780px,92dvh)] sm:min-h-0 sm:overflow-hidden sm:rounded-[28px] sm:border sm:border-[var(--zm-line)] sm:bg-[var(--zm-surface)] sm:shadow-[0_30px_70px_-30px_rgba(16,20,24,0.35)]">
         {isConfirmed ? (
           <div className="flex h-full flex-col">
-            <div className="flex-1 overflow-y-auto overscroll-contain">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <figure className="w-full" style={{ aspectRatio: '941 / 472' }}>
                 <img
                   src="/zelomenu-pedido-enviado-hero.webp"
@@ -1393,7 +1393,7 @@ export default function ZeloMenuCartPage() {
             ) : null}
 
             {/* viewport — trilho que desliza entre os passos */}
-            <div className="relative flex-1 overflow-hidden">
+            <div className="relative min-h-0 flex-1 overflow-hidden">
               <div
                 className="flex h-full w-[300%] transition-transform duration-[440ms] ease-[cubic-bezier(.22,.61,.36,1)] motion-reduce:transition-none"
                 style={{ transform: isTableOrder ? 'translateX(0)' : `translateX(-${step * (100 / 3)}%)` }}
@@ -1851,7 +1851,7 @@ export default function ZeloMenuCartPage() {
             </div>
 
             {/* footer — total ao vivo + CTA sempre visível */}
-            <div className="flex-none border-t border-[var(--zm-line)] bg-[var(--zm-surface)] px-4 pb-5 pt-3">
+            <div className="flex-none border-t border-[var(--zm-line)] bg-[var(--zm-surface)] px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3">
               <div className="mb-2 flex min-h-4 justify-end" aria-live="polite">
                 {saveStatus === 'saving' ? (
                   <span className="text-[10.5px] text-[var(--zm-ink-soft)]">Salvando alterações…</span>
