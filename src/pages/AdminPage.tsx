@@ -1,12 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
 import { CatalogView } from '../components/views/CatalogView';
 import { LoginForm } from '../components/LoginForm';
 import { NeutralState } from '../components/NeutralState';
-import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
-import { ZeloMenuCouponsCard } from '../components/zelomenu/ZeloMenuCouponsCard';
 import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
 import { MesasAdminSection } from '../components/zelomenu/MesasAdminSection';
 import { SettingsPage } from './SettingsPage';
@@ -47,8 +45,6 @@ function PublicationPage() {
         </div>
       </header>
       <ZeloMenuSlugCard />
-      <ZeloMenuSettingsCard />
-      <ZeloMenuCouponsCard />
     </div>
   );
 }
@@ -77,9 +73,20 @@ export function AdminPage() {
   const catalog = useCatalog(session, { enabled: catalogEnabled });
 
   const [slug, setSlug] = useState<string | null>(null);
+  const slugLoadedRef = useRef(false);
   useEffect(() => {
     if (!session || !entitlement.hasAccess) return;
-    getZeloMenuSlug().then(({ slug: s }) => setSlug(s)).catch(() => undefined);
+    getZeloMenuSlug()
+      .then(({ slug: s }) => {
+        setSlug(s);
+        slugLoadedRef.current = true;
+        // If server has a slug, consider onboarding done even if localStorage is clean
+        if (s) {
+          localStorage.setItem(ONBOARDING_KEY, 'done');
+          setOnboardingDone(true);
+        }
+      })
+      .catch(() => { slugLoadedRef.current = true; });
   }, [session, entitlement.hasAccess]);
 
   // Loading

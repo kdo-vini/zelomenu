@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ArrowLeft, Check, Copy, ExternalLink, Loader2, Sparkles, UtensilsCrossed } from 'lucide-react';
+import { ArrowLeft, Check, Copy, ExternalLink, Info, Loader2, Sparkles, UtensilsCrossed } from 'lucide-react';
 import {
   generateZeloMenuWelcome,
   getZeloMenuSettings,
   setZeloMenuSlug,
   updateZeloMenuSettings,
 } from '../services/zelomenuAdminApi';
+import type { PixKeyType } from '../services/zelomenuAdminApi';
+import { isValidPixKeyForType } from '../domain/pixBrCode';
 
 export const ONBOARDING_KEY = 'zelomenu_onboarding_v1';
 const PUBLIC_HOST = 'menu.zelopdv.com.br';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type Step = 0 | 1 | 2 | 3;
+type Step = 0 | 1 | 2 | 3 | 4;
 
 interface Props {
   onComplete: () => void;
@@ -92,7 +94,7 @@ function StepWelcomeText({
     <div className="flex flex-col gap-6">
       <div>
         <p className="text-sm font-semibold text-[var(--color-brand)] mb-2 tracking-wide uppercase">
-          Passo 1 de 2
+          Passo 1 de 3
         </p>
         <h2 id="onboarding-title" className="text-2xl font-bold text-[var(--color-ink)] leading-tight text-balance">
           Descreva sua loja em uma frase
@@ -178,7 +180,7 @@ function StepSlug({
     <div className="flex flex-col gap-6">
       <div>
         <p className="text-sm font-semibold text-[var(--color-brand)] mb-2 tracking-wide uppercase">
-          Passo 2 de 2
+          Passo 2 de 3
         </p>
         <h2 id="onboarding-title" className="text-2xl font-bold text-[var(--color-ink)] leading-tight text-balance">
           Qual será o link do seu cardápio?
@@ -229,6 +231,160 @@ function StepSlug({
         <button
           onClick={onSkip}
           disabled={saving}
+          className="h-10 text-sm text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] transition-colors"
+        >
+          Pular por agora
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StepPixConfig({
+  pixKey,
+  pixKeyType,
+  pixKeyError,
+  autoAccept,
+  onPixKeyChange,
+  onPixKeyTypeChange,
+  onAutoAcceptChange,
+  onNext,
+  onSkip,
+}: {
+  pixKey: string;
+  pixKeyType: PixKeyType | null;
+  pixKeyError: string | null;
+  autoAccept: boolean;
+  onPixKeyChange: (v: string) => void;
+  onPixKeyTypeChange: (v: PixKeyType) => void;
+  onAutoAcceptChange: (v: boolean) => void;
+  onNext: () => void;
+  onSkip: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setTimeout(() => inputRef.current?.focus(), 200);
+  }, []);
+
+  const PIX_KEY_TYPE_OPTIONS: Array<{ value: PixKeyType; label: string; placeholder: string }> = [
+    { value: 'cpf', label: 'CPF', placeholder: '000.000.000-00' },
+    { value: 'phone', label: 'Celular', placeholder: '(11) 91234-5678' },
+    { value: 'email', label: 'E-mail', placeholder: 'loja@exemplo.com' },
+    { value: 'cnpj', label: 'CNPJ', placeholder: '00.000.000/0000-00' },
+    { value: 'random', label: 'Aleatória', placeholder: 'Chave aleatória (UUID)' },
+  ];
+
+  const currentType = PIX_KEY_TYPE_OPTIONS.find((o) => o.value === pixKeyType);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <p className="text-sm font-semibold text-[var(--color-brand)] mb-2 tracking-wide uppercase">
+          Passo 3 de 3
+        </p>
+        <h2 id="onboarding-title" className="text-2xl font-bold text-[var(--color-ink)] leading-tight text-balance">
+          Quer receber pagamento via Pix?
+        </h2>
+        <p className="mt-2 text-[var(--color-ink-muted)] text-sm leading-relaxed">
+          Na confirmação do pedido, o cliente vê um código Pix Copia e Cola com o valor exato.
+        </p>
+      </div>
+
+      {/* Info tooltip — changes based on state */}
+      {pixKey.trim() ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-[var(--color-brand)]/20 bg-[var(--color-brand-soft)] px-4 py-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-brand)]" strokeWidth={2} />
+          <p className="text-[12.5px] leading-snug text-[var(--color-ink)]">
+            Cliente vê um código Pix Copia e Cola com o valor exato do pedido. Paga em qualquer banco e o pedido é confirmado automaticamente.
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2.5 rounded-xl border border-[var(--color-warn)]/30 bg-[var(--color-warn-soft)] px-4 py-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warn)]" strokeWidth={2} />
+          <p className="text-[12.5px] leading-snug text-[var(--color-ink)]">
+            Sem chave Pix, clientes pagam apenas em dinheiro, cartão ou outro método na retirada. Você pode configurar depois.
+          </p>
+        </div>
+      )}
+
+      {/* Pix key type selector */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-[var(--color-ink)]">Tipo da chave</label>
+        <div className="flex flex-wrap gap-1.5">
+          {PIX_KEY_TYPE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onPixKeyTypeChange(opt.value)}
+              className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                pixKeyType === opt.value
+                  ? 'bg-[var(--color-brand)] text-white'
+                  : 'border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink-soft)] hover:border-[var(--color-brand)]'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Pix key input */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-[var(--color-ink)]">Chave Pix</label>
+        <input
+          ref={inputRef}
+          type="text"
+          value={pixKey}
+          onChange={(e) => onPixKeyChange(e.target.value)}
+          placeholder={currentType?.placeholder ?? '000.000.000-00'}
+          className="h-12 w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-4 text-[var(--color-ink)] text-base placeholder:text-[var(--color-ink-faint)] focus:outline-none focus:border-[var(--color-brand)] focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40 transition-colors"
+          style={{ touchAction: 'auto' }}
+        />
+        {pixKeyError && (
+          <p className="text-xs text-[var(--color-alert)] px-1">{pixKeyError}</p>
+        )}
+      </div>
+
+      {/* Auto-accept toggle */}
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3">
+        <div className="flex flex-col gap-0.5">
+          <label htmlFor="auto-accept" className="text-[13px] font-medium text-[var(--color-ink)]">
+            Aceitar pedidos automaticamente
+          </label>
+          <p className="text-[11.5px] leading-snug text-[var(--color-ink-soft)]">
+            {autoAccept
+              ? 'Pedidos são aceitos assim que confirmados. Você só precisa preparar.'
+              : 'Você precisará conferir e aceitar cada pedido manualmente no painel.'}
+          </p>
+        </div>
+        <button
+          id="auto-accept"
+          type="button"
+          role="switch"
+          aria-checked={autoAccept}
+          onClick={() => onAutoAcceptChange(!autoAccept)}
+          className={`relative h-7 w-11 shrink-0 rounded-full transition-colors ${
+            autoAccept ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'
+          }`}
+        >
+          <span
+            className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
+              autoAccept ? 'translate-x-4' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <button
+          onClick={onNext}
+          className="flex items-center justify-center gap-2 h-14 rounded-2xl bg-[var(--color-brand)] text-white font-semibold text-base transition-all active:scale-[.98]"
+        >
+          Continuar
+        </button>
+        <button
+          onClick={onSkip}
           className="h-10 text-sm text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] transition-colors"
         >
           Pular por agora
@@ -342,6 +498,12 @@ export function OnboardingWizard({ onComplete }: Props) {
   const [saving, setSaving] = useState(false);
   const [savedSlug, setSavedSlug] = useState('');
 
+  // Step 3
+  const [pixKey, setPixKey] = useState('');
+  const [pixKeyType, setPixKeyType] = useState<PixKeyType | null>(null);
+  const [pixKeyError, setPixKeyError] = useState<string | null>(null);
+  const [autoAccept, setAutoAccept] = useState(true);
+
   // Dialog focus management
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -420,6 +582,24 @@ export function OnboardingWizard({ onComplete }: Props) {
     }
   }
 
+  async function handlePixNext() {
+    const trimmed = pixKey.trim();
+    if (trimmed && pixKeyType && !isValidPixKeyForType(trimmed, pixKeyType)) {
+      setPixKeyError('Essa chave não parece válida para o tipo selecionado.');
+      return;
+    }
+    try {
+      await updateZeloMenuSettings({
+        pixKey: trimmed || null,
+        pixKeyType: trimmed ? pixKeyType : null,
+        autoAcceptOrders: autoAccept,
+      });
+    } catch {
+      // silencioso — não bloqueia
+    }
+    go(4);
+  }
+
   async function handleGenerate() {
     try {
       setGeneratingWelcome(true);
@@ -448,7 +628,7 @@ export function OnboardingWizard({ onComplete }: Props) {
   }
 
   function handleTouchEnd(e: React.TouchEvent) {
-    if (step === 3) return; // done screen: no swipe nav
+    if (step === 4) return; // done screen: no swipe nav
     const dx = e.changedTouches[0].clientX - touchX.current;
     const dy = Math.abs(e.changedTouches[0].clientY - touchY.current);
     if (dy > Math.abs(dx) || Math.abs(dx) < 50) return; // vertical or too short
@@ -458,10 +638,12 @@ export function OnboardingWizard({ onComplete }: Props) {
       if (step === 0) go(1);
       else if (step === 1) void handleWelcomeNext();
       else if (step === 2) void handleSlugNext();
+      else if (step === 3) void handlePixNext();
     } else if (dx > 50) {
       // swipe right = back
       if (step === 1) go(0);
       else if (step === 2) go(1);
+      else if (step === 3) go(2);
     }
   }
 
@@ -491,7 +673,7 @@ export function OnboardingWizard({ onComplete }: Props) {
       <div className="h-[3px] bg-[var(--color-line)]">
         <motion.div
           className="h-full bg-[var(--color-brand)]"
-          animate={{ width: `${(step / 3) * 100}%` }}
+          animate={{ width: `${(step / 4) * 100}%` }}
           transition={spring}
         />
       </div>
@@ -499,7 +681,7 @@ export function OnboardingWizard({ onComplete }: Props) {
       {/* Top bar */}
       <div className="h-12 flex items-center px-5 shrink-0">
         <AnimatePresence mode="wait">
-          {step > 0 && step < 3 && (
+          {step > 0 && step < 4 && (
             <motion.button
               key="back"
               initial={{ opacity: 0, x: prefersReducedMotion ? 0 : -6 }}
@@ -554,6 +736,19 @@ export function OnboardingWizard({ onComplete }: Props) {
               />
             )}
             {step === 3 && (
+              <StepPixConfig
+                pixKey={pixKey}
+                pixKeyType={pixKeyType}
+                pixKeyError={pixKeyError}
+                autoAccept={autoAccept}
+                onPixKeyChange={setPixKey}
+                onPixKeyTypeChange={setPixKeyType}
+                onAutoAcceptChange={setAutoAccept}
+                onNext={handlePixNext}
+                onSkip={() => go(4)}
+              />
+            )}
+            {step === 4 && (
               <StepDone slug={savedSlug} onComplete={finish} />
             )}
           </motion.div>
@@ -562,7 +757,7 @@ export function OnboardingWizard({ onComplete }: Props) {
 
       {/* Step dots */}
       <AnimatePresence>
-        {step < 3 && (
+        {step < 4 && (
           <motion.div
             key="dots"
             initial={{ opacity: 0 }}
@@ -570,7 +765,7 @@ export function OnboardingWizard({ onComplete }: Props) {
             exit={{ opacity: 0 }}
             className="h-16 flex items-center justify-center gap-2 shrink-0"
           >
-            {([0, 1, 2] as const).map((i) => (
+            {([0, 1, 2, 3] as const).map((i) => (
               <motion.div
                 key={i}
                 animate={{

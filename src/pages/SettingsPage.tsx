@@ -1,5 +1,7 @@
 import { SlidersHorizontal } from 'lucide-react';
 import { ZeloMenuOrderSettingsCard } from '../components/zelomenu/ZeloMenuOrderSettingsCard';
+import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
+import { ZeloMenuCouponsCard } from '../components/zelomenu/ZeloMenuCouponsCard';
 
 export function SettingsPage() {
   return (
@@ -11,12 +13,14 @@ export function SettingsPage() {
         <div>
           <h1 className="text-xl font-bold text-[var(--color-ink)]">Configurações</h1>
           <p className="text-sm leading-relaxed text-[var(--color-ink-muted)]">
-            Ajuste o comportamento dos pedidos do seu ZeloMenu.
+            Configure o recebimento de pedidos, pagamento via Pix e cupons de desconto.
           </p>
         </div>
       </header>
 
       <ZeloMenuOrderSettingsCard />
+      <ZeloMenuSettingsCard />
+      <ZeloMenuCouponsCard />
     </div>
   );
 }
