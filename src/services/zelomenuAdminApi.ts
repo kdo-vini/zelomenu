@@ -28,6 +28,7 @@ export type ZeloMenuStoreSettings = {
   pixKey: string | null;
   pixKeyType: PixKeyType | null;
   autoAcceptOrders: boolean;
+  pixReceiptVerificationEnabled: boolean;
 };
 
 export type ZeloMenuSettingsPatch = {

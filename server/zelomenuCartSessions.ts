@@ -1176,6 +1176,7 @@ export type ZeloMenuStoreSettings = {
   /** `null` quando a chave ainda não tem tipo declarado (ambíguo: cpf x celular). */
   pixKeyType: PixKeyType | null;
   autoAcceptOrders: boolean;
+  pixReceiptVerificationEnabled: boolean;
 };
 
 export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
@@ -1213,6 +1214,7 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     pixKey: sanitizeText(perfil?.chave_pix, 200),
     pixKeyType,
     autoAcceptOrders: perfil?.zelomenu_auto_accept_orders ?? false,
+    pixReceiptVerificationEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
   };
 }
 
@@ -1441,7 +1443,11 @@ async function tryAutoAcceptPublicOrder(input: {
   }
 
   const profile = await loadZeloMenuProfile(input.empresaId);
-  if (!shouldAutoAcceptPublicOrder({ enabled: profile.zelomenu_auto_accept_orders === true, orderStatus: input.status })) {
+  if (!shouldAutoAcceptPublicOrder({
+    enabled: profile.zelomenu_auto_accept_orders === true,
+    pixReceiptVerificationEnabled: isPixReceiptConfigActive(getConfig(input.empresaId).pixReceiptConfig),
+    orderStatus: input.status,
+  })) {
     return { status: input.status, revision: input.revision, accepted: false };
   }
 

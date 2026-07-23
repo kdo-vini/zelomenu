@@ -8,12 +8,16 @@ export function ZeloMenuOrderSettingsCard() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoAcceptOrders, setAutoAcceptOrders] = useState(false);
+  const [pixReceiptVerificationEnabled, setPixReceiptVerificationEnabled] = useState(false);
 
   useEffect(() => {
     let active = true;
     void getZeloMenuSettings()
       .then((settings) => {
-        if (active) setAutoAcceptOrders(settings.autoAcceptOrders);
+        if (active) {
+          setAutoAcceptOrders(settings.autoAcceptOrders);
+          setPixReceiptVerificationEnabled(settings.pixReceiptVerificationEnabled);
+        }
       })
       .catch(() => {
         if (active) setError('Não foi possível carregar as configurações de pedidos.');
@@ -90,9 +94,11 @@ export function ZeloMenuOrderSettingsCard() {
         </div>
 
         <div className="rounded-xl border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)]/35 px-4 py-3 text-sm leading-relaxed text-[var(--color-brand-deep)]">
-          {autoAcceptOrders
-            ? 'O pedido ainda pode ficar aguardando pagamento Pix. Ele só será aceito depois que o pagamento for validado.'
-            : 'O comportamento atual está mantido: você revisa e aceita cada pedido na operação.'}
+          {autoAcceptOrders && pixReceiptVerificationEnabled
+            ? 'A conferência de comprovante Pix do ZeloChat está ativa: pedidos Pix aguardam a validação antes de serem aceitos automaticamente.'
+            : autoAcceptOrders
+              ? 'A conferência de comprovante Pix do ZeloChat está desativada: pedidos públicos validados entram direto como aceitos, inclusive os pagos via Pix.'
+              : 'O comportamento atual está mantido: você revisa e aceita cada pedido na operação.'}
         </div>
 
         {error && <p role="alert" className="text-sm text-[var(--color-alert)]">{error}</p>}
