@@ -7,7 +7,7 @@ import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication } from '../src/domain/zelomenuPublication.js';
 import { deriveWeeklyFromLegacy, normalizeWeeklyHours, type WeeklyHours } from '../src/domain/businessHours.js';
-import { PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
+import { PIX_KEY_TYPES, isPixKeyType, type PixKeyType } from '../src/domain/pixBrCode.js';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -136,10 +136,6 @@ function normalizePixReceiptConfig(value: unknown): PixReceiptConfig | null {
     fallback: raw.fallback === 'ask_retry' ? 'ask_retry' : 'escalate_human',
     minConfidence: normalizeNumber(raw.minConfidence) || 0.8,
   };
-}
-
-function isPixKeyType(value: unknown): value is PixKeyType {
-  return typeof value === 'string' && (PIX_KEY_TYPES as readonly string[]).includes(value);
 }
 
 function normalizePixPayment(chavePix: unknown, pixKeyType: unknown): { key: string; keyType: PixKeyType } | null {

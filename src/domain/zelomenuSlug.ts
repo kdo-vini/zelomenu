@@ -18,11 +18,6 @@ export function normalizeZeloMenuSlug(value: string): string | null {
   return slug;
 }
 
-export function isValidZeloMenuSlug(value: string): boolean {
-  const normalized = normalizeZeloMenuSlug(value);
-  return normalized !== null && normalized === value;
-}
-
 export const RESERVED_ZELOMENU_SLUGS = new Set([
   'carrinho', 'store', 'stores', 'api', 'app', 'admin', 'menu', 'loja',
   'sobre', 'contato', 'suporte', 'null', 'undefined', 'www', 'auth', 'onboarding',
@@ -36,6 +31,3 @@ export function buildPublicStorePath(slug: string): string {
   return `/${encodeURIComponent(slug)}`;
 }
 
-export function buildPublicCartPath(token: string): string {
-  return `/menu/carrinho/${encodeURIComponent(token)}`;
-}

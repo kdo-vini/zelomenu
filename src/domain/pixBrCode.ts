@@ -16,6 +16,10 @@ export type PixKeyType = 'cpf' | 'cnpj' | 'phone' | 'email' | 'random';
  * `pixKeyType` vindo de JSON/DB antes de tratá-lo como `PixKeyType`. */
 export const PIX_KEY_TYPES: readonly PixKeyType[] = ['cpf', 'cnpj', 'phone', 'email', 'random'];
 
+export function isPixKeyType(value: unknown): value is PixKeyType {
+  return typeof value === 'string' && (PIX_KEY_TYPES as readonly string[]).includes(value);
+}
+
 const PHONE_E164_BR = /^\+55\d{10,11}$/;
 const EMAIL_BASIC = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

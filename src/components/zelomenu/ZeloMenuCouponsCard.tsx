@@ -114,18 +114,18 @@ export function ZeloMenuCouponsCard() {
 
   if (loading) {
     return (
-      <SectionWrapper>
+      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
         </div>
-      </SectionWrapper>
+      </div>
     );
   }
 
   const isFreteGratis = formDiscountType === 'frete_gratis';
 
   return (
-    <SectionWrapper>
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
@@ -285,15 +285,6 @@ export function ZeloMenuCouponsCard() {
           ))}
         </ul>
       )}
-    </SectionWrapper>
-  );
-}
-
-// Reusable wrapper matching ZeloMenuSettingsCard's container look
-function SectionWrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
-      {children}
     </div>
   );
 }

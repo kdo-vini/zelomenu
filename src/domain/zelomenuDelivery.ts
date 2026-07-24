@@ -5,7 +5,7 @@
 
 import { normalizeComparableText } from './pixReceipt';
 
-export function roundCurrency(value: number): number {
+function roundCurrency(value: number): number {
   return Math.round(value * 100) / 100;
 }
 

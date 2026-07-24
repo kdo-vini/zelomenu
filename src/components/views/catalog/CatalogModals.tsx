@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Search, Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, Sparkles, X } from 'lucide-react';
 import { motion, useMotionValue, useTransform } from 'motion/react';
+import { useId } from 'react';
 import { ConfirmModal } from '../../ConfirmModal';
-import { Modal, useModalTitleId } from '../../Modal';
+import { Modal } from '../../Modal';
 import { ImageCropField } from '../../zelomenu/ImageCropField';
 import type {
   Categoria,
@@ -31,7 +32,7 @@ type ModalShellProps = {
 };
 
 function ModalShell({ title, subtitle, onClose, children, wide = false }: ModalShellProps) {
-  const titleId = useModalTitleId();
+  const titleId = useId();
 
   return (
     <Modal

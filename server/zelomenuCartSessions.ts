@@ -22,7 +22,7 @@ import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDeliver
 import { normalizeCouponCode, validateCouponRule, applyCoupon } from '../src/domain/zelomenuCoupon.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { toWhatsAppNumber } from '../src/domain/whatsappOrder.js';
-import { buildPixBrCode, isValidPixKeyForType, PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
+import { buildPixBrCode, isPixKeyType, isValidPixKeyForType, PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
 import {
   businessDayLabel,
@@ -78,10 +78,6 @@ function isPixReceiptConfigActive(config: ReturnType<typeof getConfig>['pixRecei
 function isPixPaymentMethod(value: string | null | undefined): boolean {
   if (!value) return false;
   return /\bpix\b/i.test(value.normalize('NFD').replace(/[̀-ͯ]/g, ''));
-}
-
-function isPixKeyType(value: unknown): value is PixKeyType {
-  return typeof value === 'string' && (PIX_KEY_TYPES as readonly string[]).includes(value);
 }
 
 /** Best-effort: extrai algo parecido com "cidade" do endereço livre da loja.

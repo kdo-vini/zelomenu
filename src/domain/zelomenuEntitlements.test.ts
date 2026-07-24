@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   resolveZeloMenuCapabilities,
   hasZeloMenuAccess,
-  hasOrderingReviewAccess,
-  hasKitchenQueueAccess,
   hasZeloMenuCapability,
   ZELOMENU_CAPABILITIES,
   type ZeloMenuEntitlementSignals,
@@ -90,14 +88,6 @@ describe('convenience helpers mirror the resolver', () => {
   it('hasZeloMenuAccess === resolver.menu_publication', () => {
     expect(hasZeloMenuAccess({ ...base, hasZeloMenuFlag: true })).toBe(true);
     expect(hasZeloMenuAccess({ ...base, hasPedidosAddonLegacy: true })).toBe(false);
-  });
-  it('hasOrderingReviewAccess === resolver.ordering_review', () => {
-    expect(hasOrderingReviewAccess({ ...base, hasPedidosAddonLegacy: true })).toBe(true);
-    expect(hasOrderingReviewAccess({ ...base })).toBe(false);
-  });
-  it('hasKitchenQueueAccess === resolver.kitchen_queue', () => {
-    expect(hasKitchenQueueAccess({ ...base, hasMesasAddon: true })).toBe(true);
-    expect(hasKitchenQueueAccess({ ...base })).toBe(false);
   });
   it('hasZeloMenuCapability reads a single flag', () => {
     const caps = resolveZeloMenuCapabilities({ planTier: 'bundle', active: true });

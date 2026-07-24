@@ -135,20 +135,3 @@ export function hasZeloMenuAccess(signals: ZeloMenuEntitlementSignals): boolean 
   return resolveZeloMenuCapabilities(signals).menu_publication;
 }
 
-/**
- * Revisão/aceite de pedidos online (ordering_review, ZLM-005). chat/bundle sim;
- * pdv com ZeloMenu novo OU legado Pedidos/Cozinha grandfathered (D-099).
- * Espelha `hasOrderingReviewAccess` do ZeloPDV (src/lib/guards.js).
- */
-export function hasOrderingReviewAccess(signals: ZeloMenuEntitlementSignals): boolean {
-  return resolveZeloMenuCapabilities(signals).ordering_review;
-}
-
-/**
- * Fila de cozinha (kitchen_queue, ZLM-005 / D-100). Tudo que libera
- * ordering_review, mais Mesas com cozinha. Espelha `hasKitchenQueueAccess` do
- * ZeloPDV (src/lib/guards.js).
- */
-export function hasKitchenQueueAccess(signals: ZeloMenuEntitlementSignals): boolean {
-  return resolveZeloMenuCapabilities(signals).kitchen_queue;
-}

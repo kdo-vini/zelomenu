@@ -1,6 +1,6 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useId, useState } from 'react';
 import { X } from 'lucide-react';
-import { Modal, useModalTitleId } from './Modal';
+import { Modal } from './Modal';
 
 type Props = {
   open: boolean;
@@ -27,7 +27,7 @@ export function ConfirmModal({
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const titleId = useModalTitleId();
+  const titleId = useId();
 
   useEffect(() => {
     if (open) setErr(null);

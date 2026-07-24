@@ -163,11 +163,3 @@ export function Modal({
   );
 }
 
-/**
- * Convenience hook that returns a stable id string for wiring the modal title
- * to `aria-labelledby`. Use the returned id on the heading element inside the
- * modal and pass it to `<Modal titleId={...}>`.
- */
-export function useModalTitleId(): string {
-  return useId();
-}

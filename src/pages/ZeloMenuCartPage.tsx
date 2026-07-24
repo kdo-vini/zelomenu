@@ -53,7 +53,6 @@ import {
   validateZeloMenuCheckoutDetails,
 } from '../domain/zelomenuCheckout';
 import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
-import { buildZeloMenuAutosaveSignature } from '../domain/zeloMenuAutosave';
 import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { loadZeloMenuCustomerCache, saveZeloMenuCustomerCache } from '../domain/zelomenuCustomerCache';
@@ -626,10 +625,11 @@ export default function ZeloMenuCartPage() {
     () => draft && payload ? buildCartUpdatePayload(draft, scheduleMode, payload.session.revision) : null,
     [draft, scheduleMode, payload?.session.revision],
   );
-  const autosaveSignature = useMemo(
-    () => buildZeloMenuAutosaveSignature(autosavePayload),
-    [autosavePayload],
-  );
+  const autosaveSignature = useMemo(() => {
+    if (!autosavePayload) return '';
+    const { expectedRevision: _, ...content } = autosavePayload;
+    return JSON.stringify(content);
+  }, [autosavePayload]);
 
   const enqueueAutosave = useCallback((nextPayload: ZeloMenuUpdateCartPayload): Promise<AutosaveResult> => {
     const version = ++saveVersionRef.current;
