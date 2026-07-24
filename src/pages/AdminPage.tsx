@@ -6,6 +6,7 @@ import { CatalogView } from '../components/views/CatalogView';
 import { LoginForm } from '../components/LoginForm';
 import { NeutralState } from '../components/NeutralState';
 import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
+import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
 import { MesasAdminSection } from '../components/zelomenu/MesasAdminSection';
 import { SettingsPage } from './SettingsPage';
 import { AdminLayout, type NavSection } from '../components/AdminLayout';
@@ -45,6 +46,7 @@ function PublicationPage() {
         </div>
       </header>
       <ZeloMenuSlugCard />
+      <ZeloMenuSettingsCard />
     </div>
   );
 }

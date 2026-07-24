@@ -1,24 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, GripVertical, Loader2, QrCode, Search, ShoppingCart, Sparkles, Star, Store, X } from 'lucide-react';
+import { Check, ChevronDown, GripVertical, Loader2, Search, ShoppingCart, Sparkles, Star, Store, X } from 'lucide-react';
 import { Reorder } from 'motion/react';
 import {
   generateZeloMenuWelcome,
   getZeloMenuSettings,
   updateZeloMenuSettings,
-  type PixKeyType,
   type ZeloMenuStoreSettings,
 } from '../../services/zelomenuAdminApi';
-import { isValidPixKeyForType } from '../../domain/pixBrCode';
 
 const MAX_WELCOME = 400;
 
-const PIX_KEY_TYPE_OPTIONS: Array<{ value: PixKeyType; label: string; placeholder: string }> = [
-  { value: 'cpf', label: 'CPF', placeholder: '000.000.000-00' },
-  { value: 'phone', label: 'Celular', placeholder: '(11) 91234-5678' },
-  { value: 'email', label: 'E-mail', placeholder: 'loja@exemplo.com' },
-  { value: 'cnpj', label: 'CNPJ', placeholder: '00.000.000/0000-00' },
-  { value: 'random', label: 'Aleatória', placeholder: 'Chave aleatória (UUID)' },
-];
 
 // "Cardápio digital" store-settings panel. Mirrors zelochat's
 // ZeloMenuSettingsCard. Self-contained: no required props — the API client
@@ -42,12 +33,6 @@ export function ZeloMenuSettingsCard() {
   const [recommendationIds, setRecommendationIds] = useState<number[]>([]);
   const [categorySuggestions, setCategorySuggestions] = useState<Record<string, number[]>>({});
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
-  const [pixKey, setPixKey] = useState('');
-  // `null` = nenhum tipo selecionado ainda. Importante para lojas que já têm
-  // uma chave (ex.: cadastrada pelo ZeloChat, 11 dígitos crus e ambíguos
-  // entre cpf/celular) mas nunca declararam o tipo aqui: o seletor começa
-  // sem nada marcado, forçando o merchant a escolher — sem chute nosso.
-  const [pixKeyType, setPixKeyType] = useState<PixKeyType | null>(null);
   const [productSearch, setProductSearch] = useState('');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -71,8 +56,6 @@ export function ZeloMenuSettingsCard() {
         setRecommendationsEnabled(s.recommendationsEnabled);
         setRecommendationIds(s.recommendationProductIds);
         setCategorySuggestions(s.categorySuggestions ?? {});
-        setPixKey(s.pixKey ?? '');
-        setPixKeyType(s.pixKeyType);
         // Reconcilia a ordem salva com o catálogo atual: descarta categorias que
         // não existem mais (renomeadas/excluídas no PDV) e anexa as novas no fim,
         // pra lista de arrastar sempre refletir o cardápio de verdade.
@@ -166,11 +149,7 @@ export function ZeloMenuSettingsCard() {
     }
   }
 
-  const trimmedPixKey = pixKey.trim();
-  const pixKeyInvalid = trimmedPixKey !== '' && (!pixKeyType || !isValidPixKeyForType(trimmedPixKey, pixKeyType));
-
   async function save() {
-    if (pixKeyInvalid) return;
     try {
       setSaving(true);
       setError(null);
@@ -182,8 +161,6 @@ export function ZeloMenuSettingsCard() {
         recommendationProductIds: recommendationIds,
         categorySuggestions,
         categoryOrder,
-        pixKey: trimmedPixKey || null,
-        pixKeyType: trimmedPixKey ? pixKeyType : null,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -650,65 +627,6 @@ export function ZeloMenuSettingsCard() {
             </div>
           ) : null}
 
-          {/* ── Pagamento via Pix ── */}
-          <div>
-            <div className="mb-3 flex items-center gap-2">
-              <QrCode className="h-4 w-4 text-[var(--color-brand-deep)]" strokeWidth={1.8} />
-              <div>
-                <p className="text-[13px] font-semibold text-[var(--color-ink)]">Pagamento via Pix</p>
-                <p className="text-[12px] text-[var(--color-ink-muted)]">
-                  Gera o código Pix Copia e Cola com o valor do pedido, na tela de confirmação do cliente.
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <p className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">Tipo de chave</p>
-                <div className="flex flex-wrap gap-1 rounded-xl bg-[var(--color-canvas)] p-1">
-                  {PIX_KEY_TYPE_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setPixKeyType(opt.value)}
-                      className={`flex h-11 min-w-[64px] flex-1 items-center justify-center rounded-lg px-2 text-[12px] font-semibold transition ${
-                        pixKeyType === opt.value
-                          ? 'bg-[var(--color-surface)] text-[var(--color-ink)] shadow-sm'
-                          : 'text-[var(--color-ink-muted)]'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">Chave Pix</p>
-                <input
-                  value={pixKey}
-                  onChange={(e) => setPixKey(e.target.value)}
-                  placeholder={PIX_KEY_TYPE_OPTIONS.find((opt) => opt.value === pixKeyType)?.placeholder ?? 'Escolha o tipo de chave acima'}
-                  className={`h-11 w-full rounded-xl border bg-[var(--color-canvas)] px-4 text-[13px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[var(--color-brand)] ${
-                    pixKeyInvalid ? 'border-[var(--color-alert)]' : 'border-[var(--color-line)]'
-                  }`}
-                  style={{ transition: 'border-color 0.15s' }}
-                />
-                {pixKeyInvalid ? (
-                  <p className="mt-1 text-[11.5px] text-[var(--color-alert)]">
-                    {pixKeyType
-                      ? 'Essa chave não parece válida para o tipo selecionado. Confira e tente de novo.'
-                      : 'Escolha o tipo da chave acima antes de salvar.'}
-                  </p>
-                ) : (
-                  <p className="mt-1 text-[11.5px] text-[var(--color-ink-muted)]">
-                    Mesma chave usada no ZeloChat para conferir comprovantes. Deixe em branco para não gerar o Pix Copia e Cola.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
           {/* ── Save ── */}
           {error ? (
             <p className="text-[12.5px] text-[var(--color-alert)]">{error}</p>
@@ -717,7 +635,7 @@ export function ZeloMenuSettingsCard() {
           <button
             type="button"
             onClick={() => void save()}
-            disabled={saving || pixKeyInvalid}
+            disabled={saving}
             className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[14px] font-semibold text-white disabled:opacity-50"
             style={{ background: 'var(--color-brand)' }}
           >

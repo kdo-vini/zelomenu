@@ -1,6 +1,6 @@
 import { SlidersHorizontal } from 'lucide-react';
 import { ZeloMenuOrderSettingsCard } from '../components/zelomenu/ZeloMenuOrderSettingsCard';
-import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
+import { ZeloMenuPixCard } from '../components/zelomenu/ZeloMenuPixCard';
 import { ZeloMenuCouponsCard } from '../components/zelomenu/ZeloMenuCouponsCard';
 
 export function SettingsPage() {
@@ -19,7 +19,7 @@ export function SettingsPage() {
       </header>
 
       <ZeloMenuOrderSettingsCard />
-      <ZeloMenuSettingsCard />
+      <ZeloMenuPixCard />
       <ZeloMenuCouponsCard />
     </div>
   );
