@@ -564,7 +564,7 @@ function QtyControl({
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={() => onSetQty(plainKey, 0)}
+            onClick={(e) => { e.stopPropagation(); onSetQty(plainKey, 0); }}
             className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--zm-line)]`}
             aria-label="Remover"
           >
@@ -572,7 +572,7 @@ function QtyControl({
           </button>
           <button
             type="button"
-            onClick={onAdd}
+            onClick={(e) => { e.stopPropagation(); onAdd(); }}
             className={`flex ${stepBtn} min-w-fit items-center justify-center rounded-full px-2.5 text-[13px] font-bold text-white`}
             style={{ background: 'var(--zm-brand)' }}
             aria-label={`Editar quantidade de ${product.name}`}
@@ -586,7 +586,7 @@ function QtyControl({
       <div className="flex items-center gap-1.5">
         <button
           type="button"
-          onClick={() => onChangeQty(plainKey, -1)}
+          onClick={(e) => { e.stopPropagation(); onChangeQty(plainKey, -1); }}
           className={`flex ${stepBtn} items-center justify-center rounded-full border border-[var(--zm-line)]`}
           aria-label="Diminuir"
         >
@@ -595,7 +595,7 @@ function QtyControl({
         <span className="w-5 text-center text-[13px] font-bold tabular-nums">{qty}</span>
         <button
           type="button"
-          onClick={() => onChangeQty(plainKey, 1)}
+          onClick={(e) => { e.stopPropagation(); onChangeQty(plainKey, 1); }}
           className={`flex ${stepBtn} items-center justify-center rounded-full text-white`}
           style={{ background: 'var(--zm-brand)' }}
           aria-label="Aumentar"
@@ -609,7 +609,7 @@ function QtyControl({
   return (
     <button
       type="button"
-      onClick={onAdd}
+      onClick={(e) => { e.stopPropagation(); onAdd(); }}
       className={`flex ${addBtn} items-center justify-center rounded-full text-white`}
       style={{ background: 'var(--zm-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
       onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
@@ -645,7 +645,13 @@ function PhotoRow({
   const isUnit = product.unitBased === true;
 
   return (
-    <div className="flex gap-3 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3">
+    <div
+      className="flex gap-3 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3 cursor-pointer active:scale-[0.99] transition-transform"
+      onClick={onAdd}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAdd(); }}
+    >
       <div className="flex min-w-0 flex-1 flex-col">
         <p className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[var(--zm-ink)]">
           {product.name}
@@ -720,7 +726,13 @@ function FeaturedCard({
   const isUnit = product.unitBased === true;
 
   return (
-    <div className="flex h-full w-[148px] flex-col overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)]">
+    <div
+      className="flex h-full w-[148px] flex-col overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] cursor-pointer"
+      onClick={onAdd}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAdd(); }}
+    >
       <div className="relative h-[110px] w-full overflow-hidden bg-[var(--zm-canvas)]">
         {product.photoUrl ? (
           <img
@@ -790,7 +802,11 @@ function ListRow({
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 ${divider ? 'border-b border-[var(--zm-line)]' : ''}`}
+      className={`flex items-center gap-3 px-4 py-3 cursor-pointer ${divider ? 'border-b border-[var(--zm-line)]' : ''}`}
+      onClick={onAdd}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAdd(); }}
     >
       {product.photoUrl ? (
         <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--zm-canvas)] p-1.5">
