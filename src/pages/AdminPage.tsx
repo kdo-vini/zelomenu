@@ -13,6 +13,7 @@ import { AdminLayout, type NavSection } from '../components/AdminLayout';
 import { OnboardingWizard, ONBOARDING_KEY } from '../components/OnboardingWizard';
 import { getZeloMenuSlug } from '../services/zelomenuAdminApi';
 import { Settings } from 'lucide-react';
+import type { SettingsPath } from './SettingsPage';
 
 // ─── Upsell ────────────────────────────────────────────────────────────────
 
@@ -58,13 +59,33 @@ export function AdminPage() {
   const entitlement = useZeloMenuEntitlement(session);
 
   const [activeSection, setActiveSection] = useState<NavSection>(() => {
-    const hash = window.location.hash.replace('#', '') as NavSection;
-    return hash === 'publication' || hash === 'settings' ? hash : 'catalog';
+    return parseAdminHash(window.location.hash).section;
   });
+  const [settingsPath, setSettingsPath] = useState<SettingsPath>(() => (
+    parseAdminHash(window.location.hash).settingsPath
+  ));
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const parsed = parseAdminHash(window.location.hash);
+      setActiveSection(parsed.section);
+      setSettingsPath(parsed.settingsPath);
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   const handleNavigate = (section: NavSection) => {
-    setActiveSection(section);
     window.location.hash = section;
+  };
+
+  const openDeliverySettings = () => {
+    window.location.hash = 'settings/entrega/configurar';
+  };
+
+  const returnToSettingsOverview = () => {
+    window.location.hash = 'settings';
   };
 
   const [onboardingDone, setOnboardingDone] = useState(
@@ -148,8 +169,22 @@ export function AdminPage() {
       onNavigate={handleNavigate}
       catalogContent={catalogContent}
       publicationContent={<PublicationPage />}
-      settingsContent={<SettingsPage />}
+      settingsContent={
+        <SettingsPage
+          settingsPath={settingsPath}
+          onOpenDelivery={openDeliverySettings}
+          onBackToOverview={returnToSettingsOverview}
+        />
+      }
       mesasContent={showMesas && slug ? <MesasAdminSection slug={slug} /> : undefined}
     />
   );
+}
+
+function parseAdminHash(rawHash: string): { section: NavSection; settingsPath: SettingsPath } {
+  const hash = rawHash.replace(/^#/, '');
+  if (hash === 'publication') return { section: 'publication', settingsPath: 'overview' };
+  if (hash === 'settings/entrega/configurar') return { section: 'settings', settingsPath: 'delivery' };
+  if (hash.startsWith('settings')) return { section: 'settings', settingsPath: 'overview' };
+  return { section: 'catalog', settingsPath: 'overview' };
 }

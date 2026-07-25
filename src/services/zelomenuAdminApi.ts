@@ -7,6 +7,11 @@
 
 import { supabase } from './supabaseClient';
 import type { PixKeyType } from '../domain/pixBrCode';
+import type {
+  DeliveryCepLookup,
+  DeliveryGeocodeResult,
+  DeliverySettings,
+} from '../domain/deliverySettings';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -70,7 +75,31 @@ const ERROR_MESSAGES: Record<string, string> = {
   COUPON_NOT_FOUND: 'Cupom não encontrado.',
   PIX_KEY_INVALID: 'Chave Pix inválida para o tipo selecionado.',
   AUTO_ACCEPT_SETTINGS_UNAVAILABLE: 'A configuração de pedidos ainda não está disponível. Atualize o painel e tente novamente.',
+  DELIVERY_TIMEOUT: 'A operação demorou mais que o esperado. Confira a conexão e tente novamente.',
+  DELIVERY_NOT_FOUND: 'A configuração de entrega não foi encontrada. Tente recarregar o painel.',
+  DELIVERY_ADDRESS_INVALID: 'Confira o endereço da loja antes de continuar.',
+  DELIVERY_GEOCODING_UNAVAILABLE: 'Não foi possível localizar a loja agora. Tente novamente em instantes.',
 };
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = 8_000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('DELIVERY_TIMEOUT');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
 
 // Parse a Response into JSON, throwing a friendly Error (mapped where possible)
 // when the request failed.
@@ -112,6 +141,50 @@ export async function updateZeloMenuSettings(
     body: JSON.stringify(patch),
   });
   return parseResponse<{ ok: true }>(response);
+}
+
+// ─── Delivery settings ──────────────────────────────────────────────────────
+
+export async function getDeliverySettings(): Promise<DeliverySettings> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/delivery', {
+    headers: await authHeader(),
+    cache: 'no-store',
+  });
+  return parseResponse<DeliverySettings>(response);
+}
+
+export async function lookupDeliveryCep(postalCode: string): Promise<DeliveryCepLookup> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/delivery/lookup-cep', {
+    method: 'POST',
+    headers: await authHeader(),
+    body: JSON.stringify({ postalCode: postalCode.replace(/\D/g, '') }),
+  });
+  return parseResponse<DeliveryCepLookup>(response);
+}
+
+export async function geocodeDeliveryStore(params: {
+  postalCode: string;
+  street: string;
+  number: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+}): Promise<DeliveryGeocodeResult> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/delivery/geocode-store', {
+    method: 'POST',
+    headers: await authHeader(),
+    body: JSON.stringify(params),
+  });
+  return parseResponse<DeliveryGeocodeResult>(response);
+}
+
+export async function updateDeliverySettings(settings: DeliverySettings): Promise<{ ok: true; settings?: DeliverySettings }> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/delivery', {
+    method: 'PATCH',
+    headers: await authHeader(),
+    body: JSON.stringify(settings),
+  });
+  return parseResponse<{ ok: true; settings?: DeliverySettings }>(response);
 }
 
 export async function generateZeloMenuWelcome(params: {
