@@ -17,6 +17,9 @@ import {
   hashAddress,
   matchDeliveryRange,
   roundCurrency,
+  resolveDeliveryPrice,
+  getLocalDateTimeParts,
+  getLocalDateTimePartsFromCivil,
   type DeliveryAddress,
   type DeliveryQuote,
   type DeliveryRange,
@@ -24,6 +27,7 @@ import {
   type DeliveryFulfillmentDetail,
   type GeoCoordinates,
   type ViaCepResult,
+  type DeliveryPricingRule,
 } from '../src/domain/zelomenuDelivery.js';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -568,6 +572,13 @@ export type DeliveryQuoteInput = {
   storeCoordinates: GeoCoordinates | null;
   storeLocationVersion: number;
   signal?: AbortSignal;
+  pricingRules?: DeliveryPricingRule[];
+  pricingVersion?: number;
+  timezone?: string;
+  /** Data/hora civil no timezone da loja, usada em pedidos agendados. */
+  quoteLocalDate?: string;
+  quoteLocalTime?: string;
+  quoteTime?: Date;
 };
 
 export type DeliveryQuoteOutcome =
@@ -643,7 +654,36 @@ export async function quoteDelivery(input: DeliveryQuoteInput): Promise<Delivery
     return { status: 'out_of_area', reason: 'out_of_area' };
   }
 
-  const fee = roundCurrency(Number(match.fee));
+  // 5b. Resolve custom time pricing if rules exist
+  const hasPricingRules = input.pricingRules && input.pricingRules.length > 0 && input.timezone;
+  const hasScheduledLocalTime = Boolean(input.quoteLocalDate || input.quoteLocalTime);
+  const scheduledLocal = hasScheduledLocalTime && input.quoteLocalDate && input.quoteLocalTime
+    ? getLocalDateTimePartsFromCivil(input.quoteLocalDate, input.quoteLocalTime)
+    : null;
+  if (hasPricingRules && hasScheduledLocalTime && !scheduledLocal) {
+    recordQuote('address_invalid');
+    return { status: 'address_invalid', reason: 'Horário agendado inválido' };
+  }
+  const refDate = input.quoteTime ?? new Date();
+  const nowLocal = hasPricingRules
+    ? scheduledLocal ?? getLocalDateTimeParts(input.timezone!, refDate)
+    : null;
+  const pricingResolution = nowLocal
+    ? resolveDeliveryPrice({
+        rules: input.pricingRules!,
+        ranges: input.ranges,
+        distanceM,
+        localMinute: nowLocal.localMinute,
+        dayOfWeek: nowLocal.dayOfWeek,
+        timezone: input.timezone!,
+        pricingVersion: input.pricingVersion ?? 0,
+      })
+    : null;
+
+  const fee = pricingResolution
+    ? roundCurrency(pricingResolution.resolvedFee)
+    : roundCurrency(Number(match.fee));
+
   const quote: DeliveryQuote = {
     address,
     coordinates,
@@ -651,6 +691,10 @@ export async function quoteDelivery(input: DeliveryQuoteInput): Promise<Delivery
     rangeApplied: match.range,
     fee,
     neighborhood: address.neighborhood,
+    pricingMode: pricingResolution?.mode,
+    pricingRuleId: pricingResolution?.ruleId ?? null,
+    pricingRuleLabel: pricingResolution?.ruleLabel ?? null,
+    pricingVersion: pricingResolution?.pricingVersion,
   };
 
   // 6. Cache layer: report the outermost layer used
@@ -796,6 +840,9 @@ export type DeliveryStoreData = {
   locationVersion: number;
   ranges: DeliveryRange[];
   enabledViaConfig: boolean;
+  pricingRules: DeliveryPricingRule[];
+  pricingVersion: number;
+  timezone: string;
 };
 
 const deliveryStoreDataL1 = new Map<string, { result: DeliveryStoreData; expiresAt: number }>();
@@ -816,7 +863,7 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
   const request = (async () => {
   const supabase = getServiceSupabase();
 
-  const [perfilRes, rangesRes] = await Promise.all([
+  const [perfilRes, rangesRes, rulesRes] = await Promise.all([
     supabase
       .from('empresa_perfil')
       .select('delivery_latitude, delivery_longitude, delivery_location_version, delivery_config')
@@ -827,10 +874,15 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
       .select('max_distance_m, delivery_price')
       .eq('company_id', empresaId)
       .order('max_distance_m', { ascending: true }),
+    supabase
+      .from('zelomenu_delivery_pricing_rules')
+      .select('id, label, start_minute, end_minute, enabled, days_of_week')
+      .eq('company_id', empresaId),
   ]);
 
   if (perfilRes.error) throw perfilRes.error;
   if (rangesRes.error) throw rangesRes.error;
+  if (rulesRes.error) throw rulesRes.error;
 
   const perfil = perfilRes.data;
   const lat = perfil?.delivery_latitude;
@@ -845,14 +897,48 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
     price: Number(r.delivery_price),
   }));
 
-  const dc = perfil?.delivery_config as { enabled?: boolean } | null;
+  const dc = perfil?.delivery_config as { enabled?: boolean; pricingVersion?: number; timezone?: string } | null;
   const enabledViaConfig = dc?.enabled === true;
+  const pricingVersion = dc?.pricingVersion ?? 0;
+  const timezone = dc?.timezone ?? 'America/Sao_Paulo';
+
+  // Fetch pricing rule ranges for this company's rules
+  const ruleRows = rulesRes.data ?? [];
+  const ruleIds = ruleRows.map((r) => r.id);
+  let ruleRangeRows: Array<{ pricing_rule_id: string; max_distance_m: number; delivery_price: number }> = [];
+  if (ruleIds.length > 0) {
+    const rrRes = await supabase
+      .from('zelomenu_delivery_pricing_rule_ranges')
+      .select('pricing_rule_id, max_distance_m, delivery_price')
+      .in('pricing_rule_id', ruleIds);
+    if (!rrRes.error && rrRes.data) ruleRangeRows = rrRes.data as Array<{ pricing_rule_id: string; max_distance_m: number; delivery_price: number }>;
+  }
+
+  const rangesByRuleId = new Map<string, Array<{ maxDistanceM: number; price: number }>>();
+  for (const rr of ruleRangeRows) {
+    const list = rangesByRuleId.get(rr.pricing_rule_id) ?? [];
+    list.push({ maxDistanceM: rr.max_distance_m, price: Number(rr.delivery_price) });
+    rangesByRuleId.set(rr.pricing_rule_id, list);
+  }
+
+  const pricingRules: DeliveryPricingRule[] = ruleRows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    startMinute: r.start_minute,
+    endMinute: r.end_minute,
+    enabled: r.enabled,
+    daysOfWeek: r.days_of_week,
+    pricesByDistance: rangesByRuleId.get(r.id) ?? [],
+  }));
 
   const result = {
     coordinates,
     locationVersion: Number(perfil?.delivery_location_version ?? 0),
     ranges,
     enabledViaConfig,
+    pricingRules,
+    pricingVersion,
+    timezone,
   };
   deliveryStoreDataL1.set(empresaId, { result, expiresAt: Date.now() + DELIVERY_STORE_DATA_TTL_MS });
   return result;
@@ -1013,7 +1099,7 @@ export async function updateStoreDeliveryAddress(
 
 export async function saveDeliverySettings(
   empresaId: string,
-  input: { enabled: boolean; address: Record<string, unknown>; ranges: Array<{ maxDistanceM: number; price: number }> },
+  input: { enabled: boolean; address: Record<string, unknown>; ranges: Array<{ maxDistanceM: number; price: number }>; pricingRules?: Array<Record<string, unknown>> },
 ): Promise<void> {
   const address = input.address;
   const postalCode = normalizePostalCode(String(address.postalCode ?? ''));
@@ -1040,13 +1126,28 @@ export async function saveDeliverySettings(
     }
     uniqueDistances.add(range.maxDistanceM);
   }
+
+  const pricingRules = (input.pricingRules ?? []).map((rule) => ({
+    label: String(rule.label ?? ''),
+    startMinute: Number(rule.startMinute),
+    endMinute: Number(rule.endMinute),
+    enabled: Boolean(rule.enabled),
+    daysOfWeek: (rule.daysOfWeek as number[]) ?? [0, 1, 2, 3, 4, 5, 6],
+    pricesByDistance: (rule.pricesByDistance as Array<{ maxDistanceM: number; price: number }>) ?? [],
+  }));
+
   const { error } = await getDb().rpc('save_zelomenu_delivery_settings', {
     p_empresa_id: empresaId,
     p_enabled: Boolean(input.enabled),
     p_address: input.address,
     p_ranges: ranges,
+    p_pricing_rules: pricingRules,
   });
-  if (error) throw new Error(error.message.includes('DELIVERY_CONFIGURATION_INVALID') ? 'DELIVERY_CONFIGURATION_INVALID' : 'DELIVERY_SETTINGS_SAVE_FAILED');
+  if (error) throw new Error(error.message.includes('DELIVERY_CONFIGURATION_INVALID') ? 'DELIVERY_CONFIGURATION_INVALID'
+    : error.message.includes('DELIVERY_PRICING_RULE_INVALID') ? 'DELIVERY_PRICING_RULE_INVALID'
+    : error.message.includes('DELIVERY_PRICING_RULE_OVERLAP') ? 'DELIVERY_PRICING_RULE_OVERLAP'
+    : error.message.includes('DELIVERY_PRICING_RANGE_PRICE_MISSING') ? 'DELIVERY_PRICING_RANGE_PRICE_MISSING'
+    : 'DELIVERY_SETTINGS_SAVE_FAILED');
   invalidateDeliveryStoreData(empresaId);
 }
 
@@ -1222,6 +1323,11 @@ export async function retryDeliveryQuoteRequest(
     return { ok: false, error: 'store_not_ready' };
   }
 
+  const scheduledFulfillment = request.fulfillment as {
+    asap?: boolean;
+    pickupDate?: string | null;
+    pickupTime?: string | null;
+  } | null;
   const outcome = await quoteDelivery({
     companyId: empresaId,
     postalCode,
@@ -1230,6 +1336,11 @@ export async function retryDeliveryQuoteRequest(
     ranges: storeData.ranges,
     storeCoordinates: storeData.coordinates,
     storeLocationVersion: storeData.locationVersion,
+    pricingRules: storeData.pricingRules,
+    pricingVersion: storeData.pricingVersion,
+    timezone: storeData.timezone,
+    quoteLocalDate: scheduledFulfillment?.asap === false ? scheduledFulfillment.pickupDate ?? undefined : undefined,
+    quoteLocalTime: scheduledFulfillment?.asap === false ? scheduledFulfillment.pickupTime ?? undefined : undefined,
   });
 
   if (outcome.status === 'eligible') {
@@ -1239,6 +1350,8 @@ export async function retryDeliveryQuoteRequest(
       address: outcome.quote.address,
       coordinates: outcome.quote.coordinates,
       cacheLayer: outcome.cacheLayer,
+      pricingMode: outcome.quote.pricingMode,
+      pricingRuleLabel: outcome.quote.pricingRuleLabel,
     };
     await resolveQuoteRequestAndSession(empresaId, requestId, outcome.quote.fee, resolvedSnapshot);
     return { ok: true, fee: outcome.quote.fee, distanceM: outcome.quote.distanceM };
@@ -1370,6 +1483,9 @@ export async function revalidateDeliveryForCart(input: {
   postalCode: string;
   number: string;
   complement?: string | null;
+  quoteLocalDate?: string;
+  quoteLocalTime?: string;
+  quoteTime?: Date;
 }): Promise<{
   fee: number;
   feeToConfirm: boolean;
@@ -1401,6 +1517,12 @@ export async function revalidateDeliveryForCart(input: {
     ranges: storeData.ranges,
     storeCoordinates: storeData.coordinates,
     storeLocationVersion: storeData.locationVersion,
+    pricingRules: storeData.pricingRules,
+    pricingVersion: storeData.pricingVersion,
+    timezone: storeData.timezone,
+    quoteLocalDate: input.quoteLocalDate,
+    quoteLocalTime: input.quoteLocalTime,
+    quoteTime: input.quoteTime,
   });
 
   if (outcome.status === 'eligible') {
@@ -1416,6 +1538,8 @@ export async function revalidateDeliveryForCart(input: {
         status,
         cacheLayer: outcome.cacheLayer,
         quoteRequestId: null,
+        deliveryPricingMode: outcome.quote.pricingMode,
+        deliveryPricingRuleLabel: outcome.quote.pricingRuleLabel,
       },
     };
   }

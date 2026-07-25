@@ -190,6 +190,7 @@ app.post('/api/public/zelomenu/cart/:token/confirm', confirmLimiter, async (req,
     if (message.startsWith('PICKUP_CLOSED_DAY:')) return res.status(400).json({ error: 'PICKUP_CLOSED_DAY', detail: message.slice('PICKUP_CLOSED_DAY:'.length) });
     if (message.startsWith('PICKUP_TIME_INVALID:')) return res.status(400).json({ error: 'PICKUP_TIME_INVALID', detail: message.slice('PICKUP_TIME_INVALID:'.length) });
     if (message.startsWith('PICKUP_IN_PAST:')) return res.status(400).json({ error: 'PICKUP_IN_PAST', detail: message.slice('PICKUP_IN_PAST:'.length) });
+    if (message === 'DELIVERY_FEE_CHANGED') return res.status(409).json({ error: 'DELIVERY_FEE_CHANGED' });
     if (message === 'COUPON_INVALID') return res.status(400).json({ error: 'COUPON_INVALID' });
     if (message === 'COUPON_EXPIRED') return res.status(400).json({ error: 'COUPON_EXPIRED' });
     if (message === 'COUPON_MIN_NOT_MET') return res.status(400).json({ error: 'COUPON_MIN_NOT_MET' });
@@ -451,7 +452,7 @@ app.get('/api/health', (_req, res) => {
 
 // ─── Delivery por distancia: admin ──────────────────────────────────────────
 
-// GET /api/admin/zelomenu/delivery — aggregated delivery settings (address + ranges + enabled)
+// GET /api/admin/zelomenu/delivery — aggregated delivery settings (address + ranges + enabled + pricing rules)
 app.get('/api/admin/zelomenu/delivery', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
@@ -478,21 +479,29 @@ app.get('/api/admin/zelomenu/delivery', async (req, res) => {
       },
       ranges: ranges.map((r) => ({ id: r.id, maxDistanceM: r.maxDistanceM, price: r.price })),
       geocodingStatus,
+      pricingRules: storeData.pricingRules,
+      pricingVersion: storeData.pricingVersion,
+      timezone: storeData.timezone,
     });
   } catch (error) {
     sendAdminError(res, error);
   }
 });
 
-// PATCH /api/admin/zelomenu/delivery — save delivery settings (address + ranges + enabled)
+// PATCH /api/admin/zelomenu/delivery — save delivery settings (address + ranges + enabled + pricing rules)
 app.patch('/api/admin/zelomenu/delivery', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { enabled, address, ranges } = req.body ?? {};
+    const { enabled, address, ranges, pricingRules } = req.body ?? {};
     if (typeof enabled !== 'boolean' || !address || typeof address !== 'object' || !Array.isArray(ranges)) {
       throw new Error('DELIVERY_CONFIGURATION_INVALID');
     }
-    await saveDeliverySettings(empresaId, { enabled, address: address as Record<string, unknown>, ranges });
+    await saveDeliverySettings(empresaId, {
+      enabled,
+      address: address as Record<string, unknown>,
+      ranges,
+      pricingRules: pricingRules as Array<Record<string, unknown>> | undefined,
+    });
     res.json({ ok: true });
   } catch (error) {
     sendAdminError(res, error);

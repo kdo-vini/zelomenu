@@ -24,6 +24,17 @@ export type DeliverySettings = {
   address: DeliveryAddress | null;
   ranges: DeliveryRange[];
   geocodingStatus: DeliveryGeocodingStatus;
+  pricingRules?: Array<{
+    id?: string;
+    label: string;
+    startMinute: number;
+    endMinute: number;
+    enabled: boolean;
+    daysOfWeek: number[];
+    pricesByDistance: Array<{ maxDistanceM: number; price: number }>;
+  }>;
+  pricingVersion?: number;
+  timezone?: string;
 };
 
 export type DeliveryCepLookup = {
@@ -46,11 +57,20 @@ export type DeliveryRangeDraft = {
   price: string;
 };
 
+export type DeliveryPricingRuleDraft = {
+  label: string;
+  startMinute: string;
+  endMinute: string;
+  enabled: boolean;
+  prices: Record<string, string>; // key: maxDistanceM as string
+};
+
 export type DeliverySettingsDraft = {
   enabled: boolean;
   address: DeliveryAddress;
   ranges: DeliveryRangeDraft[];
   geocodingStatus: DeliveryGeocodingStatus;
+  pricingRules: DeliveryPricingRuleDraft[];
 };
 
 export const EMPTY_DELIVERY_ADDRESS: DeliveryAddress = {
@@ -73,6 +93,14 @@ export const EMPTY_DELIVERY_SETTINGS: DeliverySettings = {
   geocodingStatus: 'not_configured',
 };
 
+export const EMPTY_PRICING_RULE_DRAFT: DeliveryPricingRuleDraft = {
+  label: '',
+  startMinute: '',
+  endMinute: '',
+  enabled: true,
+  prices: {},
+};
+
 export function createDeliveryDraft(settings: DeliverySettings): DeliverySettingsDraft {
   const address = settings.address ?? EMPTY_DELIVERY_ADDRESS;
 
@@ -85,6 +113,15 @@ export function createDeliveryDraft(settings: DeliverySettings): DeliverySetting
       price: formatMoney(range.price),
     })),
     geocodingStatus: settings.geocodingStatus,
+    pricingRules: (settings.pricingRules ?? []).map((rule) => ({
+      label: rule.label,
+      startMinute: String(rule.startMinute),
+      endMinute: String(rule.endMinute),
+      enabled: rule.enabled,
+      prices: Object.fromEntries(
+        rule.pricesByDistance.map((p) => [String(p.maxDistanceM), formatMoney(p.price)]),
+      ),
+    })),
   };
 }
 
@@ -104,6 +141,25 @@ export function deliveryDraftToSettings(draft: DeliverySettingsDraft): DeliveryS
       return [{ id: range.id, maxDistanceM: Math.round(maxDistanceKm * 1000), price }];
     }),
     geocodingStatus: draft.geocodingStatus,
+    pricingRules: draft.pricingRules.length > 0
+      ? draft.pricingRules.map((rule) => {
+          const startMinute = parseInt(rule.startMinute, 10);
+          const endMinute = parseInt(rule.endMinute, 10);
+          return {
+            label: rule.label,
+            startMinute: Number.isFinite(startMinute) ? Math.max(0, Math.min(1439, startMinute)) : 0,
+            endMinute: Number.isFinite(endMinute) ? Math.max(0, Math.min(1440, endMinute)) : 1440,
+            enabled: rule.enabled,
+            daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+            pricesByDistance: Object.entries(rule.prices).flatMap(([key, value]) => {
+              const maxDistanceM = parseInt(key, 10);
+              const price = parseDecimal(value);
+              if (!Number.isFinite(maxDistanceM) || price == null) return [];
+              return [{ maxDistanceM, price }];
+            }),
+          };
+        })
+      : undefined,
   };
 }
 

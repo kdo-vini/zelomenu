@@ -968,6 +968,9 @@ export default function ZeloMenuCartPage() {
       if (err instanceof ZeloMenuApiError && err.code === 'REVISION_CONFLICT') {
         toast.error(err.detail || 'O carrinho foi atualizado. Revise os dados antes de confirmar.');
         await load('refresh');
+      } else if (err instanceof ZeloMenuApiError && err.code === 'DELIVERY_FEE_CHANGED') {
+        toast.error('O valor do frete mudou. Revise o novo valor e confirme novamente.');
+        await load('refresh');
       } else if (err instanceof ZeloMenuApiError && err.code === 'REQUEST_TIMEOUT') {
         toast.error('A conexão demorou demais. Verifique a internet e tente confirmar novamente.');
       } else if (errMessage === 'TABLE_TAKEN_BY_OTHER_GROUP') {
@@ -2120,6 +2123,11 @@ export default function ZeloMenuCartPage() {
                           {isDelivery ? (feeToConfirm ? 'a confirmar' : toBRL(fee)) : 'sem taxa'}
                         </span>
                       </div>
+                      {isDelivery && !feeToConfirm && payload.session.fulfillment.deliveryPricingMode === 'custom_time' && (
+                        <div className="flex justify-end text-[11.5px] text-[var(--zm-ink-soft)]">
+                          Tarifa personalizada · {payload.session.fulfillment.deliveryPricingRuleLabel}
+                        </div>
+                      )}
                       {payload.session.pricing.discount > 0 && (
                         <div className="flex items-center justify-between text-[13px] text-[var(--color-success)]">
                           <span>Desconto{payload.session.pricing.couponCode ? ` (${payload.session.pricing.couponCode})` : ''}</span>

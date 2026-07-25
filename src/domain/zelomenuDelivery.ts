@@ -65,6 +65,10 @@ export type DeliveryFulfillmentDetail = {
   status: DeliveryStatus;
   cacheLayer: 'none' | 'memory' | 'supabase' | 'provider' | 'stale' | null;
   quoteRequestId: string | null;
+  /** Modo de precificação aplicado (quando há regras de horário) */
+  deliveryPricingMode?: 'standard' | 'custom_time';
+  /** Label da regra ativa (se houver) */
+  deliveryPricingRuleLabel?: string | null;
 };
 
 /** Resultado de uma cotação de frete */
@@ -81,6 +85,14 @@ export type DeliveryQuote = {
   fee: number;
   /** Bairro (para compatibilidade com snapshot legado) */
   neighborhood: string;
+  /** Modo de precificação aplicado (preenchido quando há regras de horário) */
+  pricingMode?: 'standard' | 'custom_time';
+  /** ID da regra ativa (se houver) */
+  pricingRuleId?: string | null;
+  /** Label da regra ativa (se houver) */
+  pricingRuleLabel?: string | null;
+  /** Versão do pricing no momento da cotação */
+  pricingVersion?: number;
 };
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
@@ -224,4 +236,300 @@ export function resolveDeliveryFeeForNeighborhood(input: {
   if (!match) return { fee: 0, toConfirm: true };
 
   return { fee: roundCurrency(Number(match.fee) || 0), toConfirm: false };
+}
+
+// ─── Custom time pricing ──────────────────────────────────────────────────────
+
+export type PricingRulePriceEntry = {
+  maxDistanceM: number;
+  price: number;
+};
+
+export type DeliveryPricingRule = {
+  id?: string;
+  label: string;
+  startMinute: number;
+  endMinute: number;
+  enabled: boolean;
+  daysOfWeek: number[];
+  pricesByDistance: PricingRulePriceEntry[];
+};
+
+export type DeliveryPricingResolution = {
+  mode: 'standard' | 'custom_time';
+  ruleId: string | null;
+  ruleLabel: string | null;
+  baseFee: number;
+  resolvedFee: number;
+  quotedAt: string;
+  timezone: string;
+  pricingVersion: number;
+};
+
+/**
+ * Verifica se um minuto está dentro de um intervalo, suportando crossing de meia-noite.
+ * Início inclusivo, fim exclusivo.
+ */
+export function minuteInPricingInterval(startMinute: number, endMinute: number, currentMinute: number): boolean {
+  if (startMinute === endMinute) return false;
+  if (startMinute < endMinute) return currentMinute >= startMinute && currentMinute < endMinute;
+  return currentMinute >= startMinute || currentMinute < endMinute;
+}
+
+/**
+ * Encontra a primeira regra ativa para o minuto/dia da semana informados.
+ * Retorna null se nenhuma regra ativa corresponder.
+ */
+export function findActiveDeliveryPricingRule(
+  rules: DeliveryPricingRule[],
+  localMinute: number,
+  dayOfWeek: number,
+): DeliveryPricingRule | null {
+  return rules.find(
+    (rule) =>
+      rule.enabled
+      && rule.daysOfWeek.includes(dayOfWeek)
+      && minuteInPricingInterval(rule.startMinute, rule.endMinute, localMinute),
+  ) ?? null;
+}
+
+/**
+ * Resolve o preço de entrega considerando regras de horário personalizado.
+ * Se nenhuma regra ativa for encontrada, usa o preço padrão da faixa.
+ */
+export function resolveDeliveryPrice(input: {
+  rules: DeliveryPricingRule[];
+  ranges: DeliveryRange[];
+  distanceM: number;
+  localMinute: number;
+  dayOfWeek: number;
+  timezone: string;
+  pricingVersion: number;
+}): DeliveryPricingResolution {
+  const { rules, ranges, distanceM, localMinute, dayOfWeek, timezone, pricingVersion } = input;
+  const quotedAt = new Date().toISOString();
+
+  const rangeMatch = matchDeliveryRange({ distanceM, ranges });
+  if (!rangeMatch.matched) {
+    return {
+      mode: 'standard',
+      ruleId: null,
+      ruleLabel: null,
+      baseFee: 0,
+      resolvedFee: 0,
+      quotedAt,
+      timezone,
+      pricingVersion,
+    };
+  }
+
+  const baseFee = rangeMatch.fee;
+  const activeRule = findActiveDeliveryPricingRule(rules, localMinute, dayOfWeek);
+
+  if (!activeRule) {
+    return {
+      mode: 'standard',
+      ruleId: null,
+      ruleLabel: null,
+      baseFee,
+      resolvedFee: baseFee,
+      quotedAt,
+      timezone,
+      pricingVersion,
+    };
+  }
+
+  const rulePrice = activeRule.pricesByDistance.find(
+    (entry) => entry.maxDistanceM === rangeMatch.range.maxDistanceM,
+  );
+
+  const resolvedFee = rulePrice != null ? roundCurrency(rulePrice.price) : baseFee;
+
+  return {
+    mode: rulePrice != null ? 'custom_time' : 'standard',
+    ruleId: activeRule.id ?? null,
+    ruleLabel: rulePrice != null ? activeRule.label : null,
+    baseFee,
+    resolvedFee,
+    quotedAt,
+    timezone,
+    pricingVersion,
+  };
+}
+
+const DAY_SHORT_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Obtém o minuto local e dia da semana em um fuso horário específico.
+ */
+export function getLocalDateTimeParts(timezone: string, referenceDate?: Date): { localMinute: number; dayOfWeek: number } {
+  const date = referenceDate ?? new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    weekday: 'short',
+  }).formatToParts(date);
+
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value) || 0;
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? 'Sun';
+
+  return {
+    localMinute: get('hour') * 60 + get('minute'),
+    dayOfWeek: DAY_SHORT_NAMES.indexOf(weekday),
+  };
+}
+
+/**
+ * Interpreta uma data/hora civil já expressa no fuso da loja.
+ *
+ * Não converta este valor com `new Date('YYYY-MM-DDTHH:mm')`: esse formato
+ * usa o timezone do processo Node e pode deslocar o horário quando o servidor
+ * está em UTC e a loja está em outro fuso.
+ */
+export function getLocalDateTimePartsFromCivil(
+  dateValue: string,
+  timeValue: string,
+): { localMinute: number; dayOfWeek: number } | null {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue.trim());
+  const timeMatch = /^(\d{2}):(\d{2})$/.exec(timeValue.trim());
+  if (!dateMatch || !timeMatch) return null;
+
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  if (hour > 23 || minute > 59) return null;
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) return null;
+
+  return {
+    localMinute: hour * 60 + minute,
+    dayOfWeek: date.getUTCDay(),
+  };
+}
+
+const MINUTES_IN_DAY = 1440;
+
+/**
+ * Formata um intervalo de minutos como rótulo legível.
+ * Ex: (1200, 120) → "20:00 às 02:00 · termina no dia seguinte"
+ */
+export function formatPricingWindowLabel(startMinute: number, endMinute: number): string {
+  const fmt = (m: number) => {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  };
+
+  const crossesMidnight = startMinute >= endMinute;
+  const endLabel = endMinute === MINUTES_IN_DAY ? '00:00' : fmt(endMinute);
+  const suffix = crossesMidnight ? ' · termina no dia seguinte' : '';
+
+  return `${fmt(startMinute)} às ${endLabel}${suffix}`;
+}
+
+/**
+ * Retorna os segmentos visuais de um intervalo para exibição na timeline de 24h.
+ * Quebra em segmentos separados se cruzar meia-noite.
+ */
+export function pricingIntervalSegments(startMinute: number, endMinute: number): Array<{ startMinute: number; endMinute: number }> {
+  if (startMinute < endMinute) return [{ startMinute, endMinute }];
+  // crosses midnight: split into two segments
+  return [
+    { startMinute, endMinute: MINUTES_IN_DAY },
+    { startMinute: 0, endMinute },
+  ];
+}
+
+/**
+ * Valida um conjunto de regras de preço.
+ * Retorna null se válido, ou uma mensagem de erro.
+ */
+export function validateDeliveryPricingRules(
+  rules: DeliveryPricingRule[],
+  ranges: DeliveryRange[],
+): string | null {
+  if (rules.length === 0) return null;
+
+  const validDistances = new Set(ranges.map((r) => r.maxDistanceM));
+
+  for (const rule of rules) {
+    if (!rule.label.trim()) return 'Informe um nome para o horário.';
+
+    if (!Number.isFinite(rule.startMinute) || rule.startMinute < 0 || rule.startMinute >= MINUTES_IN_DAY) {
+      return 'Horário de início inválido.';
+    }
+    if (!Number.isFinite(rule.endMinute) || rule.endMinute < 0 || rule.endMinute > MINUTES_IN_DAY) {
+      return 'Horário de fim inválido.';
+    }
+    if (rule.startMinute === rule.endMinute) return 'O início e fim do horário não podem ser iguais.';
+
+    if (!rule.daysOfWeek.length) return 'Selecione pelo menos um dia da semana.';
+    if (rule.daysOfWeek.some((d) => d < 0 || d > 6)) return 'Dia da semana inválido.';
+
+    if (!rule.pricesByDistance.length) return 'Informe um preço para cada faixa.';
+
+    for (const entry of rule.pricesByDistance) {
+      if (!validDistances.has(entry.maxDistanceM)) return 'Distância inválida para uma das faixas.';
+      if (!Number.isFinite(entry.price) || entry.price < 0) return 'Informe um valor de frete válido para todas as faixas.';
+    }
+
+    // Check all distances have prices
+    const ruleDistances = new Set(rule.pricesByDistance.map((e) => e.maxDistanceM));
+    if (![...validDistances].every((d) => ruleDistances.has(d))) {
+      return 'Informe um preço para cada faixa de distância.';
+    }
+  }
+
+  // Check for overlaps
+  for (let i = 0; i < rules.length; i++) {
+    for (let j = i + 1; j < rules.length; j++) {
+      const a = rules[i];
+      const b = rules[j];
+      // Two rules overlap if either's interval contains the other's start
+      // Only check enabled rules with overlapping days
+      const commonDays = a.daysOfWeek.filter((d) => b.daysOfWeek.includes(d));
+      if (commonDays.length === 0) continue;
+
+      const aContainsBStart = minuteInPricingInterval(a.startMinute, a.endMinute, b.startMinute);
+      const bContainsAStart = minuteInPricingInterval(b.startMinute, b.endMinute, a.startMinute);
+      if (aContainsBStart || bContainsAStart) {
+        return `O horário "${a.label}" não pode se sobrepor a "${b.label}".`;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Normaliza uma regra: arredonda minutos, limpa labels, garante dias da semana.
+ */
+export function normalizeDeliveryPricingRule(rule: {
+  label: string;
+  startMinute: number;
+  endMinute: number;
+  enabled?: boolean;
+  daysOfWeek?: number[];
+  pricesByDistance: Array<{ maxDistanceM: number; price: number }>;
+}): DeliveryPricingRule {
+  return {
+    label: rule.label.trim(),
+    startMinute: Math.round(rule.startMinute),
+    endMinute: Math.round(rule.endMinute),
+    enabled: rule.enabled ?? true,
+    daysOfWeek: rule.daysOfWeek ?? [0, 1, 2, 3, 4, 5, 6],
+    pricesByDistance: rule.pricesByDistance.map((e) => ({
+      maxDistanceM: e.maxDistanceM,
+      price: roundCurrency(e.price),
+    })),
+  };
 }

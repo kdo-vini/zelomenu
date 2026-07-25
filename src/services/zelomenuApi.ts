@@ -83,6 +83,8 @@ export type ZeloMenuCartSessionPayload = {
     deliveryState?: string | null;
     deliveryStatus?: string | null;
     deliveryQuoteRequestId?: string | null;
+    deliveryPricingMode?: 'standard' | 'custom_time';
+    deliveryPricingRuleLabel?: string | null;
     deliveryFee: number;
     deliveryFeeToConfirm: boolean;
   };

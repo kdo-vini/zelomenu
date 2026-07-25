@@ -5,6 +5,7 @@ import {
   deliveryDraftToSettings,
   EMPTY_DELIVERY_SETTINGS,
   formatPostalCode,
+  parseDecimal,
   validateDeliveryDraft,
   type DeliverySettings,
   type DeliverySettingsDraft,
@@ -18,6 +19,7 @@ import {
 import { DeliveryCoveragePreview } from '../components/zelomenu/DeliveryCoveragePreview';
 import { DeliveryQuoteQueue } from '../components/zelomenu/DeliveryQuoteQueue';
 import { ZeloMenuDeliverySettingsCard } from '../components/zelomenu/ZeloMenuDeliverySettingsCard';
+import { DeliveryCustomScheduleDisclosure } from '../components/zelomenu/DeliveryCustomScheduleDisclosure';
 
 type ZeloMenuDeliverySettingsPageProps = {
   onBack: () => void;
@@ -263,16 +265,32 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
       )}
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(390px,0.95fr)] xl:grid-cols-[minmax(0,1.05fr)_minmax(480px,1fr)] lg:items-start lg:gap-6">
-        <ZeloMenuDeliverySettingsCard
-          draft={draft}
-          validation={validation}
-          cepLoading={cepLoading}
-          onLookupCep={() => void handleLookupCep()}
-          onAddressChange={updateAddress}
-          onRangeChange={updateRange}
-          onAddRange={addRange}
-          onRemoveRange={removeRange}
-        />
+        <div className="space-y-4">
+          <ZeloMenuDeliverySettingsCard
+            draft={draft}
+            validation={validation}
+            cepLoading={cepLoading}
+            onLookupCep={() => void handleLookupCep()}
+            onAddressChange={updateAddress}
+            onRangeChange={updateRange}
+            onAddRange={addRange}
+            onRemoveRange={removeRange}
+          />
+          <DeliveryCustomScheduleDisclosure
+            pricingRules={draft.pricingRules}
+            ranges={draft.ranges.map((r) => ({
+              maxDistanceM: Math.round((parseDecimal(r.maxDistanceKm) || 0) * 1000),
+              price: r.price,
+              label: (parseDecimal(r.maxDistanceKm) || 0).toFixed(2).replace('.', ',') + ' km',
+            }))}
+            enabled={draft.enabled}
+            onRulesChange={(rules) => {
+              setSaved(false);
+              setSaveError(null);
+              setDraft((prev) => ({ ...prev, pricingRules: rules }));
+            }}
+          />
+        </div>
 
         <div className="lg:sticky lg:top-5">
           <DeliveryCoveragePreview ranges={deliverySettings.ranges} address={deliverySettings.address} loading={loading || geocoding} />
