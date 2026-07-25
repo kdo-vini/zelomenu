@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNominatimUrl, buildOsrmUrl, buildBrasilApiCepUrl, matchDeliveryRange, normalizePostalCode } from './zelomenuDelivery';
+import { buildGeocodingProviderConfigs, buildNominatimUrl, buildOsrmUrl, buildBrasilApiCepUrl, matchDeliveryRange, normalizePostalCode } from './zelomenuDelivery';
 
 describe('delivery distance domain', () => {
   it('normalizes postal codes and matches the first covering range', () => {
@@ -19,6 +19,20 @@ describe('delivery distance domain', () => {
 
   it('builds BrasilAPI CEP URL correctly', () => {
     expect(buildBrasilApiCepUrl('16370000')).toBe('https://brasilapi.com.br/api/cep/v1/16370000');
+  });
+
+  it('keeps ArcGIS as the default geocoding fallback', () => {
+    expect(buildGeocodingProviderConfigs()).toEqual([
+      { kind: 'nominatim', base: 'https://nominatim.openstreetmap.org' },
+      { kind: 'arcgis', base: 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer' },
+    ]);
+  });
+
+  it('allows deployments to override the geocoding fallback', () => {
+    expect(buildGeocodingProviderConfigs({
+      fallbackKind: 'internal',
+      fallbackBase: 'https://geo.internal',
+    })[1]).toEqual({ kind: 'internal', base: 'https://geo.internal' });
   });
 
   it('supports provider fallback bases without changing the query contract', () => {

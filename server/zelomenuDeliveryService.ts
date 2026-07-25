@@ -13,6 +13,7 @@ import {
   buildBrasilApiCepUrl,
   buildNominatimUrl,
   buildOsrmUrl,
+  buildGeocodingProviderConfigs,
   hashAddress,
   matchDeliveryRange,
   roundCurrency,
@@ -255,18 +256,12 @@ type GeocodingProviderResult = {
 };
 
 async function fetchGeocodingResult(address: DeliveryAddress, parentSignal?: AbortSignal): Promise<GeocodingProviderResult | null> {
-  const providers = [
-    {
-      kind: process.env.GEOCODING_PROVIDER || 'nominatim',
-      base: process.env.GEOCODING_BASE_URL || 'https://nominatim.openstreetmap.org',
-    },
-    ...(process.env.GEOCODING_FALLBACK_BASE_URL
-      ? [{
-        kind: process.env.GEOCODING_FALLBACK_PROVIDER || 'arcgis',
-        base: process.env.GEOCODING_FALLBACK_BASE_URL,
-      }]
-      : []),
-  ].filter((provider, index, all) => all.findIndex((candidate) => candidate.base === provider.base) === index);
+  const providers = buildGeocodingProviderConfigs({
+    primaryKind: process.env.GEOCODING_PROVIDER,
+    primaryBase: process.env.GEOCODING_BASE_URL,
+    fallbackKind: process.env.GEOCODING_FALLBACK_PROVIDER,
+    fallbackBase: process.env.GEOCODING_FALLBACK_BASE_URL,
+  });
   let lastError: unknown = null;
   for (const [index, providerConfig] of providers.entries()) {
     const provider = `geocoding_${index === 0 ? 'primary' : 'fallback'}`;

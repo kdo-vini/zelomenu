@@ -139,6 +139,30 @@ export function buildBrasilApiCepUrl(cep: string): string {
   return `${base}/api/cep/v1/${cep}`;
 }
 
+export type DeliveryGeocodingProviderConfig = {
+  kind: string;
+  base: string;
+};
+
+export function buildGeocodingProviderConfigs(options: {
+  primaryKind?: string;
+  primaryBase?: string;
+  fallbackKind?: string;
+  fallbackBase?: string;
+} = {}): DeliveryGeocodingProviderConfig[] {
+  const providers = [
+    {
+      kind: options.primaryKind?.trim() || 'nominatim',
+      base: options.primaryBase?.trim() || 'https://nominatim.openstreetmap.org',
+    },
+    {
+      kind: options.fallbackKind?.trim() || 'arcgis',
+      base: options.fallbackBase?.trim() || 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer',
+    },
+  ];
+  return providers.filter((provider, index, all) => all.findIndex((candidate) => candidate.base === provider.base) === index);
+}
+
 export function buildNominatimUrl(address: DeliveryAddress, base = process.env.GEOCODING_BASE_URL || 'https://nominatim.openstreetmap.org'): string {
   const q = encodeURIComponent(`${address.street}, ${address.number} - ${address.neighborhood}, ${address.city}, ${address.state}, Brasil`);
   return `${base}/search?q=${q}&format=json&limit=1&countrycodes=br`;
