@@ -625,26 +625,12 @@ app.post('/api/admin/zelomenu/delivery/geocode-store', async (req, res) => {
     const coordinates = await resolveDeliveryStoreGeocoding(deliveryAddress);
     if (!coordinates) return res.status(422).json({ error: 'GEOCODING_UNAVAILABLE' });
 
-    const [current, ranges, storeData] = await Promise.all([
-      getStoreDeliveryAddress(empresaId),
-      listDeliveryRanges(empresaId),
-      getDeliveryStoreData(empresaId),
-    ]);
-    await saveDeliverySettings(empresaId, {
-      enabled: storeData.enabledViaConfig,
-      address: {
-        postalCode: deliveryAddress.postalCode,
-        number: deliveryAddress.number,
-        complement: deliveryAddress.complement,
-        street: deliveryAddress.street,
-        neighborhood: deliveryAddress.neighborhood,
-        city: deliveryAddress.city,
-        state: deliveryAddress.state,
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-      },
-      ranges: ranges.map((range) => ({ maxDistanceM: range.maxDistanceM, price: range.price })),
-    });
+    // Geocoding is a validation step for the editor, not a partial save.
+    // The following PATCH contains the complete address + ranges and is the
+    // only operation that persists the configuration. This is important for
+    // companies migrating from the legacy neighborhood-based configuration:
+    // they may not have delivery ranges in the new table yet.
+    const current = await getStoreDeliveryAddress(empresaId);
 
     res.json({
       latitude: coordinates.latitude,
