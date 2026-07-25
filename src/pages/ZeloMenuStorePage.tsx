@@ -82,7 +82,7 @@ export function ZeloMenuStorePage({
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
 
-  const cart = useStoreCart(slug, tableOrderContext);
+  const cart = useStoreCart(slug, tableOrderContext, store?.business.deliveryEnabled === true);
 
   const tabsRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});

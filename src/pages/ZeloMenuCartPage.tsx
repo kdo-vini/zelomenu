@@ -105,6 +105,8 @@ function composeDeliveryAddress(fields: Pick<DraftState, 'deliveryStreet' | 'del
 type AutosaveResult = ZeloMenuPublicCartResponse | null;
 
 const PAYMENT_OPTIONS = ['Pix', 'Dinheiro', 'Cartão de débito', 'Cartão de crédito', 'Outro'] as const;
+const AUTOSAVE_DEBOUNCE_MS = 650;
+const DELIVERY_QUOTE_DEBOUNCE_MS = 1000;
 
 function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -816,11 +818,19 @@ export default function ZeloMenuCartPage() {
     }
 
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    const deliveryPostalCode = autosavePayload.fulfillment?.deliveryPostalCode?.replace(/\D/g, '') ?? '';
+    const deliveryNumber = autosavePayload.fulfillment?.deliveryNumber?.trim() ?? '';
+    const isReadyToRequestDeliveryQuote = autosavePayload.fulfillment?.type === 'delivery'
+      && deliveryPostalCode.length === 8
+      && deliveryNumber.length > 0;
+    const debounceMs = isReadyToRequestDeliveryQuote
+      ? DELIVERY_QUOTE_DEBOUNCE_MS
+      : AUTOSAVE_DEBOUNCE_MS;
     autosaveTimerRef.current = setTimeout(() => {
       autosaveTimerRef.current = null;
       const latest = latestAutosaveRef.current;
       if (latest) void enqueueAutosave(latest);
-    }, 650);
+    }, debounceMs);
 
     return () => {
       if (autosaveTimerRef.current) {
@@ -1858,7 +1868,7 @@ export default function ZeloMenuCartPage() {
                           <div className="grid grid-cols-2 gap-3">
                             <label className="flex flex-col gap-1.5">
                               <span className={labelCls}>Número {requiredMark}</span>
-                              <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} onFocus={beginDeliveryAddressEdit} onBlur={endDeliveryAddressEdit} readOnly={!isOpen} required className={inputCls} placeholder="123" />
+                              <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} readOnly={!isOpen} required className={inputCls} placeholder="123" />
                             </label>
                             <label className="flex flex-col gap-1.5">
                               <span className={labelCls}>Complemento</span>

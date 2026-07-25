@@ -156,8 +156,8 @@ async function typeNumber(page: Page, number: string) {
   const numberInput = page.getByPlaceholder('123');
   await expect(numberInput).toBeVisible({ timeout: 5_000 });
   await numberInput.fill(number);
-  // The production UI intentionally waits for the user to finish editing
-  // before starting the quote request.
+  // The production UI debounces the quote from the last digit, so blur is
+  // not required to start the request.
   await numberInput.blur();
 }
 
@@ -262,7 +262,7 @@ test.describe('Fluxo de entrega', () => {
     await typeCep(page, '01001000');
     await typeNumber(page, '100');
 
-    // Após digitar o número, o autosave dispara em ~650ms e o modal
+    // Após a última tecla, o autosave dispara em ~1000ms e o modal
     // "Calculando a entrega" aparece enquanto o PATCH está pendente
     const quoteModal = page.locator('[role="dialog"]')
       .filter({ hasText: /Calculando a entrega/i });
@@ -274,6 +274,44 @@ test.describe('Fluxo de entrega', () => {
       // Se não apareceu, o cálculo foi muito rápido. O teste não falha —
       // significa que a UX é rápida o suficiente.
     }
+  });
+
+  test('Debounce reinicia a partir do último dígito antes de cotar', async ({ page }) => {
+    await mockCepLookup(page);
+
+    const state = publicApiMockStates.get(page);
+    if (state) state.patchDelayMs = 800;
+
+    let patchCount = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'PATCH' && request.url().includes('/api/public/zelomenu/cart/')) {
+        patchCount += 1;
+      }
+    });
+
+    await addProductAndGoToCart(page);
+    await goToStep1(page);
+    await selectDelivery(page);
+    await typeCep(page, '01001000');
+    await expect(page.getByPlaceholder('Preenchida pelo CEP')).toHaveValue('São Paulo', { timeout: 5_000 });
+
+    // Deixa qualquer autosave do CEP terminar antes de medir somente o número.
+    await page.waitForTimeout(900);
+    const patchesBeforeNumber = patchCount;
+    const numberInput = page.getByPlaceholder('123');
+
+    await numberInput.fill('1');
+    await page.waitForTimeout(500);
+    await numberInput.fill('12');
+
+    // Ainda não passou 1s desde o último dígito: não houve nova cotação nem modal.
+    await page.waitForTimeout(350);
+    expect(patchCount).toBe(patchesBeforeNumber);
+    await expect(page.locator('[role="dialog"]').filter({ hasText: /Calculando a entrega/i })).toBeHidden();
+
+    // Depois do debounce, a requisição começa e o modal aparece durante o PATCH.
+    await expect.poll(() => patchCount, { timeout: 1_500 }).toBe(patchesBeforeNumber + 1);
+    await expect(page.locator('[role="dialog"]').filter({ hasText: /Calculando a entrega/i })).toBeVisible({ timeout: 1_000 });
   });
 
   test('3. Entrega elegível — CTA fica ativo e mostra valor do frete', async ({ page }) => {

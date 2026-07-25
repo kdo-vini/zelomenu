@@ -12,7 +12,7 @@ import { useToast } from '../contexts/ToastContext';
 
 type SelectedItem = ZeloMenuStoreCartItem;
 
-export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext) {
+export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext, deliveryEnabled = false) {
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -117,6 +117,9 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
           selectedOptions: line.selectedOptions,
           notes: line.notes ?? null,
         })),
+        fulfillment: {
+          type: !tableOrderContext && deliveryEnabled ? 'delivery' : 'pickup',
+        },
         tableOrderContext,
       });
       navigate(result.path);

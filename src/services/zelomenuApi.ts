@@ -309,6 +309,7 @@ export async function startPublicOrder(
     customerName?: string | null;
     customerPhone?: string | null;
     items: ZeloMenuUpdateCartPayload['items'];
+    fulfillment?: Pick<NonNullable<ZeloMenuUpdateCartPayload['fulfillment']>, 'type'>;
     tableOrderContext?: TableOrderContext;
   },
 ): Promise<{ token: string; path: string; orderingId: string }> {
