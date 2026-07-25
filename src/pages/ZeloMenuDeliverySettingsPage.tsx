@@ -238,7 +238,7 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1180px] px-4 pb-28 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pt-9">
+    <div className="mx-auto w-full max-w-[1320px] px-4 pb-28 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pt-9">
       <header className="flex items-start gap-3">
         <button
           type="button"
@@ -262,7 +262,7 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
         </p>
       )}
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(340px,1fr)] lg:items-start lg:gap-6">
+      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(390px,0.95fr)] xl:grid-cols-[minmax(0,1.05fr)_minmax(480px,1fr)] lg:items-start lg:gap-6">
         <ZeloMenuDeliverySettingsCard
           draft={draft}
           validation={validation}

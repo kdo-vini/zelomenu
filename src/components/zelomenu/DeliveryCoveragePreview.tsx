@@ -35,6 +35,16 @@ function formatDistance(value: number): string {
   return value.toFixed(2).replace('.', ',');
 }
 
+function formatPrice(value: number): string {
+  return value.toFixed(2).replace('.', ',');
+}
+
+const COVERAGE_COLORS = ['#6E3AFF', '#7D52E8', '#9270F0', '#AB91F7'];
+
+function coverageColor(index: number): string {
+  return COVERAGE_COLORS[index % COVERAGE_COLORS.length];
+}
+
 function metricValue(value: number | null, suffix: string): string {
   return value == null ? '—' : `${suffix === 'km' ? formatDistance(value) : value} ${suffix}`;
 }
@@ -153,15 +163,17 @@ export function DeliveryCoveragePreview({
     }
 
     const bounds = L.latLngBounds([[latitude, longitude], [latitude, longitude]]);
-    [...sortedRanges].reverse().forEach((range, index) => {
+    [...sortedRanges].reverse().forEach((range, reverseIndex) => {
+      const rangeIndex = sortedRanges.length - reverseIndex - 1;
+      const color = coverageColor(rangeIndex);
       const circle = L.circle([latitude, longitude], {
         radius: range.maxDistanceM,
-        color: '#6E3AFF',
+        color,
         weight: compact ? 1 : 1.25,
-        fillColor: '#6E3AFF',
-        fillOpacity: Math.min(0.1 + index * 0.035, 0.22),
+        fillColor: color,
+        fillOpacity: Math.min(0.1 + reverseIndex * 0.035, 0.22),
       }).addTo(coverageLayer);
-      circle.bindTooltip(`${formatDistance(range.maxDistanceM / 1000)} km`, {
+      circle.bindTooltip(`Até ${formatDistance(range.maxDistanceM / 1000)} km · R$ ${formatPrice(range.price)}`, {
         permanent: true,
         direction: 'top',
         className: 'zelomenu-map-tooltip',
@@ -202,7 +214,7 @@ export function DeliveryCoveragePreview({
 
       <div className={`${showHeader ? 'p-4 sm:p-5' : 'p-0'} ${compact ? 'space-y-4' : 'space-y-5'}`}>
         <div
-          className={`relative isolate overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] ${compact ? 'h-52 sm:h-56' : 'h-80 sm:h-[360px] lg:h-[400px]'}`}
+          className={`relative isolate overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-muted)] ${compact ? 'h-52 sm:h-56' : 'h-[400px] sm:h-[500px] lg:h-[480px] xl:h-[560px]'}`}
           role="img"
           aria-label={`${hasCoordinates ? 'Mapa real' : 'Visualização aproximada'} da área de entrega. ${cityLabel}. Distância máxima ${maxDistanceKm > 0 ? `${formatDistance(maxDistanceKm)} quilômetros` : 'não configurada'}. ${hasCoordinates ? 'Use o scroll, a pinça ou arraste para explorar.' : ''}`}
         >
@@ -217,6 +229,22 @@ export function DeliveryCoveragePreview({
                   Mapa real · raios
                 </span>
               </div>
+              {sortedRanges.length > 0 && (
+                <div className="pointer-events-none absolute bottom-4 left-4 z-[500] max-w-[calc(100%-2rem)] rounded-2xl border border-white/80 bg-white/95 p-3 shadow-[0_10px_25px_rgba(36,31,54,0.14)] backdrop-blur-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-[var(--color-ink-muted)]">Faixas no mapa</p>
+                    <p className="text-[10px] font-medium text-[var(--color-ink-muted)]">Use o zoom para conferir as ruas</p>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1.5">
+                    {sortedRanges.map((range, index) => (
+                      <span key={range.id ?? `${range.maxDistanceM}-${index}`} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-ink-soft)]">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: coverageColor(index) }} aria-hidden="true" />
+                        Até {formatDistance(range.maxDistanceM / 1000)} km · R$ {formatPrice(range.price)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {mapTilesFailed && (
                 <div className="pointer-events-none absolute inset-x-3 bottom-3 z-[500] rounded-xl border border-[var(--color-warn-soft)] bg-white/95 px-3 py-2 text-[11px] leading-relaxed text-[var(--color-warn)] shadow-sm">
                   O mapa externo está indisponível. As faixas continuam configuradas e o resumo permanece disponível.
