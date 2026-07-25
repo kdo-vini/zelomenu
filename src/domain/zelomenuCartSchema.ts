@@ -50,7 +50,10 @@ export type ZeloMenuCartRevalidationIssue = {
     | 'coupon_invalid'
     | 'coupon_expired'
     | 'coupon_min_not_met'
-    | 'coupon_already_used';
+    | 'coupon_already_used'
+    | 'delivery_address_invalid'
+    | 'delivery_out_of_area'
+    | 'delivery_quote_pending';
   message: string;
   productName?: string;
   requestedQuantity?: number;

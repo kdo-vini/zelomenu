@@ -18,13 +18,11 @@ import type {
   ZeloMenuCartRevalidationIssue,
   ZeloMenuCartRevalidation,
 } from '../src/domain/zelomenuCartSchema.js';
-import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDelivery.js';
-import { revalidateDeliveryForCart } from './zelomenuDeliveryService.js';
-import type { DeliveryFulfillmentDetail } from './zelomenuDeliveryService.js';
+import { revalidateDeliveryForCart, createDeliveryQuoteRequest, findDeliveryQuoteRequest } from './zelomenuDeliveryService.js';
 import { normalizeCouponCode, validateCouponRule, applyCoupon } from '../src/domain/zelomenuCoupon.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { toWhatsAppNumber } from '../src/domain/whatsappOrder.js';
-import { buildPixBrCode, isPixKeyType, isValidPixKeyForType, PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
+import { buildPixBrCode, isPixKeyType, isValidPixKeyForType, type PixKeyType } from '../src/domain/pixBrCode.js';
 import { firstZeloMenuCheckoutError, validateZeloMenuCheckoutDetails } from '../src/domain/zelomenuCheckout.js';
 import {
   businessDayLabel,
@@ -205,6 +203,25 @@ export type ZeloMenuFulfillmentSnapshot = {
   deliveryStatus?: string | null;
   deliveryCacheLayer?: string | null;
   deliveryQuoteRequestId?: string | null;
+  // Server-only override written by the operational quote queue.
+  deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
+};
+
+export type ZeloMenuDeliveryQuoteOverride = {
+  requestId: string;
+  fee: number;
+  distanceM: number | null;
+  address: {
+    postalCode: string;
+    number: string;
+    complement: string | null;
+    street: string;
+    neighborhood: string;
+    city: string;
+    state: string;
+  } | null;
+  coordinates: { latitude: number; longitude: number } | null;
+  cacheLayer: string;
 };
 
 // ─── DB row types ─────────────────────────────────────────────────────────────
@@ -325,6 +342,7 @@ export type PublicCartResponse = {
     featuredProductIds?: number[];
     recommendationsEnabled?: boolean;
     recommendationProductIds?: number[];
+    categorySuggestions?: Record<string, number[]>;
     businessHours?: PublicBusinessHoursStatus;
   };
   catalog: CatalogCategoriaGroup[];
@@ -339,6 +357,7 @@ export type PublicCartConfirmResponse = PublicCartResponse & {
     alreadyConfirmed: boolean;
     state: ZeloMenuCartState;
     customerMessage: string | null;
+    quoteRequestId?: string;
   };
 };
 
@@ -533,7 +552,9 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
     deliveryStreet?: unknown; deliveryCity?: unknown; deliveryState?: unknown;
     deliveryLatitude?: unknown; deliveryLongitude?: unknown; deliveryDistanceM?: unknown;
     deliveryStatus?: unknown; deliveryCacheLayer?: unknown; deliveryQuoteRequestId?: unknown;
+    deliveryQuoteOverride?: unknown;
   };
+  const override = parseDeliveryQuoteOverride(row.deliveryQuoteOverride);
   return {
     type: row.type === 'delivery' ? 'delivery' : 'pickup',
     asap: row.asap === true,
@@ -555,6 +576,59 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
     deliveryStatus: typeof row.deliveryStatus === 'string' ? row.deliveryStatus : null,
     deliveryCacheLayer: typeof row.deliveryCacheLayer === 'string' ? row.deliveryCacheLayer : null,
     deliveryQuoteRequestId: typeof row.deliveryQuoteRequestId === 'string' ? row.deliveryQuoteRequestId : null,
+    deliveryQuoteOverride: override,
+  };
+}
+
+function parseDeliveryQuoteOverride(value: unknown): ZeloMenuDeliveryQuoteOverride | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as {
+    requestId?: unknown; fee?: unknown; distanceM?: unknown; cacheLayer?: unknown;
+    address?: unknown; coordinates?: unknown;
+  };
+  const requestId = sanitizeText(row.requestId, 80);
+  const fee = Number(row.fee);
+  if (!requestId || !Number.isFinite(fee) || fee < 0) return null;
+
+  let address: ZeloMenuDeliveryQuoteOverride['address'] = null;
+  if (row.address && typeof row.address === 'object') {
+    const candidate = row.address as Record<string, unknown>;
+    const postalCode = sanitizeText(candidate.postalCode, 8);
+    const number = sanitizeText(candidate.number, 20);
+    const street = sanitizeText(candidate.street, 250);
+    const neighborhood = sanitizeText(candidate.neighborhood, 120);
+    const city = sanitizeText(candidate.city, 120);
+    const state = sanitizeText(candidate.state, 2);
+    if (postalCode && number && street && city && state) {
+      address = {
+        postalCode,
+        number,
+        complement: sanitizeText(candidate.complement, 100) ?? null,
+        street,
+        neighborhood: neighborhood ?? '',
+        city,
+        state,
+      };
+    }
+  }
+
+  let coordinates: ZeloMenuDeliveryQuoteOverride['coordinates'] = null;
+  if (row.coordinates && typeof row.coordinates === 'object') {
+    const candidate = row.coordinates as Record<string, unknown>;
+    const latitude = Number(candidate.latitude);
+    const longitude = Number(candidate.longitude);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+      coordinates = { latitude, longitude };
+    }
+  }
+
+  return {
+    requestId,
+    fee,
+    distanceM: Number.isFinite(Number(row.distanceM)) ? Number(row.distanceM) : null,
+    address,
+    coordinates,
+    cacheLayer: sanitizeText(row.cacheLayer, 40) ?? 'manual',
   };
 }
 
@@ -811,6 +885,7 @@ async function resolveSnapshots(
     observations?: string | null;
     context: ZeloMenuCartContext;
     couponCode?: string | null;
+    deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
   },
 ): Promise<ResolvedCart> {
   await loadCatalogFromDb(empresaId);
@@ -876,10 +951,25 @@ async function resolveSnapshots(
   if (fulfillmentType === 'delivery') {
     if (!config.deliveryConfig?.enabled) throw new Error('DELIVERY_DISABLED');
 
+    const override = params.deliveryQuoteOverride;
+    if (override && Number.isFinite(override.fee) && override.fee >= 0) {
+      deliveryFee = override.fee;
+      deliveryFeeToConfirm = false;
+      deliveryDetail = {
+        address: override.address,
+        coordinates: override.coordinates,
+        distanceM: override.distanceM,
+        deliveryFee: override.fee,
+        status: 'eligible',
+        cacheLayer: override.cacheLayer as import('../src/domain/zelomenuDelivery.js').DeliveryFulfillmentDetail['cacheLayer'],
+        quoteRequestId: override.requestId,
+      };
+    }
+
     // Novo fluxo: CEP + número → quote por distância
     const postalCode = params.fulfillment?.deliveryPostalCode?.replace(/\D/g, '');
     const number = params.fulfillment?.deliveryNumber?.trim();
-    if (postalCode && postalCode.length === 8 && number) {
+    if (!override && postalCode && postalCode.length === 8 && number) {
       try {
         const result = await revalidateDeliveryForCart({
           empresaId,
@@ -891,24 +981,30 @@ async function resolveSnapshots(
         deliveryFeeToConfirm = result.feeToConfirm;
         deliveryDetail = result.detail;
       } catch {
-        // Fallback silencioso para bairro se o quote falhar
-        const resolved = resolveDeliveryFeeForNeighborhood({
-          type: 'delivery',
-          neighborhood: deliveryNeighborhood,
-          neighborhoods: config.deliveryConfig.neighborhoods,
-        });
-        deliveryFee = resolved.fee;
-        deliveryFeeToConfirm = resolved.toConfirm;
+        deliveryFee = 0;
+        deliveryFeeToConfirm = true;
+        deliveryDetail = {
+          address: null,
+          coordinates: null,
+          distanceM: null,
+          deliveryFee: 0,
+          status: 'unavailable',
+          cacheLayer: null,
+          quoteRequestId: null,
+        };
       }
     } else {
-      // Fluxo legado: bairro textual
-      const resolved = resolveDeliveryFeeForNeighborhood({
-        type: 'delivery',
-        neighborhood: deliveryNeighborhood,
-        neighborhoods: config.deliveryConfig.neighborhoods,
-      });
-      deliveryFee = resolved.fee;
-      deliveryFeeToConfirm = resolved.toConfirm;
+      deliveryFee = 0;
+      deliveryFeeToConfirm = true;
+      deliveryDetail = {
+        address: null,
+        coordinates: null,
+        distanceM: null,
+        deliveryFee: 0,
+        status: 'pending',
+        cacheLayer: null,
+        quoteRequestId: null,
+      };
     }
   }
 
@@ -921,18 +1017,19 @@ async function resolveSnapshots(
     deliveryNeighborhood,
     deliveryFee,
     deliveryFeeToConfirm,
-    deliveryPostalCode: params.fulfillment?.deliveryPostalCode ?? null,
-    deliveryNumber: params.fulfillment?.deliveryNumber ?? null,
-    deliveryComplement: params.fulfillment?.deliveryComplement ?? null,
-    deliveryStreet: params.fulfillment?.deliveryStreet ?? null,
-    deliveryCity: params.fulfillment?.deliveryCity ?? null,
-    deliveryState: params.fulfillment?.deliveryState ?? null,
+    deliveryPostalCode: deliveryDetail?.address?.postalCode ?? params.fulfillment?.deliveryPostalCode ?? null,
+    deliveryNumber: deliveryDetail?.address?.number ?? params.fulfillment?.deliveryNumber ?? null,
+    deliveryComplement: deliveryDetail?.address?.complement ?? params.fulfillment?.deliveryComplement ?? null,
+    deliveryStreet: deliveryDetail?.address?.street ?? params.fulfillment?.deliveryStreet ?? null,
+    deliveryCity: deliveryDetail?.address?.city ?? params.fulfillment?.deliveryCity ?? null,
+    deliveryState: deliveryDetail?.address?.state ?? params.fulfillment?.deliveryState ?? null,
     deliveryLatitude: deliveryDetail?.coordinates?.latitude ?? null,
     deliveryLongitude: deliveryDetail?.coordinates?.longitude ?? null,
     deliveryDistanceM: deliveryDetail?.distanceM ?? null,
-    deliveryStatus: deliveryDetail?.status ?? null,
+    deliveryStatus: fulfillmentType === 'delivery' ? (deliveryDetail?.status ?? 'pending') : 'not_applicable',
     deliveryCacheLayer: deliveryDetail?.cacheLayer ?? null,
-    deliveryQuoteRequestId: null, // TODO: quote persistente
+    deliveryQuoteRequestId: deliveryDetail?.quoteRequestId ?? null,
+    deliveryQuoteOverride: params.deliveryQuoteOverride ?? null,
   };
 
   // ── Coupon validation ────────────────────────────────────────────────────
@@ -1051,10 +1148,20 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
       observations: session.cart.observations,
       context: session.context,
       couponCode: session.pricing.couponCode,
+      deliveryQuoteOverride: session.fulfillment.deliveryQuoteOverride,
     });
     previewCart = resolved.cart;
     previewPricing = resolved.pricing;
     previewPayment = resolved.payment;
+
+    if (resolved.fulfillment.type === 'delivery') {
+      const status = resolved.fulfillment.deliveryStatus;
+      if (status === 'out_of_area') {
+        issues.push({ code: 'delivery_out_of_area', message: 'Este endereço está fora da área de entrega.' });
+      } else if (status === 'pending' || status === 'unavailable' || resolved.fulfillment.deliveryFeeToConfirm) {
+        issues.push({ code: 'delivery_quote_pending', message: 'Não foi possível calcular o frete agora. Sua solicitação será preservada para nova cotação.' });
+      }
+    }
 
     for (const storedItem of session.cart.items) {
       const resolvedItem = resolved.cart.items.find(
@@ -1084,6 +1191,45 @@ async function runRevalidation(session: PublicCartSession): Promise<ZeloMenuCart
   return { checkedAt: new Date().toISOString(), ok: issues.length === 0, issues, previewCart, previewPricing, previewPayment };
 }
 
+function revalidationFromResolved(resolved: ResolvedCart): ZeloMenuCartRevalidation {
+  const issues: ZeloMenuCartRevalidationIssue[] = [];
+  if (resolved.fulfillment.type === 'delivery') {
+    if (resolved.fulfillment.deliveryStatus === 'out_of_area') {
+      issues.push({ code: 'delivery_out_of_area', message: 'Este endereço está fora da área de entrega.' });
+    } else if (
+      resolved.fulfillment.deliveryStatus === 'pending'
+      || resolved.fulfillment.deliveryStatus === 'unavailable'
+      || resolved.fulfillment.deliveryFeeToConfirm
+    ) {
+      issues.push({ code: 'delivery_quote_pending', message: 'Não foi possível calcular o frete agora. Sua solicitação será preservada para nova cotação.' });
+    }
+  }
+  return {
+    checkedAt: new Date().toISOString(),
+    ok: issues.length === 0,
+    issues,
+    previewCart: resolved.cart,
+    previewPricing: resolved.pricing,
+    previewPayment: resolved.payment,
+  };
+}
+
+function canCarryDeliveryQuoteOverride(
+  current: ZeloMenuFulfillmentSnapshot,
+  incoming: Partial<ZeloMenuFulfillmentSnapshot> | null,
+): boolean {
+  if (!current.deliveryQuoteOverride || !incoming || incoming.type === 'pickup') return false;
+  const currentPostalCode = (current.deliveryPostalCode ?? '').replace(/\D/g, '');
+  const incomingPostalCode = (incoming.deliveryPostalCode ?? current.deliveryPostalCode ?? '').replace(/\D/g, '');
+  const currentNumber = (current.deliveryNumber ?? '').trim();
+  const incomingNumber = (incoming.deliveryNumber ?? current.deliveryNumber ?? '').trim();
+  const currentComplement = (current.deliveryComplement ?? '').trim();
+  const incomingComplement = (incoming.deliveryComplement ?? current.deliveryComplement ?? '').trim();
+  return currentPostalCode === incomingPostalCode
+    && currentNumber === incomingNumber
+    && currentComplement === incomingComplement;
+}
+
 async function persistRevalidation(sessionId: string, revalidation: ZeloMenuCartRevalidation): Promise<void> {
   const now = new Date().toISOString();
   const { error } = await getServiceSupabase()
@@ -1093,23 +1239,32 @@ async function persistRevalidation(sessionId: string, revalidation: ZeloMenuCart
   if (error) throw error;
 }
 
-async function buildPublicResponse(token: string, sessionRow: SessionRow, tokenRow: TokenRow, persistAccess = true): Promise<PublicCartResponse> {
+async function buildPublicResponse(
+  token: string,
+  sessionRow: SessionRow,
+  tokenRow: TokenRow,
+  persistAccess = true,
+  revalidationOverride?: ZeloMenuCartRevalidation,
+  catalogAlreadyLoaded = false,
+): Promise<PublicCartResponse> {
   const session = mapSessionRow(sessionRow);
   const sessionForRevalidation = { ...session, metadata: { ...session.metadata, empresaId: sessionRow.empresa_id } };
-  const revalidation = await runRevalidation(sessionForRevalidation);
+  const revalidation = revalidationOverride ?? await runRevalidation(sessionForRevalidation);
   if (persistAccess) {
     await persistRevalidation(session.id, revalidation);
     // Sample access writes to avoid turning every public GET into two UPDATEs.
     if (!tokenRow.last_seen_at || Date.now() - Date.parse(tokenRow.last_seen_at) > 15 * 60 * 1000) await touchToken(tokenRow.id);
   }
-  await loadCatalogFromDb(sessionRow.empresa_id);
+  if (!catalogAlreadyLoaded) await loadCatalogFromDb(sessionRow.empresa_id);
   const config = getConfig(sessionRow.empresa_id);
   session.lastRevalidatedAt = revalidation.checkedAt;
   session.lastRevalidation = revalidation;
   session.updatedAt = revalidation.checkedAt;
+  const deliveryQuotePending = revalidation.issues.some((issue) => issue.code === 'delivery_quote_pending');
   session.payment = {
     ...session.payment,
-    pixCopyPaste: computePixCopyPaste(config, session.payment.declaredMethod, session.pricing.total),
+    pixReceiptRequired: deliveryQuotePending ? false : session.payment.pixReceiptRequired,
+    pixCopyPaste: deliveryQuotePending ? null : computePixCopyPaste(config, session.payment.declaredMethod, session.pricing.total),
   };
 
   const publicMetadata: Record<string, unknown> = {};
@@ -1353,6 +1508,7 @@ export async function openPublicOrderCartSession(input: {
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
   observations?: string | null;
+  couponCode?: string | null;
   context?: 'public_order' | 'table_order';
   mesa_id?: string;
   comanda_id?: string;
@@ -1444,6 +1600,7 @@ export async function updatePublicCartSession(
     fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
     paymentMethod?: string | null;
     observations?: string | null;
+    couponCode?: string | null;
   },
 ): Promise<PublicCartResponse | null> {
   const normalized = normalizePublicCartToken(token);
@@ -1466,6 +1623,11 @@ export async function updatePublicCartSession(
   const nextCouponCode = 'couponCode' in patch
     ? (patch.couponCode || null)
     : current.pricing.couponCode;
+  const deliveryQuoteOverride = patch.fulfillment === undefined
+    ? current.fulfillment.deliveryQuoteOverride
+    : canCarryDeliveryQuoteOverride(current.fulfillment, patch.fulfillment)
+      ? current.fulfillment.deliveryQuoteOverride
+      : null;
 
   const resolved = await resolveSnapshots(sessionRow.empresa_id, {
     items: patch.items === undefined ? toCartItemInputs(current.cart) : normalizeIncomingItems(patch.items),
@@ -1474,7 +1636,9 @@ export async function updatePublicCartSession(
     observations: patch.observations === undefined ? current.cart.observations : patch.observations,
     context: sessionRow.context,
     couponCode: nextCouponCode,
+    deliveryQuoteOverride,
   });
+  const revalidation = revalidationFromResolved(resolved);
   const nextRevision = current.revision + 1;
   const now = new Date().toISOString();
   const { data, error } = await getServiceSupabase()
@@ -1498,7 +1662,7 @@ export async function updatePublicCartSession(
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('REVISION_CONFLICT');
-  return buildPublicResponse(normalized, data as SessionRow, tokenRow);
+  return buildPublicResponse(normalized, data as SessionRow, tokenRow, true, revalidation, true);
 }
 
 async function tryAutoAcceptPublicOrder(input: {
@@ -1667,6 +1831,54 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
 
   const revalidation = await runRevalidation({ ...current, metadata: { ...current.metadata, empresaId: sessionRow.empresa_id } });
 
+  const deliveryQuotePending = revalidation.issues.find((issue) => issue.code === 'delivery_quote_pending');
+  if (deliveryQuotePending && revalidation.previewCart && revalidation.previewPricing && revalidation.previewPayment) {
+    const existingRequest = await findDeliveryQuoteRequest(sessionRow.id, idempotencyKey);
+    const request = existingRequest ?? await createDeliveryQuoteRequest({
+      companyId: sessionRow.empresa_id,
+      sessionId: sessionRow.id,
+      idempotencyKey,
+      reasonCode: current.fulfillment.deliveryStatus === 'pending' ? 'quote_pending' : 'provider_unavailable',
+      customer: current.customer,
+      cart: revalidation.previewCart,
+      fulfillment: current.fulfillment,
+      pricing: revalidation.previewPricing,
+    });
+    const pendingFulfillment: ZeloMenuFulfillmentSnapshot = {
+      ...current.fulfillment,
+      deliveryFee: 0,
+      deliveryFeeToConfirm: true,
+      deliveryStatus: 'quote_pending',
+      deliveryQuoteRequestId: request.id,
+    };
+    const pendingPricing = { ...revalidation.previewPricing, deliveryFee: 0, total: revalidation.previewPricing.subtotal - revalidation.previewPricing.discount };
+    const { data: pendingRow, error: pendingError } = await getServiceSupabase()
+      .from('zelomenu_cart_sessions')
+      .update({ fulfillment_snapshot: pendingFulfillment, pricing_snapshot: pendingPricing, updated_at: new Date().toISOString() })
+      .eq('id', sessionRow.id)
+      .eq('state', 'cart_open')
+      .select(CART_SESSION_COLUMNS)
+      .single();
+    if (pendingError || !pendingRow) throw pendingError ?? new Error('DELIVERY_QUOTE_REQUEST_SAVE_FAILED');
+    const pendingRevalidation: ZeloMenuCartRevalidation = {
+      ...revalidation,
+      previewPricing: pendingPricing,
+      ok: false,
+    };
+    await persistRevalidation(sessionRow.id, pendingRevalidation);
+    const payload = await buildPublicResponse(normalized, pendingRow as SessionRow, tokenRow, true, pendingRevalidation);
+    return {
+      ...payload,
+      confirmation: {
+        confirmed: false,
+        alreadyConfirmed: false,
+        state: payload.session.state,
+        customerMessage: `Solicitação preservada para nova cotação. Protocolo: ${request.id.slice(0, 8).toUpperCase()}.`,
+        quoteRequestId: request.id,
+      },
+    };
+  }
+
   if (!revalidation.ok || !revalidation.previewCart || !revalidation.previewPricing || !revalidation.previewPayment) {
     await persistRevalidation(current.id, revalidation);
     const payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
@@ -1677,6 +1889,7 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
   let couponRedemptionId: string | undefined;
   if (sessionRow.context === 'public_order' && current.pricing.couponCode) {
     const ownerUserId = await getEmpresaUserId(sessionRow.empresa_id);
+    if (!ownerUserId) throw new Error('EMPRESA_NOT_FOUND');
     const couponRow = await findActiveCouponByCode(ownerUserId, current.pricing.couponCode);
     if (!couponRow) {
       // cupom sumiu desde a última revalidação — injeta um coupon_invalid

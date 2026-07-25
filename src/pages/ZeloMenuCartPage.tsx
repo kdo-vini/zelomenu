@@ -19,6 +19,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   Trash2,
+  UtensilsCrossed,
   Wallet,
   X,
   Zap,
@@ -27,6 +28,7 @@ import {
   confirmPublicCart,
   ZeloMenuApiError,
   getPublicCart,
+  lookupPublicDeliveryCep,
   updatePublicCart,
   type ZeloMenuCatalogGroup,
   type ZeloMenuCatalogProduct,
@@ -41,7 +43,6 @@ import {
   type ZeloMenuSelectedModifierGroup,
 } from '../domain/zelomenuModifiers';
 import { resolveOrderStatus } from '../domain/zelomenuOrderStatus';
-import { resolveDeliveryFeeForNeighborhood } from '../domain/zelomenuDelivery';
 import {
   businessDayLabel,
   isBusinessWindowOpen,
@@ -57,7 +58,6 @@ import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { loadZeloMenuCustomerCache, saveZeloMenuCustomerCache } from '../domain/zelomenuCustomerCache';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
-import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
 import { resolveCheckoutSuggestions } from '../domain/zelomenuRecommendations';
 import { useToast } from '../contexts/ToastContext';
@@ -80,10 +80,27 @@ type DraftState = {
   pickupTime: string;
   deliveryAddress: string;
   deliveryNeighborhood: string;
+  deliveryPostalCode: string;
+  deliveryNumber: string;
+  deliveryComplement: string;
+  deliveryStreet: string;
+  deliveryCity: string;
+  deliveryState: string;
   paymentMethod: string;
   observations: string;
   couponCode: string;
 };
+
+function composeDeliveryAddress(fields: Pick<DraftState, 'deliveryStreet' | 'deliveryNumber' | 'deliveryComplement' | 'deliveryNeighborhood' | 'deliveryCity' | 'deliveryState'>): string {
+  const streetLine = [fields.deliveryStreet, fields.deliveryNumber, fields.deliveryComplement]
+    .filter(Boolean)
+    .join(', ');
+  const locality = [fields.deliveryNeighborhood, fields.deliveryCity]
+    .filter(Boolean)
+    .join(' · ');
+  const region = [locality, fields.deliveryState].filter(Boolean).join(' - ');
+  return [streetLine, region].filter(Boolean).join(' — ');
+}
 
 type AutosaveResult = ZeloMenuPublicCartResponse | null;
 
@@ -136,6 +153,12 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
     pickupTime: payload.session.fulfillment.pickupTime ?? nowTimeBR(),
     deliveryAddress: payload.session.fulfillment.deliveryAddress ?? '',
     deliveryNeighborhood: payload.session.fulfillment.deliveryNeighborhood ?? '',
+    deliveryPostalCode: payload.session.fulfillment.deliveryPostalCode ?? '',
+    deliveryNumber: payload.session.fulfillment.deliveryNumber ?? '',
+    deliveryComplement: payload.session.fulfillment.deliveryComplement ?? '',
+    deliveryStreet: payload.session.fulfillment.deliveryStreet ?? '',
+    deliveryCity: payload.session.fulfillment.deliveryCity ?? '',
+    deliveryState: payload.session.fulfillment.deliveryState ?? '',
     paymentMethod: payload.session.payment.declaredMethod ?? '',
     observations: payload.session.cart.observations ?? '',
     couponCode: payload.session.pricing.couponCode ?? '',
@@ -168,7 +191,7 @@ function catalogProductMap(groups: ZeloMenuCatalogGroup[]): Map<number, ZeloMenu
 function estimateDraftTotals(
   draft: DraftState,
   catalog: ZeloMenuCatalogGroup[],
-  neighborhoods: Array<{ name: string; fee: number }>,
+  serverDelivery?: ZeloMenuPublicCartResponse['session']['fulfillment'],
 ) {
   const products = catalogProductMap(catalog);
   const items = draft.items.flatMap((item) => {
@@ -196,11 +219,10 @@ function estimateDraftTotals(
     }];
   });
   const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
-  const { fee: deliveryFee, toConfirm: deliveryFeeToConfirm } = resolveDeliveryFeeForNeighborhood({
-    type: draft.fulfillmentType,
-    neighborhood: draft.fulfillmentType === 'delivery' ? draft.deliveryNeighborhood : null,
-    neighborhoods,
-  });
+  const quoteMatchesDraft = deliveryQuoteMatchesDraft(draft, serverDelivery);
+  const deliveryFee = quoteMatchesDraft ? Number(serverDelivery?.deliveryFee ?? 0) : 0;
+  const deliveryFeeToConfirm = draft.fulfillmentType === 'delivery'
+    && (!quoteMatchesDraft || serverDelivery?.deliveryFeeToConfirm === true);
   return {
     items,
     subtotal,
@@ -210,6 +232,43 @@ function estimateDraftTotals(
     discount: 0,
     couponLabel: null as string | null,
   };
+}
+
+type DeliveryQuoteUiState = 'not_applicable' | 'missing_address' | 'calculating' | 'ready' | 'out_of_area' | 'unavailable';
+
+function deliveryQuoteMatchesDraft(
+  draft: DraftState,
+  serverDelivery?: ZeloMenuPublicCartResponse['session']['fulfillment'],
+): boolean {
+  const normalizedDraftPostalCode = draft.deliveryPostalCode.replace(/\D/g, '');
+  const normalizedServerPostalCode = (serverDelivery?.deliveryPostalCode ?? '').replace(/\D/g, '');
+  return draft.fulfillmentType === 'delivery'
+    && serverDelivery?.type === 'delivery'
+    && normalizedDraftPostalCode.length === 8
+    && normalizedDraftPostalCode === normalizedServerPostalCode
+    && draft.deliveryNumber.trim() === (serverDelivery.deliveryNumber ?? '').trim()
+    && draft.deliveryComplement.trim() === (serverDelivery.deliveryComplement ?? '').trim();
+}
+
+function resolveDeliveryQuoteUiState(
+  draft: DraftState | null,
+  payload: ZeloMenuPublicCartResponse | null,
+  saveFailed = false,
+): DeliveryQuoteUiState {
+  if (!draft || draft.fulfillmentType !== 'delivery') return 'not_applicable';
+  const postalCode = draft.deliveryPostalCode.replace(/\D/g, '');
+  if (postalCode.length !== 8 || !draft.deliveryNumber.trim()) return 'missing_address';
+
+  const serverDelivery = payload?.session.fulfillment;
+  if (!deliveryQuoteMatchesDraft(draft, serverDelivery)) return saveFailed ? 'unavailable' : 'calculating';
+  if (serverDelivery?.deliveryStatus === 'out_of_area') return 'out_of_area';
+  if (
+    serverDelivery?.deliveryStatus === 'eligible'
+    || serverDelivery?.deliveryStatus === 'eligible_stale'
+  ) {
+    return serverDelivery.deliveryFeeToConfirm ? 'unavailable' : 'ready';
+  }
+  return 'unavailable';
 }
 
 
@@ -272,7 +331,12 @@ function revalidationSignature(issues: ZeloMenuCartRevalidationIssue[]): string 
     .join('|');
 }
 
-function buildRevalidationToastMessage(issues: ZeloMenuCartRevalidationIssue[]): string {
+function buildRevalidationToastMessage(issues: ZeloMenuCartRevalidationIssue[]): string | null {
+  // A pending delivery quote is rendered by the dedicated loading/error UI.
+  // Showing it as a toast makes slow typing look like a checkout failure.
+  if (issues.some((issue) => issue.code === 'delivery_quote_pending')) return null;
+  const deliveryOutOfArea = issues.find((issue) => issue.code === 'delivery_out_of_area');
+  if (deliveryOutOfArea) return deliveryOutOfArea.message;
   const priceIssue = issues.find((issue) => issue.code === 'price_changed');
   if (priceIssue) {
     return `${priceIssue.message} Confira o novo total e toque em Confirmar pedido novamente.`;
@@ -314,6 +378,12 @@ function buildCartUpdatePayload(
       pickupTime: pickupTime || null,
       deliveryAddress: draft.fulfillmentType === 'delivery' ? (draft.deliveryAddress || null) : null,
       deliveryNeighborhood: draft.fulfillmentType === 'delivery' ? (draft.deliveryNeighborhood || null) : null,
+      deliveryPostalCode: draft.fulfillmentType === 'delivery' ? (draft.deliveryPostalCode || null) : null,
+      deliveryNumber: draft.fulfillmentType === 'delivery' ? (draft.deliveryNumber || null) : null,
+      deliveryComplement: draft.fulfillmentType === 'delivery' ? (draft.deliveryComplement || null) : null,
+      deliveryStreet: draft.fulfillmentType === 'delivery' ? (draft.deliveryStreet || null) : null,
+      deliveryCity: draft.fulfillmentType === 'delivery' ? (draft.deliveryCity || null) : null,
+      deliveryState: draft.fulfillmentType === 'delivery' ? (draft.deliveryState || null) : null,
     },
     paymentMethod: draft.paymentMethod || null,
     couponCode: draft.couponCode || null,
@@ -408,8 +478,11 @@ export default function ZeloMenuCartPage() {
   const [showErrors, setShowErrors] = useState(false);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [deliveryCepLoading, setDeliveryCepLoading] = useState(false);
+  const [deliveryAddressEditing, setDeliveryAddressEditing] = useState(false);
   const revalidationToastShownRef = useRef('');
   const autosaveReadyRef = useRef(false);
+  const customerCacheHydratedRef = useRef(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveQueueRef = useRef<Promise<AutosaveResult>>(Promise.resolve(null));
   const saveVersionRef = useRef(0);
@@ -418,6 +491,43 @@ export default function ZeloMenuCartPage() {
   const [recModalProduct, setRecModalProduct] = useState<ZeloMenuCatalogProduct | null>(null);
   const [recModalSelections, setRecModalSelections] = useState<Record<string, string[]>>({});
   const pixCodeRef = useRef<HTMLParagraphElement>(null);
+
+  const beginDeliveryAddressEdit = () => {
+    setDeliveryAddressEditing(true);
+    setSaveStatus((current) => current === 'error' ? 'idle' : current);
+  };
+
+  const endDeliveryAddressEdit = () => {
+    setDeliveryAddressEditing(false);
+  };
+
+  const lookupDeliveryCep = async () => {
+    if (!draft || draft.deliveryPostalCode.replace(/\D/g, '').length !== 8) return;
+    setDeliveryCepLoading(true);
+    try {
+      const result = await lookupPublicDeliveryCep(draft.deliveryPostalCode);
+      if (result.address) {
+        setDraft((current) => current ? {
+          ...current,
+          deliveryStreet: result.address!.street,
+          deliveryNeighborhood: result.address!.neighborhood,
+          deliveryCity: result.address!.city,
+          deliveryState: result.address!.state,
+          deliveryAddress: composeDeliveryAddress({
+            ...current,
+            deliveryStreet: result.address!.street,
+            deliveryNeighborhood: result.address!.neighborhood,
+            deliveryCity: result.address!.city,
+            deliveryState: result.address!.state,
+          }),
+        } : current);
+      }
+    } catch {
+      toast.error('Não foi possível localizar este CEP. Confira os números e tente novamente.');
+    } finally {
+      setDeliveryCepLoading(false);
+    }
+  };
 
   const load = async (mode: 'initial' | 'refresh' = 'initial') => {
     const requestId = ++loadRequestRef.current;
@@ -433,15 +543,29 @@ export default function ZeloMenuCartPage() {
         const fresh = buildDraftFromPayload(next);
         // Autofill: preenche dados do cliente do cache se o payload está vazio
         const slug = typeof next.session.metadata.slug === 'string' ? next.session.metadata.slug : null;
-        if (slug && !next.session.customer.name && !next.session.customer.phone) {
+        if (slug) {
           const cached = loadZeloMenuCustomerCache(slug);
           if (cached) {
+            if (
+              fresh.fulfillmentType === 'delivery'
+              && !fresh.deliveryPostalCode
+              && cached.deliveryPostalCode
+              && cached.deliveryNumber
+            ) {
+              customerCacheHydratedRef.current = true;
+            }
             return {
               ...fresh,
-              customerName: cached.name || fresh.customerName,
-              customerPhone: cached.phone || fresh.customerPhone,
-              deliveryAddress: cached.deliveryAddress || fresh.deliveryAddress,
-              deliveryNeighborhood: cached.deliveryNeighborhood || fresh.deliveryNeighborhood,
+              customerName: fresh.customerName || cached.name,
+              customerPhone: fresh.customerPhone || cached.phone,
+              deliveryAddress: fresh.deliveryAddress || cached.deliveryAddress,
+              deliveryNeighborhood: fresh.deliveryNeighborhood || cached.deliveryNeighborhood,
+              deliveryPostalCode: fresh.deliveryPostalCode || cached.deliveryPostalCode || '',
+              deliveryNumber: fresh.deliveryNumber || cached.deliveryNumber || '',
+              deliveryComplement: fresh.deliveryComplement || cached.deliveryComplement || '',
+              deliveryStreet: fresh.deliveryStreet || cached.deliveryStreet || '',
+              deliveryCity: fresh.deliveryCity || cached.deliveryCity || '',
+              deliveryState: fresh.deliveryState || cached.deliveryState || '',
             };
           }
         }
@@ -467,6 +591,7 @@ export default function ZeloMenuCartPage() {
 
   useEffect(() => {
     autosaveReadyRef.current = false;
+    customerCacheHydratedRef.current = false;
     latestAutosaveRef.current = null;
     saveVersionRef.current += 1;
     if (autosaveTimerRef.current) {
@@ -476,6 +601,7 @@ export default function ZeloMenuCartPage() {
     setPayload(null);
     setDraft(null);
     setSaveStatus('idle');
+    setDeliveryAddressEditing(false);
     void load();
     return () => {
       loadRequestRef.current += 1;
@@ -487,7 +613,7 @@ export default function ZeloMenuCartPage() {
 
   const estimated = useMemo(() => {
     if (!payload || !draft) return null;
-    return estimateDraftTotals(draft, payload.catalog, payload.business.deliveryNeighborhoods);
+    return estimateDraftTotals(draft, payload.catalog, payload.session.fulfillment);
   }, [payload, draft]);
 
   const confirmedProductsById = useMemo(
@@ -619,7 +745,14 @@ export default function ZeloMenuCartPage() {
     return null;
   }, [payload?.business?.businessHours, scheduleMode, draft?.pickupTime, draft?.pickupDate, payload?.business?.businessHours?.timezone]);
 
-  const canConfirm = isOpen && !isStale && (draft?.items.length ?? 0) > 0 && !scheduleTimeError;
+  const deliveryQuoteState = resolveDeliveryQuoteUiState(draft, payload, saveStatus === 'error');
+  const deliveryQuoteModalOpen = deliveryQuoteState === 'calculating' && saveStatus === 'saving';
+  const deliveryQuoteReady = !draft || draft.fulfillmentType !== 'delivery' || deliveryQuoteState === 'ready';
+  const canConfirm = isOpen
+    && !isStale
+    && (draft?.items.length ?? 0) > 0
+    && !scheduleTimeError
+    && deliveryQuoteReady;
 
   const autosavePayload = useMemo(
     () => draft && payload ? buildCartUpdatePayload(draft, scheduleMode, payload.session.revision) : null,
@@ -675,13 +808,13 @@ export default function ZeloMenuCartPage() {
   }, [autosavePayload]);
 
   useEffect(() => {
-    if (!autosavePayload || !isOpen || isStale) return;
+    if (!autosavePayload || !isOpen || isStale || deliveryAddressEditing || deliveryCepLoading) return;
     if (!autosaveReadyRef.current) {
       autosaveReadyRef.current = true;
-      return;
+      if (!customerCacheHydratedRef.current) return;
+      customerCacheHydratedRef.current = false;
     }
 
-    setSaveStatus('saving');
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       autosaveTimerRef.current = null;
@@ -695,7 +828,7 @@ export default function ZeloMenuCartPage() {
         autosaveTimerRef.current = null;
       }
     };
-  }, [autosaveSignature, enqueueAutosave, isOpen, isStale]);
+  }, [autosaveSignature, deliveryAddressEditing, deliveryCepLoading, enqueueAutosave, isOpen, isStale]);
 
   useEffect(() => {
     const flushAutosave = () => {
@@ -712,8 +845,10 @@ export default function ZeloMenuCartPage() {
       return;
     }
     if (revalidationToastShownRef.current === revalidationIssueSignature) return;
+    const message = buildRevalidationToastMessage(revalidationIssues);
+    if (!message) return;
     revalidationToastShownRef.current = revalidationIssueSignature;
-    toast.error(buildRevalidationToastMessage(revalidationIssues));
+    toast.error(message);
   }, [revalidationIssueSignature, revalidationIssues, toast]);
 
   useEffect(() => {
@@ -731,6 +866,15 @@ export default function ZeloMenuCartPage() {
 
   const confirmCart = async () => {
     if (!draft || !payload || !isOpen || isStale) return;
+    if (draft.fulfillmentType === 'delivery' && !deliveryQuoteReady) {
+      setStep(1);
+      toast.info(
+        deliveryQuoteState === 'out_of_area'
+          ? 'Este endereço está fora da área de entrega.'
+          : 'Aguarde a confirmação da taxa de entrega antes de finalizar o pedido.',
+      );
+      return;
+    }
     if (payload.session.context !== 'table_order') {
       const validationError = validateDetails();
       if (validationError) {
@@ -761,7 +905,8 @@ export default function ZeloMenuCartPage() {
         setPayload(updated);
         setDraft(buildDraftFromPayload(updated));
         setScheduleMode(deriveScheduleMode(updated));
-        toast.error(buildRevalidationToastMessage(updateIssues));
+        const updateMessage = buildRevalidationToastMessage(updateIssues);
+        if (updateMessage) toast.error(updateMessage);
         return;
       }
 
@@ -771,7 +916,8 @@ export default function ZeloMenuCartPage() {
       if (!next.confirmation.confirmed && finalIssues.length > 0) {
         const signature = revalidationSignature(finalIssues);
         revalidationToastShownRef.current = signature;
-        toast.error(buildRevalidationToastMessage(finalIssues));
+        const finalMessage = buildRevalidationToastMessage(finalIssues);
+        if (finalMessage) toast.error(finalMessage);
       }
       setPayload(next);
       setDraft(buildDraftFromPayload(next));
@@ -785,6 +931,12 @@ export default function ZeloMenuCartPage() {
             phone: normalizePhoneNumber(draft.customerPhone).slice(0, 11),
             deliveryAddress: draft.deliveryAddress,
             deliveryNeighborhood: draft.deliveryNeighborhood,
+            deliveryPostalCode: draft.deliveryPostalCode,
+            deliveryNumber: draft.deliveryNumber,
+            deliveryComplement: draft.deliveryComplement,
+            deliveryStreet: draft.deliveryStreet,
+            deliveryCity: draft.deliveryCity,
+            deliveryState: draft.deliveryState,
           });
         }
       }
@@ -888,12 +1040,20 @@ export default function ZeloMenuCartPage() {
 
   const updateField = <K extends keyof DraftState>(key: K, value: DraftState[K]) => {
     if (!isOpen) return;
-    setDraft((current) => current ? {
-      ...current,
-      [key]: key === 'customerPhone'
-        ? maskBrazilianPhone(String(value ?? '')) as DraftState[K]
-        : value,
-    } : current);
+    setDraft((current) => {
+      if (!current) return current;
+      const next = {
+        ...current,
+        [key]: key === 'customerPhone'
+          ? maskBrazilianPhone(String(value ?? '')) as DraftState[K]
+          : value,
+      } as DraftState;
+      if (key === 'deliveryStreet' || key === 'deliveryNumber' || key === 'deliveryComplement'
+        || key === 'deliveryNeighborhood' || key === 'deliveryCity' || key === 'deliveryState') {
+        next.deliveryAddress = composeDeliveryAddress(next);
+      }
+      return next;
+    });
   };
 
   const goNext = () => {
@@ -902,6 +1062,14 @@ export default function ZeloMenuCartPage() {
       return;
     }
     if (step === 1) {
+      if (draft?.fulfillmentType === 'delivery' && !deliveryQuoteReady) {
+        toast.info(
+          deliveryQuoteState === 'out_of_area'
+            ? 'Este endereço está fora da área de entrega.'
+            : 'Aguarde a confirmação da taxa de entrega antes de continuar.',
+        );
+        return;
+      }
       const validationError = validateDetails();
       if (validationError) {
         setShowErrors(true);
@@ -1022,7 +1190,9 @@ export default function ZeloMenuCartPage() {
   if (!isTableOrder && step > 0) {
     const parts: string[] = [];
     if (!isDelivery) parts.push('Retirada · sem taxa');
-    else if (feeToConfirm) parts.push('+ entrega a confirmar');
+    else if (deliveryQuoteState === 'calculating') parts.push('calculando entrega…');
+    else if (deliveryQuoteState === 'out_of_area') parts.push('endereço fora da área');
+    else if (deliveryQuoteState === 'unavailable') parts.push('taxa indisponível');
     else if (fee === 0) parts.push('Entrega grátis');
     else parts.push(`inclui ${toBRL(fee)} de entrega`);
     if (liveDiscount > 0) parts.push(`-${toBRL(liveDiscount)} de desconto`);
@@ -1037,11 +1207,19 @@ export default function ZeloMenuCartPage() {
     : step === 0
       ? (storeClosedWithSchedule ? 'Agendar retirada' : 'Escolher retirada')
       : step === 1
-        ? 'Revisar pedido'
+        ? deliveryQuoteState === 'missing_address'
+          ? 'Informe o endereço'
+          : deliveryQuoteState === 'calculating'
+          ? 'Calculando entrega…'
+          : deliveryQuoteState === 'out_of_area'
+            ? 'Endereço fora da área'
+            : deliveryQuoteState === 'unavailable'
+              ? 'Aguardando taxa'
+              : 'Revisar pedido'
         : confirming ? 'Confirmando…' : 'Confirmar pedido';
   const ctaDisabled = isTableOrder
-    ? (draft.items.length === 0 || confirming)
-    : step === 0 ? draft.items.length === 0 : step === 2 ? (!canConfirm || confirming) : false;
+    ? (draft.items.length === 0 || confirming || !deliveryQuoteReady)
+    : step === 0 ? draft.items.length === 0 : step === 1 ? !deliveryQuoteReady : (!canConfirm || confirming);
 
   const prettyDate = effectivePickupDate ? effectivePickupDate.split('-').reverse().join('/') : '';
   const whenLabel = scheduleMode === 'asap'
@@ -1223,11 +1401,11 @@ export default function ZeloMenuCartPage() {
                               const product = item.productId != null ? confirmedProductsById.get(item.productId) : null;
                               return (
                                 <div key={key} className="flex items-center gap-3.5">
-                                  <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-[var(--zm-brand-soft)] text-[26px]">
+                                  <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-[var(--zm-brand-soft)] text-[var(--zm-brand)]">
                                     {product?.photoUrl ? (
                                       <img src={product.photoUrl} alt="" className="h-full w-full object-cover" />
                                     ) : (
-                                      <span role="img" aria-label="Produto">🍔</span>
+                                      <UtensilsCrossed className="h-7 w-7" strokeWidth={1.7} aria-hidden="true" />
                                     )}
                                   </div>
                                   <div className="min-w-0">
@@ -1322,7 +1500,6 @@ export default function ZeloMenuCartPage() {
                 })()}
               </div>
             </div>
-            <PublicFooter />
           </div>
         ) : (
           <div className="flex h-full flex-col">
@@ -1648,40 +1825,128 @@ export default function ZeloMenuCartPage() {
                       <div className="min-h-0 overflow-hidden">
                         <div className="flex flex-col gap-4">
                           <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>Bairro</span>
+                            <span className={labelCls}>CEP *</span>
                             <input
-                              list="zelomenu-bairros"
-                              value={draft.deliveryNeighborhood}
-                              onChange={(event) => updateField('deliveryNeighborhood', event.target.value)}
+                              value={draft.deliveryPostalCode}
+                              onChange={(event) => updateField('deliveryPostalCode', event.target.value.replace(/\D/g, '').slice(0, 8))}
                               readOnly={!isOpen}
+                              inputMode="numeric"
+                              required
+                              onFocus={beginDeliveryAddressEdit}
+                              onBlur={() => {
+                                endDeliveryAddressEdit();
+                                void lookupDeliveryCep();
+                              }}
                               className={inputCls}
-                              placeholder="Selecione ou digite seu bairro"
+                              placeholder="00000-000"
                             />
-                            <datalist id="zelomenu-bairros">
-                              {payload.business.deliveryNeighborhoods.map((item) => (
-                                <option key={item.name} value={item.name}>{`${item.name} • ${toBRL(item.fee)}`}</option>
-                              ))}
-                            </datalist>
-                            {feeToConfirm ? (
-                              <span className="text-[11px] leading-snug text-[var(--zm-ink-soft)]">
-                                Bairro fora da tabela — a taxa de entrega será confirmada pela loja.
-                              </span>
-                            ) : null}
+                            {deliveryCepLoading ? <Loader2 className="h-4 w-4 animate-spin text-[var(--zm-primary)]" /> : null}
                           </label>
 
                           <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>Endereço {requiredMark}</span>
+                            <span className={labelCls}>Rua {requiredMark}</span>
                             <input
-                              value={draft.deliveryAddress}
-                              onChange={(event) => updateField('deliveryAddress', event.target.value)}
+                              value={draft.deliveryStreet}
+                              onChange={(event) => updateField('deliveryStreet', event.target.value)}
                               readOnly={!isOpen}
                               required
-                              aria-invalid={showErrors && Boolean(detailErrors.deliveryAddress)}
-                              className={`${inputCls} ${showErrors && detailErrors.deliveryAddress ? invalidInputCls : ''}`}
-                              placeholder="Rua, número e complemento"
+                              className={inputCls}
+                              placeholder="Rua, avenida..."
                             />
-                            {fieldError(detailErrors.deliveryAddress)}
                           </label>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <label className="flex flex-col gap-1.5">
+                              <span className={labelCls}>Número {requiredMark}</span>
+                              <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} onFocus={beginDeliveryAddressEdit} onBlur={endDeliveryAddressEdit} readOnly={!isOpen} required className={inputCls} placeholder="123" />
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                              <span className={labelCls}>Complemento</span>
+                              <input value={draft.deliveryComplement} onChange={(event) => updateField('deliveryComplement', event.target.value)} onFocus={beginDeliveryAddressEdit} onBlur={endDeliveryAddressEdit} readOnly={!isOpen} className={inputCls} placeholder="Apto, bloco..." />
+                            </label>
+                          </div>
+
+                          <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_72px] gap-3">
+                            <label className="flex min-w-0 flex-col gap-1.5">
+                              <span className={labelCls}>Bairro</span>
+                              <input
+                                value={draft.deliveryNeighborhood}
+                                readOnly
+                                className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`}
+                                placeholder="Preenchido pelo CEP"
+                              />
+                            </label>
+                            <label className="flex min-w-0 flex-col gap-1.5">
+                              <span className={labelCls}>Cidade</span>
+                              <input
+                                value={draft.deliveryCity}
+                                readOnly
+                                className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`}
+                                placeholder="Preenchida pelo CEP"
+                              />
+                            </label>
+                            <label className="flex min-w-0 flex-col gap-1.5">
+                              <span className={labelCls}>UF</span>
+                              <input
+                                value={draft.deliveryState}
+                                readOnly
+                                className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`}
+                                placeholder="UF"
+                              />
+                            </label>
+                          </div>
+
+                          {fieldError(detailErrors.deliveryAddress)}
+                          {deliveryQuoteState === 'missing_address' ? (
+                            <span className="text-[11px] leading-snug text-[var(--zm-ink-soft)]">
+                              Informe o CEP e o número para calcular a entrega.
+                            </span>
+                          ) : null}
+                          {deliveryQuoteModalOpen ? (
+                            <div
+                              role="dialog"
+                              aria-modal="true"
+                              aria-labelledby="zelomenu-delivery-quote-title"
+                              aria-describedby="zelomenu-delivery-quote-description"
+                              className="zelomenu-delivery-quote-modal"
+                            >
+                              <div className="zelomenu-delivery-quote-modal__surface">
+                                <div className="zelomenu-delivery-quote-modal__icon" aria-hidden="true">
+                                  <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.9} />
+                                </div>
+                                <div role="status" aria-live="polite" className="flex min-w-0 flex-col gap-1">
+                                  <h2 id="zelomenu-delivery-quote-title" className="text-[14px] font-bold text-[var(--zm-ink)]">Calculando a entrega</h2>
+                                  <p id="zelomenu-delivery-quote-description" className="text-[12px] leading-snug text-[var(--zm-ink-soft)]">Validando a melhor rota para este endereço.</p>
+                                </div>
+                                <div aria-hidden="true" className="zelomenu-delivery-quote-modal__progress" />
+                              </div>
+                            </div>
+                          ) : null}
+                          {deliveryQuoteState === 'out_of_area' ? (
+                            <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-3 text-[var(--color-alert)]">
+                              <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={1.9} />
+                              <span className="text-[11.5px] leading-snug">Este endereço está fora da área de entrega.</span>
+                            </div>
+                          ) : null}
+                          {deliveryQuoteState === 'unavailable' ? (
+                            <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-3 text-[var(--color-alert)]">
+                              <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={1.9} />
+                              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                                <span className="text-[11.5px] leading-snug">Não conseguimos calcular a taxa agora. Tente novamente para continuar.</span>
+                                <button
+                                  type="button"
+                                  disabled={saveStatus === 'saving'}
+                                  onClick={() => {
+                                    const latest = latestAutosaveRef.current;
+                                    if (latest) void enqueueAutosave(latest);
+                                  }}
+                                  className="self-start text-[11px] font-semibold underline underline-offset-2 disabled:opacity-50"
+                                >
+                                  Tentar novamente
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -1903,7 +2168,9 @@ export default function ZeloMenuCartPage() {
                   disabled={ctaDisabled}
                   className="flex h-[50px] flex-1 items-center justify-center gap-2 rounded-2xl bg-[var(--zm-brand)] text-[14.5px] font-semibold text-white transition-transform active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {confirming && step === 2 ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
+                  {(confirming && step === 2) || (isDelivery && step === 1 && deliveryQuoteState === 'calculating')
+                    ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+                    : null}
                   {ctaLabel}
                 </button>
               </div>

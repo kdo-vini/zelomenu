@@ -79,6 +79,16 @@ export function ZeloMenuDeliverySettingsCard({
             </Field>
           </div>
 
+          <Field label="Complemento">
+            <input
+              value={draft.address.complement ?? ''}
+              onChange={(event) => onAddressChange('complement', event.target.value)}
+              autoComplete="address-line2"
+              placeholder="Casa, loja, bloco..."
+              className={inputClass(false)}
+            />
+          </Field>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Bairro">
               <input value={draft.address.neighborhood} readOnly placeholder="Preenchido pelo CEP" className={`${inputClass(false)} read-only:bg-[var(--color-canvas)] read-only:text-[var(--color-ink-soft)]`} />

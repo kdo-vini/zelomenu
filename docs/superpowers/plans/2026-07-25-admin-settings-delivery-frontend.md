@@ -17,6 +17,8 @@ As referências mobile representam dois estados do mesmo fluxo, não duas págin
 
 ## Estado da implementação
 
+Implementação consolidada na branch principal. Sprints 0–3 estão implementados no frontend e no backend; o hardening Tier S inclui deadline, cache stale, fallback de provedores, circuit breaker, cotação pendente idempotente e suíte Vitest separada dos E2E. O Sprint 4 permanece para QA visual integrado, autenticação e validação no Supabase antes do rollout. O preview agora tem uma primeira camada de mapa geográfico real; as isócronas viárias permanecem no Sprint 5.
+
 - Frontend iniciado na worktree Orca `C:\Users\Vinicius\orca\workspaces\zelomenu\delivery-frontend`, branch `kdo-vini/delivery-frontend`.
 - Sprint 0 concluído no frontend: tipos, contrato de rotas/hash, client API com timeout e helpers de validação.
 - Sprint 1 concluído no frontend: visão geral mobile com cards-resumo, abas/âncoras e CTA `Configurar entrega`.
@@ -362,16 +364,36 @@ Decisão de escopo:
 - o preview não participa do cálculo de frete;
 - falha do mapa nunca bloqueia salvar endereço/faixas;
 - a primeira implementação deve encapsular o provedor atrás de um adapter;
-- se uma biblioteca de mapa for adicionada, ela deverá ser lazy-loaded e revisada quanto a bundle/licença;
-- a visualização poderá usar uma camada leve de mapa + SVG para círculos, mantendo o resumo textual acessível;
+- a biblioteca de mapa deve ser revisada quanto a bundle/licença; a primeira versão usa Leaflet com tiles configuráveis;
+- a visualização usa uma camada geográfica real com círculos em metros, mantendo o resumo textual acessível;
 - adicionar atribuição do mapa quando houver tiles externos;
-- não apresentar círculos como isócronas reais: o texto deve dizer “visualização aproximada”.
+- não apresentar círculos como isócronas reais: nesta etapa o texto deve dizer “alcance radial”; isócronas viárias ficam para o Sprint 5.
 
 Métricas:
 
 - `Distância máxima`: maior faixa;
 - `Tempo estimado (máx.)`: valor derivado por um serviço de rota ou exibido como indisponível quando não houver dado confiável;
 - `Área aproximada`: cálculo visual opcional, sempre identificado como aproximação.
+
+## Sprint 5 — Mapa geográfico e alcance por ruas
+
+### Sprint 5A — Mapa real no admin (implementado nesta etapa)
+
+- renderizar a cidade real a partir das coordenadas geocodificadas da loja;
+- mostrar marcador da loja, zoom, escala, atribuição e círculos proporcionais às faixas em metros;
+- centralizar e ajustar o zoom automaticamente conforme a maior faixa;
+- permitir tiles configuráveis por `VITE_MAP_TILE_URL` e `VITE_MAP_TILE_ATTRIBUTION`, mantendo o provedor atrás de uma configuração simples;
+- se o provedor de tiles falhar, manter métricas, faixas e fallback visual; o mapa nunca bloqueia salvar nem checkout;
+- deixar explícito na interface que os círculos são alcance radial, não alcance pelas ruas.
+
+### Sprint 5B — Isócronas viárias
+
+- adicionar um endpoint backend de isócronas por origem, faixa e versão do endereço;
+- consultar um provedor contratado de rotas/isochrones com timeout, cache stale e circuit breaker já alinhados ao hardening Tier S;
+- renderizar polígonos de alcance real por ruas quando disponíveis, preservando os círculos como fallback visual;
+- cachear por `origin + range + providerVersion` e invalidar quando o endereço ou faixas mudarem;
+- expor estado de precisão: `radial`, `viário`, `indisponível`, sem alterar o cálculo transacional do frete;
+- cobrir falha, timeout, resposta inválida e ausência de coordenadas em testes unitários e E2E.
 
 ## API e dados necessários
 

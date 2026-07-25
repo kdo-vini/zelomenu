@@ -7,7 +7,7 @@ import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication } from '../src/domain/zelomenuPublication.js';
 import { deriveWeeklyFromLegacy, normalizeWeeklyHours, type WeeklyHours } from '../src/domain/businessHours.js';
-import { PIX_KEY_TYPES, isPixKeyType, type PixKeyType } from '../src/domain/pixBrCode.js';
+import { isPixKeyType, type PixKeyType } from '../src/domain/pixBrCode.js';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -511,7 +511,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
         linkedProduct: {
           productId: link.productId,
           name: linkedCatalogProduct.name,
-          photoUrl: linkedCatalogProduct.photoUrl,
+          photoUrl: linkedCatalogProduct.photoUrl ?? null,
           price: overridePrice,
           available: linkedOptionAvailable,
         } satisfies ZeloMenuLinkedModifierProduct,

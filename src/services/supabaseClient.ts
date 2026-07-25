@@ -1,9 +1,11 @@
 import { createBrowserClient } from '@supabase/ssr';
 
-// Supabase client with cookie-based auth storage at `.zelopdv.com.br`.
-// Cookies survive across subdomains (pdv.zelopdv.com.br, chat.zelopdv.com.br,
-// menu.zelopdv.com.br) so a session created anywhere on the `.zelopdv.com.br`
-// domain is visible everywhere.
+// Supabase client with cookie-based auth storage. In production, cookies share
+// the `.zelopdv.com.br` parent domain so a session created in PDV/Chat is
+// visible in the menu app. Localhost must use host-only cookies: browsers
+// reject a `.zelopdv.com.br` cookie from `localhost`, which otherwise makes a
+// direct local login look successful and then silently loses the token on the
+// first authenticated query.
 
 const env = (import.meta as ImportMeta & {
   env?: Record<string, string | undefined>;
@@ -19,6 +21,8 @@ const runtimeEnv: Record<string, string> | undefined =
 
 const supabaseUrl = env?.VITE_SUPABASE_URL || runtimeEnv?.VITE_SUPABASE_URL;
 const supabaseAnonKey = env?.VITE_SUPABASE_ANON_KEY || runtimeEnv?.VITE_SUPABASE_ANON_KEY;
+const currentHostname = typeof location !== 'undefined' ? location.hostname : '';
+const isZeloPdvHost = currentHostname === 'zelopdv.com.br' || currentHostname.endsWith('.zelopdv.com.br');
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
@@ -32,8 +36,7 @@ export const supabase = createBrowserClient(
   supabaseAnonKey ?? 'public-anon-key-placeholder',
   {
     cookieOptions: {
-      // Share the session across all zelopdv.com.br subdomains
-      domain: '.zelopdv.com.br',
+      ...(isZeloPdvHost ? { domain: '.zelopdv.com.br' } : {}),
       // SameSite Lax allows the cookie to be sent when navigating from
       // another subdomain (e.g., chat → menu).
       sameSite: 'lax',

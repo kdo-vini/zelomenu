@@ -49,6 +49,27 @@ export type ZeloMenuSettingsPatch = {
   autoAcceptOrders?: boolean;
 };
 
+export type DeliveryQuoteRequestSummary = {
+  id: string;
+  companyId: string;
+  sessionId: string;
+  idempotencyKey: string;
+  status: 'pending' | 'resolved' | 'expired' | 'cancelled';
+  reasonCode: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type DeliveryQuoteRequestDetail = DeliveryQuoteRequestSummary & {
+  customer: unknown;
+  cart: unknown;
+  fulfillment: unknown;
+  pricing: unknown;
+  lastError: unknown;
+  resolvedFee: number | null;
+  resolvedAt: string | null;
+};
+
 // ─── Auth header ───────────────────────────────────────────────────────────────
 
 async function authHeader(): Promise<Record<string, string>> {
@@ -79,6 +100,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   DELIVERY_NOT_FOUND: 'A configuração de entrega não foi encontrada. Tente recarregar o painel.',
   DELIVERY_ADDRESS_INVALID: 'Confira o endereço da loja antes de continuar.',
   DELIVERY_GEOCODING_UNAVAILABLE: 'Não foi possível localizar a loja agora. Tente novamente em instantes.',
+  QUOTE_REQUEST_NOT_FOUND: 'Solicitação de cotação não encontrada.',
+  QUOTE_REQUEST_NOT_PENDING: 'Esta solicitação já foi processada ou cancelada.',
+  QUOTE_REQUEST_MISSING_ADDRESS: 'Endereço não disponível para recálculo.',
+  INVALID_FEE: 'Valor de frete inválido.',
 };
 
 async function fetchWithTimeout(
@@ -185,6 +210,71 @@ export async function updateDeliverySettings(settings: DeliverySettings): Promis
     body: JSON.stringify(settings),
   });
   return parseResponse<{ ok: true; settings?: DeliverySettings }>(response);
+}
+
+export async function listPendingDeliveryQuoteRequests(): Promise<DeliveryQuoteRequestSummary[]> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/delivery/quote-requests', {
+    headers: await authHeader(),
+    cache: 'no-store',
+  });
+  const body = await parseResponse<{ requests: DeliveryQuoteRequestSummary[] }>(response);
+  return body.requests;
+}
+
+export async function getDeliveryQuoteRequestDetail(id: string): Promise<DeliveryQuoteRequestDetail> {
+  const response = await fetchWithTimeout(`/api/admin/zelomenu/delivery/quote-requests/${encodeURIComponent(id)}`, {
+    headers: await authHeader(),
+    cache: 'no-store',
+  });
+  return parseResponse<DeliveryQuoteRequestDetail>(response);
+}
+
+export type DeliveryHealthStatus = {
+  supabase: 'ok' | 'error';
+  circuits: Record<string, { state: 'open' | 'closed' | 'half-open'; failures: number; opensInMs: number | null }>;
+  pendingRequests: number;
+  oldestPendingMs: number | null;
+};
+
+export async function getDeliveryHealth(): Promise<DeliveryHealthStatus> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/delivery/health', {
+    headers: await authHeader(),
+    cache: 'no-store',
+  });
+  return parseResponse<DeliveryHealthStatus>(response);
+}
+
+export async function expireDeliveryQuoteRequests(): Promise<{ expired: number }> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/delivery/cleanup-expired', {
+    method: 'POST',
+    headers: await authHeader(),
+  });
+  return parseResponse<{ expired: number }>(response);
+}
+
+export async function retryDeliveryQuoteRequest(id: string): Promise<{ ok: boolean; fee?: number; error?: string }> {
+  const response = await fetchWithTimeout(`/api/admin/zelomenu/delivery/quote-requests/${encodeURIComponent(id)}/retry`, {
+    method: 'POST',
+    headers: await authHeader(),
+  });
+  return parseResponse<{ ok: boolean; fee?: number; error?: string }>(response);
+}
+
+export async function resolveDeliveryQuoteRequest(id: string, fee: number): Promise<{ ok: true }> {
+  const response = await fetchWithTimeout(`/api/admin/zelomenu/delivery/quote-requests/${encodeURIComponent(id)}/resolve`, {
+    method: 'POST',
+    headers: await authHeader(),
+    body: JSON.stringify({ fee }),
+  });
+  return parseResponse<{ ok: true }>(response);
+}
+
+export async function cancelDeliveryQuoteRequest(id: string): Promise<{ ok: true }> {
+  const response = await fetchWithTimeout(`/api/admin/zelomenu/delivery/quote-requests/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST',
+    headers: await authHeader(),
+  });
+  return parseResponse<{ ok: true }>(response);
 }
 
 export async function generateZeloMenuWelcome(params: {

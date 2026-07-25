@@ -162,27 +162,5 @@ alter table public.zelomenu_delivery_cep_cache enable row level security;
 alter table public.zelomenu_delivery_geocoding_cache enable row level security;
 alter table public.zelomenu_delivery_distance_cache enable row level security;
 
--- Block all anon/authenticated access to cache tables (only service_role)
-do $$ begin
-  drop policy if exists 'block_anon_zelomenu_delivery_cep_cache' on public.zelomenu_delivery_cep_cache;
-  create policy block_anon_zelomenu_delivery_cep_cache on public.zelomenu_delivery_cep_cache
-    as restrictive for all using (false); -- nobody via RLS; service_role bypasses
-
-  drop policy if exists 'block_anon_zelomenu_delivery_geocoding_cache' on public.zelomenu_delivery_geocoding_cache;
-  create policy block_anon_zelomenu_delivery_geocoding_cache on public.zelomenu_delivery_geocoding_cache
-    as restrictive for all using (false);
-
-  drop policy if exists 'block_anon_zelomenu_delivery_distance_cache' on public.zelomenu_delivery_distance_cache;
-  create policy block_anon_zelomenu_delivery_distance_cache on public.zelomenu_delivery_distance_cache
-    as restrictive for all using (false);
-
-  -- Delivery ranges: only accessible to authenticated users (admin reads via
-  -- backend which uses service_role, but keep RLS for defense-in-depth)
-  drop policy if exists 'authenticated_read_zelomenu_delivery_ranges' on public.zelomenu_delivery_ranges;
-  create policy authenticated_read_zelomenu_delivery_ranges on public.zelomenu_delivery_ranges
-    for select using (auth.role() = 'authenticated');
-
-  drop policy if exists 'authenticated_write_zelomenu_delivery_ranges' on public.zelomenu_delivery_ranges;
-  create policy authenticated_write_zelomenu_delivery_ranges on public.zelomenu_delivery_ranges
-    for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
-end $$;
+-- RLS policies are fully defined in the hardening migration (20260725143000)
+-- which replaces these with restrictive policies for all tables.

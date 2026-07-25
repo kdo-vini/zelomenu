@@ -16,6 +16,7 @@ import {
   updateDeliverySettings,
 } from '../services/zelomenuAdminApi';
 import { DeliveryCoveragePreview } from '../components/zelomenu/DeliveryCoveragePreview';
+import { DeliveryQuoteQueue } from '../components/zelomenu/DeliveryQuoteQueue';
 import { ZeloMenuDeliverySettingsCard } from '../components/zelomenu/ZeloMenuDeliverySettingsCard';
 
 type ZeloMenuDeliverySettingsPageProps = {
@@ -295,6 +296,10 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
             {geocoding ? 'Localizando…' : saving ? 'Salvando…' : 'Salvar configuração'}
           </button>
         </div>
+      </div>
+
+      <div className="mt-8">
+        <DeliveryQuoteQueue />
       </div>
     </div>
   );

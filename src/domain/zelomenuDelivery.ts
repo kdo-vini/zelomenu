@@ -134,14 +134,17 @@ export function buildViaCepUrl(cep: string): string {
   return `${base}/ws/${cep}/json/`;
 }
 
-export function buildNominatimUrl(address: DeliveryAddress): string {
-  const base = process.env.GEOCODING_BASE_URL || 'https://nominatim.openstreetmap.org';
+export function buildBrasilApiCepUrl(cep: string): string {
+  const base = process.env.BRASILAPI_CEP_BASE_URL || 'https://brasilapi.com.br';
+  return `${base}/api/cep/v1/${cep}`;
+}
+
+export function buildNominatimUrl(address: DeliveryAddress, base = process.env.GEOCODING_BASE_URL || 'https://nominatim.openstreetmap.org'): string {
   const q = encodeURIComponent(`${address.street}, ${address.number} - ${address.neighborhood}, ${address.city}, ${address.state}, Brasil`);
   return `${base}/search?q=${q}&format=json&limit=1&countrycodes=br`;
 }
 
-export function buildOsrmUrl(origin: GeoCoordinates, destination: GeoCoordinates): string {
-  const base = process.env.OSRM_BASE_URL || 'https://router.project-osrm.org';
+export function buildOsrmUrl(origin: GeoCoordinates, destination: GeoCoordinates, base = process.env.OSRM_BASE_URL || 'https://router.project-osrm.org'): string {
   return `${base}/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?overview=false`;
 }
 

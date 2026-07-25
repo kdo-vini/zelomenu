@@ -2,6 +2,14 @@
 
 ## Status
 
+### Implementacao consolidada
+
+A branch principal agora concentra cache L1/L2, deadline total de 6 segundos, fallback configuravel de geocoding/rota, circuit breaker, cache stale limitado a 30 dias, hash HMAC de endereco e RLS restritiva. A configuracao do admin e salva em uma transacao Supabase unica.
+
+Quando a cotacao nao pode ser concluida, o checkout nao usa preco legado por bairro e nao materializa pedido, Pix ou estoque: cria uma solicitacao pendente idempotente com snapshot do cliente, carrinho, endereco e pricing para recuperacao operacional.
+
+Validacoes locais executadas: `npm run typecheck`, `npm run build` e `npm test`.
+
 Especificação revisada. A solução é viável, desde que o cálculo seja executado no backend, o pedido guarde um snapshot da decisão e os serviços públicos sejam tratados como dependências substituíveis.
 
 ## Requisito Tier S
@@ -210,6 +218,7 @@ Adicionar ao `.env.example`:
 ```env
 VIACEP_BASE_URL=https://viacep.com.br
 GEOCODING_BASE_URL=https://nominatim.openstreetmap.org
+GEOCODING_PROVIDER=nominatim
 GEOCODING_USER_AGENT=ZeloMenu/1.0 (contato@zelopdv.com.br)
 OSRM_BASE_URL=https://router.project-osrm.org
 DELIVERY_PROVIDER_TIMEOUT_MS=2500
@@ -217,7 +226,8 @@ DELIVERY_TOTAL_DEADLINE_MS=6000
 GEOCODING_MIN_INTERVAL_MS=1000
 DELIVERY_CACHE_TTL_DAYS=7
 DELIVERY_STALE_MAX_DAYS=30
-GEOCODING_FALLBACK_BASE_URL=
+GEOCODING_FALLBACK_PROVIDER=arcgis
+GEOCODING_FALLBACK_BASE_URL=https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer
 OSRM_FALLBACK_BASE_URL=
 ```
 
@@ -227,7 +237,7 @@ O `User-Agent` real deve usar um contato válido da aplicação. Segredos, quand
 
 ### Camadas de cache
 
-O cache deverá ser consultado antes de qualquer chamada externa:
+O cache deverá ser consultado antes de qualquer chamada externa, inclusive na rota administrativa de geocodificação da loja. Ao voltar para um CEP + número já resolvido, a configuração deve reutilizar as coordenadas persistidas sem repetir a chamada externa:
 
 - **L1 — memória do processo:** cache LRU pequeno, com expiração curta, para endereços mais acessados. É apenas otimização; não é fonte de verdade e pode ser perdido ao reiniciar ou escalar horizontalmente.
 - **L2 — Supabase:** cache persistente compartilhado entre instâncias do backend e entre usuários. Deve ser acessado exclusivamente pelo backend com `service_role`.

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -11,15 +12,22 @@ import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
 import { listZeloMenuCoupons, createZeloMenuCoupon, updateZeloMenuCoupon, deleteZeloMenuCoupon } from './zelomenuCoupons.js';
 import { PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
 import type { Response } from 'express';
-import { getStoreDeliveryAddress, updateStoreDeliveryAddress, listDeliveryRanges, upsertDeliveryRange, deleteDeliveryRange, lookupCepOnly, fetchGeocoding, getDeliveryStoreData } from './zelomenuDeliveryService.js';
+import { expireStaleQuoteRequests, getDeliveryHealth, getStoreDeliveryAddress, listDeliveryRanges, lookupCepOnly, resolveDeliveryStoreGeocoding, getDeliveryStoreData, saveDeliverySettings, listPendingDeliveryQuoteRequests, getDeliveryQuoteRequestById, retryDeliveryQuoteRequest, resolveDeliveryQuoteRequest, cancelDeliveryQuoteRequest } from './zelomenuDeliveryService.js';
+import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3101;
+const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-app.use(cors());
+// Production is same-origin by default. Separate frontend origins must be
+// explicitly allowlisted instead of inheriting a wildcard CORS policy.
+app.use(cors({ origin: corsOrigins.length > 0 ? corsOrigins : false }));
 app.use(express.json({ limit: '1mb' }));
 
 app.use((req, res, next) => {
@@ -32,9 +40,44 @@ app.use((req, res, next) => {
 // Trust proxy headers when behind a reverse proxy
 app.set('trust proxy', 1);
 
+// ─── Rate limiters ───────────────────────────────────────────────────────────
+
+const generalPublicLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'TOO_MANY_REQUESTS', detail: 'Muitas requisições. Tente novamente em instantes.' },
+});
+
+const cartTokenLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.params.token || ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown'),
+  message: { error: 'TOO_MANY_REQUESTS', detail: 'Muitas requisições para este carrinho. Tente novamente em instantes.' },
+});
+
+const confirmLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'TOO_MANY_REQUESTS', detail: 'Muitas tentativas de confirmação. Tente novamente em instantes.' },
+});
+
+const cepLookupLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'TOO_MANY_REQUESTS', detail: 'Muitas consultas de CEP. Tente novamente em instantes.' },
+});
+
 // ─── Public store by slug ─────────────────────────────────────────────────────
 
-app.get('/api/public/zelomenu/store/:slug', async (req, res) => {
+app.get('/api/public/zelomenu/store/:slug', generalPublicLimiter, async (req, res) => {
   try {
     const result = await getPublicStoreBySlug(req.params.slug);
     if (!result) return res.status(404).json({ error: 'STORE_NOT_FOUND' });
@@ -48,7 +91,7 @@ app.get('/api/public/zelomenu/store/:slug', async (req, res) => {
 
 // ─── Start public order (open cart) ───────────────────────────────────────────
 
-app.post('/api/public/zelomenu/store/:slug/cart', async (req, res) => {
+app.post('/api/public/zelomenu/store/:slug/cart', generalPublicLimiter, async (req, res) => {
   try {
     const result = await openPublicOrderCartSession({
       slug: req.params.slug,
@@ -82,7 +125,7 @@ app.post('/api/public/zelomenu/store/:slug/cart', async (req, res) => {
 
 // ─── Get public cart session ──────────────────────────────────────────────────
 
-app.get('/api/public/zelomenu/cart/:token', async (req, res) => {
+app.get('/api/public/zelomenu/cart/:token', cartTokenLimiter, async (req, res) => {
   try {
     const result = await getPublicCartSession(req.params.token);
     if (!result) return res.status(404).json({ error: 'CART_NOT_FOUND' });
@@ -97,7 +140,7 @@ app.get('/api/public/zelomenu/cart/:token', async (req, res) => {
 
 // ─── Update public cart session ───────────────────────────────────────────────
 
-app.patch('/api/public/zelomenu/cart/:token', async (req, res) => {
+app.patch('/api/public/zelomenu/cart/:token', cartTokenLimiter, async (req, res) => {
   try {
     const result = await updatePublicCartSession(req.params.token, req.body);
     if (!result) return res.status(404).json({ error: 'CART_NOT_FOUND' });
@@ -124,7 +167,7 @@ app.patch('/api/public/zelomenu/cart/:token', async (req, res) => {
 
 // ─── Confirm public cart session ──────────────────────────────────────────────
 
-app.post('/api/public/zelomenu/cart/:token/confirm', async (req, res) => {
+app.post('/api/public/zelomenu/cart/:token/confirm', confirmLimiter, async (req, res) => {
   try {
     const result = await confirmPublicCartSession(req.params.token, req.body.expectedRevision, req.body.idempotencyKey);
     if (!result) return res.status(404).json({ error: 'CART_NOT_FOUND' });
@@ -174,6 +217,14 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'COUPON_NOT_FOUND') return void res.status(404).json({ error: 'COUPON_NOT_FOUND' });
   if (message === 'PIX_KEY_INVALID') return void res.status(400).json({ error: 'PIX_KEY_INVALID' });
   if (message === 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE') return void res.status(503).json({ error: 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE' });
+  if (message === 'DELIVERY_CONFIGURATION_INVALID') return void res.status(400).json({ error: 'DELIVERY_CONFIGURATION_INVALID' });
+  if (message === 'DELIVERY_SETTINGS_SAVE_FAILED') return void res.status(503).json({ error: 'DELIVERY_SETTINGS_SAVE_FAILED' });
+  if (message === 'QUOTE_REQUEST_NOT_FOUND') return void res.status(404).json({ error: 'QUOTE_REQUEST_NOT_FOUND' });
+  if (message === 'QUOTE_REQUEST_NOT_PENDING') return void res.status(409).json({ error: 'QUOTE_REQUEST_NOT_PENDING' });
+  if (message === 'QUOTE_REQUEST_MISSING_ADDRESS') return void res.status(400).json({ error: 'QUOTE_REQUEST_MISSING_ADDRESS' });
+  if (message === 'CART_SESSION_NOT_OPEN') return void res.status(409).json({ error: 'CART_SESSION_NOT_OPEN' });
+  if (message === 'DELIVERY_QUOTE_RESOLUTION_FAILED') return void res.status(503).json({ error: 'DELIVERY_QUOTE_RESOLUTION_FAILED' });
+  if (message === 'INVALID_FEE') return void res.status(400).json({ error: 'INVALID_FEE' });
   res.status(500).json({ error: 'INTERNAL_ERROR' });
 }
 
@@ -437,59 +488,104 @@ app.get('/api/admin/zelomenu/delivery', async (req, res) => {
 app.patch('/api/admin/zelomenu/delivery', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { enabled, address, ranges, geocodingStatus } = req.body ?? {};
-
-    // Save address fields
-    if (address && typeof address === 'object') {
-      await updateStoreDeliveryAddress(empresaId, {
-        postalCode: address.postalCode || undefined,
-        number: address.number || undefined,
-        complement: address.complement ?? null,
-        street: address.street || undefined,
-        neighborhood: address.neighborhood || undefined,
-        city: address.city || undefined,
-        state: address.state || undefined,
-        latitude: typeof address.latitude === 'number' ? address.latitude : null,
-        longitude: typeof address.longitude === 'number' ? address.longitude : null,
-      });
+    const { enabled, address, ranges } = req.body ?? {};
+    if (typeof enabled !== 'boolean' || !address || typeof address !== 'object' || !Array.isArray(ranges)) {
+      throw new Error('DELIVERY_CONFIGURATION_INVALID');
     }
-
-    // Save ranges: replace all
-    if (Array.isArray(ranges)) {
-      const existing = await listDeliveryRanges(empresaId);
-      const toDelete = existing.filter((e) => !ranges.some((r: { id?: string }) => r.id === e.id));
-      await Promise.all(toDelete.map((r) => deleteDeliveryRange(empresaId, r.id).catch(() => {})));
-      for (const range of ranges) {
-        if (range.maxDistanceM > 0 && range.price >= 0) {
-          await upsertDeliveryRange(empresaId, {
-            id: range.id || null,
-            maxDistanceM: range.maxDistanceM,
-            price: range.price,
-          }).catch(() => {});
-        }
-      }
-    }
-
-    // Save enabled flag in delivery_config
-    if (enabled !== undefined) {
-      const supabase = (await import('./supabaseServer.js')).getServiceSupabase();
-      await supabase.rpc('set_zelomenu_delivery_enabled', { p_empresa_id: empresaId, p_enabled: Boolean(enabled) }).catch(() => {
-        // Fallback: update delivery_config JSONB directly
-        const { data: current } = await supabase
-          .from('empresa_perfil')
-          .select('delivery_config')
-          .eq('id', empresaId)
-          .maybeSingle();
-        const config = (current?.delivery_config as { enabled?: boolean } | null) ?? {};
-        config.enabled = Boolean(enabled);
-        return supabase
-          .from('empresa_perfil')
-          .update({ delivery_config: config })
-          .eq('id', empresaId);
-      });
-    }
-
+    await saveDeliverySettings(empresaId, { enabled, address: address as Record<string, unknown>, ranges });
     res.json({ ok: true });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// GET /api/admin/zelomenu/delivery/quote-requests — operational fallback queue
+app.get('/api/admin/zelomenu/delivery/quote-requests', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const requests = await listPendingDeliveryQuoteRequests(empresaId);
+    res.json({ requests });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// GET /api/admin/zelomenu/delivery/quote-requests/:id — full detail of a quote request
+app.get('/api/admin/zelomenu/delivery/quote-requests/:id', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const request = await getDeliveryQuoteRequestById(empresaId, req.params.id);
+    if (!request) return res.status(404).json({ error: 'QUOTE_REQUEST_NOT_FOUND' });
+    res.json(request);
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// POST /api/admin/zelomenu/delivery/quote-requests/:id/retry — recalculate quote
+app.post('/api/admin/zelomenu/delivery/quote-requests/:id/retry', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const result = await retryDeliveryQuoteRequest(empresaId, req.params.id);
+    res.json(result);
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// POST /api/admin/zelomenu/delivery/quote-requests/:id/resolve — manual fee
+app.post('/api/admin/zelomenu/delivery/quote-requests/:id/resolve', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const { fee } = req.body ?? {};
+    if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) {
+      return res.status(400).json({ error: 'INVALID_FEE' });
+    }
+    await resolveDeliveryQuoteRequest(empresaId, req.params.id, fee);
+    res.json({ ok: true });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// POST /api/admin/zelomenu/delivery/quote-requests/:id/cancel — cancel quote request
+app.post('/api/admin/zelomenu/delivery/quote-requests/:id/cancel', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    await cancelDeliveryQuoteRequest(empresaId, req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// GET /api/admin/zelomenu/delivery/metrics — delivery operations metrics
+app.get('/api/admin/zelomenu/delivery/metrics', async (req, res) => {
+  try {
+    await requireEmpresaId(req);
+    res.json(metricsSnapshot());
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// GET /api/admin/zelomenu/delivery/health — provider health check
+app.get('/api/admin/zelomenu/delivery/health', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const health = await getDeliveryHealth(empresaId);
+    res.json(health);
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// POST /api/admin/zelomenu/delivery/cleanup-expired — expire stale quote requests
+app.post('/api/admin/zelomenu/delivery/cleanup-expired', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const cleaned = await expireStaleQuoteRequests(empresaId);
+    res.json({ expired: cleaned });
   } catch (error) {
     sendAdminError(res, error);
   }
@@ -498,6 +594,7 @@ app.patch('/api/admin/zelomenu/delivery', async (req, res) => {
 // POST /api/admin/zelomenu/delivery/lookup-cep — CEP lookup via ViaCEP cache
 app.post('/api/admin/zelomenu/delivery/lookup-cep', async (req, res) => {
   try {
+    await requireEmpresaId(req);
     const { postalCode } = req.body ?? {};
     if (!postalCode || typeof postalCode !== 'string') return res.status(400).json({ error: 'MISSING_POSTAL_CODE' });
     const result = await lookupCepOnly(postalCode);
@@ -512,39 +609,47 @@ app.post('/api/admin/zelomenu/delivery/lookup-cep', async (req, res) => {
 app.post('/api/admin/zelomenu/delivery/geocode-store', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { postalCode, street, number, neighborhood, city, state } = req.body ?? {};
+    const { postalCode, number } = req.body ?? {};
     if (!postalCode || !number) return res.status(400).json({ error: 'MISSING_FIELDS' });
+    const canonical = await lookupCepOnly(String(postalCode));
+    if (!canonical) return res.status(404).json({ error: 'ADDRESS_NOT_FOUND' });
     const deliveryAddress: DeliveryAddress = {
-      postalCode,
-      number,
+      postalCode: canonical.postalCode,
+      number: String(number).trim(),
       complement: req.body.complement ?? null,
-      street: street ?? '',
-      neighborhood: neighborhood ?? '',
-      city: city ?? '',
-      state: state ?? '',
+      street: canonical.street,
+      neighborhood: canonical.neighborhood,
+      city: canonical.city,
+      state: canonical.state,
     };
-    const coordinates = await fetchGeocoding(deliveryAddress);
+    const coordinates = await resolveDeliveryStoreGeocoding(deliveryAddress);
     if (!coordinates) return res.status(422).json({ error: 'GEOCODING_UNAVAILABLE' });
 
-    // Save coordinates and bump location version
-    const current = await getStoreDeliveryAddress(empresaId);
-    const newVersion = current.locationVersion + 1;
-    await updateStoreDeliveryAddress(empresaId, {
-      postalCode: deliveryAddress.postalCode,
-      number: deliveryAddress.number,
-      complement: deliveryAddress.complement,
-      street: deliveryAddress.street,
-      neighborhood: deliveryAddress.neighborhood,
-      city: deliveryAddress.city,
-      state: deliveryAddress.state,
-      latitude: coordinates.latitude,
-      longitude: coordinates.longitude,
+    const [current, ranges, storeData] = await Promise.all([
+      getStoreDeliveryAddress(empresaId),
+      listDeliveryRanges(empresaId),
+      getDeliveryStoreData(empresaId),
+    ]);
+    await saveDeliverySettings(empresaId, {
+      enabled: storeData.enabledViaConfig,
+      address: {
+        postalCode: deliveryAddress.postalCode,
+        number: deliveryAddress.number,
+        complement: deliveryAddress.complement,
+        street: deliveryAddress.street,
+        neighborhood: deliveryAddress.neighborhood,
+        city: deliveryAddress.city,
+        state: deliveryAddress.state,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+      },
+      ranges: ranges.map((range) => ({ maxDistanceM: range.maxDistanceM, price: range.price })),
     });
 
     res.json({
       latitude: coordinates.latitude,
       longitude: coordinates.longitude,
-      locationVersion: String(newVersion),
+      locationVersion: String(current.locationVersion + (current.latitude !== coordinates.latitude || current.longitude !== coordinates.longitude ? 1 : 0)),
     });
   } catch (error) {
     sendAdminError(res, error);
@@ -553,7 +658,7 @@ app.post('/api/admin/zelomenu/delivery/geocode-store', async (req, res) => {
 
 // ─── Delivery por distancia: publico ────────────────────────────────────────
 
-app.post('/api/public/zelomenu/delivery/cep', async (req, res) => {
+app.post('/api/public/zelomenu/delivery/cep', cepLookupLimiter, async (req, res) => {
   try {
     const { cep } = req.body ?? {};
     if (!cep) return res.status(400).json({ error: 'MISSING_CEP' });

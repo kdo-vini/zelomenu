@@ -6,6 +6,11 @@ import path from 'path';
 // .env já está no .gitignore
 dotenv.config({ path: path.resolve(import.meta.dirname, '..', '.env') });
 
+const e2eBaseUrl = process.env.E2E_BASE_URL || 'http://127.0.0.1:3100';
+if (/^https:\/\/menu\.zelopdv\.com\.br\/?$/i.test(e2eBaseUrl) && process.env.E2E_ALLOW_PRODUCTION !== 'true') {
+  throw new Error('Refusing to run E2E against production. Use staging/local or set E2E_ALLOW_PRODUCTION=true explicitly.');
+}
+
 export default defineConfig({
   testDir: '.',
   timeout: 30_000,
@@ -13,8 +18,8 @@ export default defineConfig({
   fullyParallel: true,
   use: {
     // Aponte a suíte para outro ambiente com E2E_BASE_URL (ex.: http://localhost:3100).
-    // Default: produção.
-    baseURL: process.env.E2E_BASE_URL || 'https://menu.zelopdv.com.br',
+    // Default seguro: localhost. Produção exige E2E_ALLOW_PRODUCTION=true.
+    baseURL: e2eBaseUrl,
     headless: true,
   },
   projects: [

@@ -75,6 +75,14 @@ export type ZeloMenuCartSessionPayload = {
     pickupTime: string | null;
     deliveryAddress: string | null;
     deliveryNeighborhood: string | null;
+    deliveryPostalCode?: string | null;
+    deliveryNumber?: string | null;
+    deliveryComplement?: string | null;
+    deliveryStreet?: string | null;
+    deliveryCity?: string | null;
+    deliveryState?: string | null;
+    deliveryStatus?: string | null;
+    deliveryQuoteRequestId?: string | null;
     deliveryFee: number;
     deliveryFeeToConfirm: boolean;
   };
@@ -136,6 +144,7 @@ export type ZeloMenuConfirmCartResponse = ZeloMenuPublicCartResponse & {
     alreadyConfirmed: boolean;
     state: string;
     customerMessage: string | null;
+    quoteRequestId?: string;
   };
 };
 
@@ -157,6 +166,12 @@ export type ZeloMenuUpdateCartPayload = {
     pickupTime?: string | null;
     deliveryAddress?: string | null;
     deliveryNeighborhood?: string | null;
+    deliveryPostalCode?: string | null;
+    deliveryNumber?: string | null;
+    deliveryComplement?: string | null;
+    deliveryStreet?: string | null;
+    deliveryCity?: string | null;
+    deliveryState?: string | null;
   };
   paymentMethod?: string | null;
   couponCode?: string | null; // undefined = não mexe; null/'' = remove cupom; string = tenta aplicar/revalidar
@@ -247,6 +262,17 @@ export async function getPublicCart(token: string): Promise<ZeloMenuPublicCartRe
     cache: 'no-store',
   });
   return parseResponse<ZeloMenuPublicCartResponse>(response);
+}
+
+export async function lookupPublicDeliveryCep(cep: string): Promise<{
+  address: { postalCode: string; street: string; neighborhood: string; city: string; state: string } | null;
+}> {
+  const response = await fetchWithTimeout('/api/public/zelomenu/delivery/cep', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cep }),
+  });
+  return parseResponse(response);
 }
 
 export async function updatePublicCart(
