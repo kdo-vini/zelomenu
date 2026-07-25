@@ -81,7 +81,9 @@ export function buildWhatsAppOrderMessage(input: WhatsAppOrderInput): string {
     const couponTag = input.couponCode?.trim() ? ` (${input.couponCode.trim()})` : '';
     lines.push(`Desconto${couponTag}: -${formatBRL(discount)}`);
   }
-  if (!input.feeToConfirm) {
+  if (input.isDelivery && input.feeToConfirm) {
+    lines.push(`Total: ${formatBRL(input.total)} + entrega`);
+  } else {
     lines.push(`Total: ${formatBRL(input.total)}`);
   }
   lines.push(`${input.isDelivery ? 'Entrega' : 'Retirada'} · ${input.whenLabel}`);

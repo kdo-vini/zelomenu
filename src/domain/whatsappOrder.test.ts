@@ -69,11 +69,11 @@ describe('buildWhatsAppOrderMessage', () => {
     expect(msg).not.toContain('Cliente:');
   });
 
-  it('mostra subtotal + entrega a confirmar quando feeToConfirm', () => {
+  it('mostra subtotal + entrega a confirmar + total com + entrega quando feeToConfirm', () => {
     const msg = buildWhatsAppOrderMessage({ ...base, feeToConfirm: true, isDelivery: true });
     expect(msg).toContain('Subtotal:');
     expect(msg).toContain('entrega a confirmar');
-    expect(msg).not.toContain('Total:');
+    expect(msg).toContain('Total: R$ 18,00 + entrega');
   });
 
   it('inclui endereço e bairro em delivery', () => {

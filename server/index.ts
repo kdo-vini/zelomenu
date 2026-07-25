@@ -11,6 +11,8 @@ import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
 import { listZeloMenuCoupons, createZeloMenuCoupon, updateZeloMenuCoupon, deleteZeloMenuCoupon } from './zelomenuCoupons.js';
 import { PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
 import type { Response } from 'express';
+import { getStoreDeliveryAddress, updateStoreDeliveryAddress, listDeliveryRanges, upsertDeliveryRange, deleteDeliveryRange, lookupCepOnly, fetchGeocoding, getDeliveryStoreData } from './zelomenuDeliveryService.js';
+import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -394,6 +396,173 @@ app.get('/api/admin/zelomenu/mesas', async (req, res) => {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ─── Delivery por distancia: admin ──────────────────────────────────────────
+
+// GET /api/admin/zelomenu/delivery — aggregated delivery settings (address + ranges + enabled)
+app.get('/api/admin/zelomenu/delivery', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const [address, ranges, storeData] = await Promise.all([
+      getStoreDeliveryAddress(empresaId),
+      listDeliveryRanges(empresaId),
+      getDeliveryStoreData(empresaId),
+    ]);
+    const hasCoords = address.latitude != null && address.longitude != null;
+    const geocodingStatus = !address.postalCode ? 'not_configured' : hasCoords ? 'ready' : 'error';
+    res.json({
+      enabled: storeData.enabledViaConfig,
+      address: {
+        postalCode: address.postalCode ?? '',
+        number: address.number ?? '',
+        complement: address.complement ?? null,
+        street: address.street ?? '',
+        neighborhood: address.neighborhood ?? '',
+        city: address.city ?? '',
+        state: address.state ?? '',
+        latitude: address.latitude,
+        longitude: address.longitude,
+        locationVersion: String(address.locationVersion),
+      },
+      ranges: ranges.map((r) => ({ id: r.id, maxDistanceM: r.maxDistanceM, price: r.price })),
+      geocodingStatus,
+    });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// PATCH /api/admin/zelomenu/delivery — save delivery settings (address + ranges + enabled)
+app.patch('/api/admin/zelomenu/delivery', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const { enabled, address, ranges, geocodingStatus } = req.body ?? {};
+
+    // Save address fields
+    if (address && typeof address === 'object') {
+      await updateStoreDeliveryAddress(empresaId, {
+        postalCode: address.postalCode || undefined,
+        number: address.number || undefined,
+        complement: address.complement ?? null,
+        street: address.street || undefined,
+        neighborhood: address.neighborhood || undefined,
+        city: address.city || undefined,
+        state: address.state || undefined,
+        latitude: typeof address.latitude === 'number' ? address.latitude : null,
+        longitude: typeof address.longitude === 'number' ? address.longitude : null,
+      });
+    }
+
+    // Save ranges: replace all
+    if (Array.isArray(ranges)) {
+      const existing = await listDeliveryRanges(empresaId);
+      const toDelete = existing.filter((e) => !ranges.some((r: { id?: string }) => r.id === e.id));
+      await Promise.all(toDelete.map((r) => deleteDeliveryRange(empresaId, r.id).catch(() => {})));
+      for (const range of ranges) {
+        if (range.maxDistanceM > 0 && range.price >= 0) {
+          await upsertDeliveryRange(empresaId, {
+            id: range.id || null,
+            maxDistanceM: range.maxDistanceM,
+            price: range.price,
+          }).catch(() => {});
+        }
+      }
+    }
+
+    // Save enabled flag in delivery_config
+    if (enabled !== undefined) {
+      const supabase = (await import('./supabaseServer.js')).getServiceSupabase();
+      await supabase.rpc('set_zelomenu_delivery_enabled', { p_empresa_id: empresaId, p_enabled: Boolean(enabled) }).catch(() => {
+        // Fallback: update delivery_config JSONB directly
+        const { data: current } = await supabase
+          .from('empresa_perfil')
+          .select('delivery_config')
+          .eq('id', empresaId)
+          .maybeSingle();
+        const config = (current?.delivery_config as { enabled?: boolean } | null) ?? {};
+        config.enabled = Boolean(enabled);
+        return supabase
+          .from('empresa_perfil')
+          .update({ delivery_config: config })
+          .eq('id', empresaId);
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// POST /api/admin/zelomenu/delivery/lookup-cep — CEP lookup via ViaCEP cache
+app.post('/api/admin/zelomenu/delivery/lookup-cep', async (req, res) => {
+  try {
+    const { postalCode } = req.body ?? {};
+    if (!postalCode || typeof postalCode !== 'string') return res.status(400).json({ error: 'MISSING_POSTAL_CODE' });
+    const result = await lookupCepOnly(postalCode);
+    if (!result) return res.status(404).json({ error: 'ADDRESS_NOT_FOUND' });
+    res.json(result);
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// POST /api/admin/zelomenu/delivery/geocode-store — geocode store address
+app.post('/api/admin/zelomenu/delivery/geocode-store', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const { postalCode, street, number, neighborhood, city, state } = req.body ?? {};
+    if (!postalCode || !number) return res.status(400).json({ error: 'MISSING_FIELDS' });
+    const deliveryAddress: DeliveryAddress = {
+      postalCode,
+      number,
+      complement: req.body.complement ?? null,
+      street: street ?? '',
+      neighborhood: neighborhood ?? '',
+      city: city ?? '',
+      state: state ?? '',
+    };
+    const coordinates = await fetchGeocoding(deliveryAddress);
+    if (!coordinates) return res.status(422).json({ error: 'GEOCODING_UNAVAILABLE' });
+
+    // Save coordinates and bump location version
+    const current = await getStoreDeliveryAddress(empresaId);
+    const newVersion = current.locationVersion + 1;
+    await updateStoreDeliveryAddress(empresaId, {
+      postalCode: deliveryAddress.postalCode,
+      number: deliveryAddress.number,
+      complement: deliveryAddress.complement,
+      street: deliveryAddress.street,
+      neighborhood: deliveryAddress.neighborhood,
+      city: deliveryAddress.city,
+      state: deliveryAddress.state,
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+    });
+
+    res.json({
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      locationVersion: String(newVersion),
+    });
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
+
+// ─── Delivery por distancia: publico ────────────────────────────────────────
+
+app.post('/api/public/zelomenu/delivery/cep', async (req, res) => {
+  try {
+    const { cep } = req.body ?? {};
+    if (!cep) return res.status(400).json({ error: 'MISSING_CEP' });
+    const address = await lookupCepOnly(cep);
+    res.json({ address });
+  } catch (error) {
+    console.error('[ZeloMenu] CEP lookup error:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
 });
 
 // ─── Serve built frontend in production ──────────────────────────────────────

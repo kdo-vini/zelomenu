@@ -19,6 +19,8 @@ import type {
   ZeloMenuCartRevalidation,
 } from '../src/domain/zelomenuCartSchema.js';
 import { resolveDeliveryFeeForNeighborhood } from '../src/domain/zelomenuDelivery.js';
+import { revalidateDeliveryForCart } from './zelomenuDeliveryService.js';
+import type { DeliveryFulfillmentDetail } from './zelomenuDeliveryService.js';
 import { normalizeCouponCode, validateCouponRule, applyCoupon } from '../src/domain/zelomenuCoupon.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { toWhatsAppNumber } from '../src/domain/whatsappOrder.js';
@@ -190,6 +192,19 @@ export type ZeloMenuFulfillmentSnapshot = {
   deliveryNeighborhood: string | null;
   deliveryFee: number;
   deliveryFeeToConfirm: boolean;
+  // New delivery-by-distance fields
+  deliveryPostalCode?: string | null;
+  deliveryNumber?: string | null;
+  deliveryComplement?: string | null;
+  deliveryStreet?: string | null;
+  deliveryCity?: string | null;
+  deliveryState?: string | null;
+  deliveryLatitude?: number | null;
+  deliveryLongitude?: number | null;
+  deliveryDistanceM?: number | null;
+  deliveryStatus?: string | null;
+  deliveryCacheLayer?: string | null;
+  deliveryQuoteRequestId?: string | null;
 };
 
 // ─── DB row types ─────────────────────────────────────────────────────────────
@@ -514,6 +529,10 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
   const row = value as {
     type?: unknown; asap?: unknown; pickupDate?: unknown; pickupTime?: unknown;
     deliveryAddress?: unknown; deliveryNeighborhood?: unknown; deliveryFee?: unknown; deliveryFeeToConfirm?: unknown;
+    deliveryPostalCode?: unknown; deliveryNumber?: unknown; deliveryComplement?: unknown;
+    deliveryStreet?: unknown; deliveryCity?: unknown; deliveryState?: unknown;
+    deliveryLatitude?: unknown; deliveryLongitude?: unknown; deliveryDistanceM?: unknown;
+    deliveryStatus?: unknown; deliveryCacheLayer?: unknown; deliveryQuoteRequestId?: unknown;
   };
   return {
     type: row.type === 'delivery' ? 'delivery' : 'pickup',
@@ -524,6 +543,18 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
     deliveryNeighborhood: sanitizeText(row.deliveryNeighborhood, 120),
     deliveryFee: Number.isFinite(Number(row.deliveryFee)) ? Number(row.deliveryFee) : 0,
     deliveryFeeToConfirm: row.deliveryFeeToConfirm === true,
+    deliveryPostalCode: sanitizeText(row.deliveryPostalCode, 10) ?? null,
+    deliveryNumber: sanitizeText(row.deliveryNumber, 20) ?? null,
+    deliveryComplement: sanitizeText(row.deliveryComplement, 100) ?? null,
+    deliveryStreet: sanitizeText(row.deliveryStreet, 250) ?? null,
+    deliveryCity: sanitizeText(row.deliveryCity, 120) ?? null,
+    deliveryState: sanitizeText(row.deliveryState, 2) ?? null,
+    deliveryLatitude: Number.isFinite(Number(row.deliveryLatitude)) ? Number(row.deliveryLatitude) : null,
+    deliveryLongitude: Number.isFinite(Number(row.deliveryLongitude)) ? Number(row.deliveryLongitude) : null,
+    deliveryDistanceM: Number.isFinite(Number(row.deliveryDistanceM)) ? Number(row.deliveryDistanceM) : null,
+    deliveryStatus: typeof row.deliveryStatus === 'string' ? row.deliveryStatus : null,
+    deliveryCacheLayer: typeof row.deliveryCacheLayer === 'string' ? row.deliveryCacheLayer : null,
+    deliveryQuoteRequestId: typeof row.deliveryQuoteRequestId === 'string' ? row.deliveryQuoteRequestId : null,
   };
 }
 
@@ -840,15 +871,45 @@ async function resolveSnapshots(
 
   let deliveryFee = 0;
   let deliveryFeeToConfirm = false;
+  let deliveryDetail: import('./zelomenuDeliveryService.js').DeliveryFulfillmentDetail | null = null;
+
   if (fulfillmentType === 'delivery') {
     if (!config.deliveryConfig?.enabled) throw new Error('DELIVERY_DISABLED');
-    const resolved = resolveDeliveryFeeForNeighborhood({
-      type: 'delivery',
-      neighborhood: deliveryNeighborhood,
-      neighborhoods: config.deliveryConfig.neighborhoods,
-    });
-    deliveryFee = resolved.fee;
-    deliveryFeeToConfirm = resolved.toConfirm;
+
+    // Novo fluxo: CEP + número → quote por distância
+    const postalCode = params.fulfillment?.deliveryPostalCode?.replace(/\D/g, '');
+    const number = params.fulfillment?.deliveryNumber?.trim();
+    if (postalCode && postalCode.length === 8 && number) {
+      try {
+        const result = await revalidateDeliveryForCart({
+          empresaId,
+          postalCode,
+          number,
+          complement: params.fulfillment?.deliveryComplement ?? null,
+        });
+        deliveryFee = result.fee;
+        deliveryFeeToConfirm = result.feeToConfirm;
+        deliveryDetail = result.detail;
+      } catch {
+        // Fallback silencioso para bairro se o quote falhar
+        const resolved = resolveDeliveryFeeForNeighborhood({
+          type: 'delivery',
+          neighborhood: deliveryNeighborhood,
+          neighborhoods: config.deliveryConfig.neighborhoods,
+        });
+        deliveryFee = resolved.fee;
+        deliveryFeeToConfirm = resolved.toConfirm;
+      }
+    } else {
+      // Fluxo legado: bairro textual
+      const resolved = resolveDeliveryFeeForNeighborhood({
+        type: 'delivery',
+        neighborhood: deliveryNeighborhood,
+        neighborhoods: config.deliveryConfig.neighborhoods,
+      });
+      deliveryFee = resolved.fee;
+      deliveryFeeToConfirm = resolved.toConfirm;
+    }
   }
 
   const fulfillment: ZeloMenuFulfillmentSnapshot = {
@@ -860,6 +921,18 @@ async function resolveSnapshots(
     deliveryNeighborhood,
     deliveryFee,
     deliveryFeeToConfirm,
+    deliveryPostalCode: params.fulfillment?.deliveryPostalCode ?? null,
+    deliveryNumber: params.fulfillment?.deliveryNumber ?? null,
+    deliveryComplement: params.fulfillment?.deliveryComplement ?? null,
+    deliveryStreet: params.fulfillment?.deliveryStreet ?? null,
+    deliveryCity: params.fulfillment?.deliveryCity ?? null,
+    deliveryState: params.fulfillment?.deliveryState ?? null,
+    deliveryLatitude: deliveryDetail?.coordinates?.latitude ?? null,
+    deliveryLongitude: deliveryDetail?.coordinates?.longitude ?? null,
+    deliveryDistanceM: deliveryDetail?.distanceM ?? null,
+    deliveryStatus: deliveryDetail?.status ?? null,
+    deliveryCacheLayer: deliveryDetail?.cacheLayer ?? null,
+    deliveryQuoteRequestId: null, // TODO: quote persistente
   };
 
   // ── Coupon validation ────────────────────────────────────────────────────
