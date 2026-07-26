@@ -225,26 +225,7 @@ export function DeliveryCoveragePreview({
                 <span className="max-w-[52%] truncate rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-bold text-[var(--color-ink-soft)] shadow-sm">
                   {cityLabel}
                 </span>
-                <span className="max-w-[44%] truncate rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-bold text-[var(--color-brand-deep)] shadow-sm">
-                  Mapa real · raios
-                </span>
               </div>
-              {sortedRanges.length > 0 && (
-                <div className="pointer-events-none absolute bottom-4 left-4 z-[500] max-w-[calc(100%-2rem)] rounded-2xl border border-white/80 bg-white/95 p-3 shadow-[0_10px_25px_rgba(36,31,54,0.14)] backdrop-blur-sm">
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-[var(--color-ink-muted)]">Faixas no mapa</p>
-                    <p className="text-[10px] font-medium text-[var(--color-ink-muted)]">Use o zoom para conferir as ruas</p>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1.5">
-                    {sortedRanges.map((range, index) => (
-                      <span key={range.id ?? `${range.maxDistanceM}-${index}`} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-ink-soft)]">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: coverageColor(index) }} aria-hidden="true" />
-                        Até {formatDistance(range.maxDistanceM / 1000)} km · R$ {formatPrice(range.price)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
               {mapTilesFailed && (
                 <div className="pointer-events-none absolute inset-x-3 bottom-3 z-[500] rounded-xl border border-[var(--color-warn-soft)] bg-white/95 px-3 py-2 text-[11px] leading-relaxed text-[var(--color-warn)] shadow-sm">
                   O mapa externo está indisponível. As faixas continuam configuradas e o resumo permanece disponível.
