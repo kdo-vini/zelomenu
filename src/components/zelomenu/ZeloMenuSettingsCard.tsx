@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, GripVertical, Loader2, Search, ShoppingCart, Sparkles, Star, Store, X } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, GripVertical, Loader2, Search, ShoppingCart, Sparkles, Star, Store, X } from 'lucide-react';
 import { Reorder } from 'motion/react';
+import { ImageCropField } from './ImageCropField';
 import {
   generateZeloMenuWelcome,
   getZeloMenuSettings,
   updateZeloMenuSettings,
   type ZeloMenuStoreSettings,
 } from '../../services/zelomenuAdminApi';
+import { deleteOwnedZeloMenuBrandingImage, uploadOwnedZeloMenuBrandingImage } from '../../services/zelomenuBrandingImages';
+import { supabase } from '../../services/supabaseClient';
 
 const MAX_WELCOME = 400;
+const MAX_DESCRIPTION = 180;
 
 
 // "Cardápio digital" store-settings panel. Mirrors zelochat's
@@ -27,6 +31,10 @@ export function ZeloMenuSettingsCard() {
   const [settings, setSettings] = useState<ZeloMenuStoreSettings | null>(null);
   // local draft state
   const [welcomeText, setWelcomeText] = useState('');
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [description, setDescription] = useState('');
+  const [brandingBusy, setBrandingBusy] = useState(false);
   const [featuredEnabled, setFeaturedEnabled] = useState(false);
   const [featuredIds, setFeaturedIds] = useState<number[]>([]);
   const [recommendationsEnabled, setRecommendationsEnabled] = useState(false);
@@ -50,6 +58,9 @@ export function ZeloMenuSettingsCard() {
         const s = await getZeloMenuSettings();
         if (!active) return;
         setSettings(s);
+        setLogoUrl(s.logoUrl);
+        setCoverUrl(s.coverUrl);
+        setDescription(s.description ?? '');
         setWelcomeText(s.welcomeText ?? '');
         setFeaturedEnabled(s.featuredEnabled);
         setFeaturedIds(s.featuredProductIds);
@@ -154,6 +165,9 @@ export function ZeloMenuSettingsCard() {
       setSaving(true);
       setError(null);
       await updateZeloMenuSettings({
+        logoUrl,
+        coverUrl,
+        description: description.trim() || null,
         welcomeText: welcomeText.trim() || null,
         featuredEnabled,
         featuredProductIds: featuredIds,
@@ -196,6 +210,110 @@ export function ZeloMenuSettingsCard() {
       </div>
       <div className="p-5">
         <div className="space-y-6">
+
+          {/* ── Public business card identity ── */}
+          <div>
+            <div className="mb-3">
+              <p className="text-[13px] font-semibold text-[var(--color-ink)]">Card da empresa no ZeloMenu</p>
+              <p className="text-[12px] text-[var(--color-ink-muted)]">Defina a descrição e as imagens que aparecem na vitrine pública.</p>
+            </div>
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value.slice(0, MAX_DESCRIPTION))}
+              placeholder="Ex.: Massas artesanais, marmitas e lanches feitos com carinho."
+              rows={2}
+              className="mb-4 w-full resize-none rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-4 py-3 text-[13px] leading-relaxed text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[var(--color-brand)]"
+            />
+            <p className="-mt-3 mb-4 text-right text-[11px] text-[var(--color-ink-muted)]">{description.length}/{MAX_DESCRIPTION}</p>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] p-3">
+                <p className="mb-2 text-[12px] font-semibold text-[var(--color-ink)]">Logo</p>
+                <ImageCropField
+                  value={logoUrl}
+                  busy={brandingBusy}
+                  onError={setError}
+                  onChange={async (file) => {
+                    const { data } = await supabase.auth.getUser();
+                    if (!data.user?.id) throw new Error('Sessão expirada. Entre novamente.');
+                    setBrandingBusy(true);
+                    try {
+                      setLogoUrl(await uploadOwnedZeloMenuBrandingImage(data.user.id, 'logo', file, logoUrl));
+                    } finally {
+                      setBrandingBusy(false);
+                    }
+                  }}
+                  onRemove={async () => {
+                    const previous = logoUrl;
+                    setLogoUrl(null);
+                    await deleteOwnedZeloMenuBrandingImage(previous).catch(() => undefined);
+                  }}
+                />
+              </div>
+              <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] p-3">
+                <p className="mb-2 text-[12px] font-semibold text-[var(--color-ink)]">Foto de capa</p>
+                <ImageCropField
+                  value={coverUrl}
+                  busy={brandingBusy}
+                  aspect={3/2}
+                  onError={setError}
+                  onChange={async (file) => {
+                    const { data } = await supabase.auth.getUser();
+                    if (!data.user?.id) throw new Error('Sessão expirada. Entre novamente.');
+                    setBrandingBusy(true);
+                    try {
+                      setCoverUrl(await uploadOwnedZeloMenuBrandingImage(data.user.id, 'cover', file, coverUrl));
+                    } finally {
+                      setBrandingBusy(false);
+                    }
+                  }}
+                  onRemove={async () => {
+                    const previous = coverUrl;
+                    setCoverUrl(null);
+                    await deleteOwnedZeloMenuBrandingImage(previous).catch(() => undefined);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ── Public card preview ── */}
+          <div>
+            <p className="mb-3 text-[13px] font-semibold text-[var(--color-ink)]">Prévia do card público</p>
+            <div className="max-w-sm overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-sm">
+              <div className="relative aspect-[3/2] overflow-hidden bg-gradient-to-br from-purple-100 to-purple-50">
+                {coverUrl ? <img src={coverUrl} alt="" className="h-full w-full object-cover" /> : null}
+              </div>
+              <div className="flex flex-col gap-3 p-4">
+                <div className="flex min-w-0 items-center gap-[10px]">
+                  <div className="h-[42px] w-[42px] shrink-0 overflow-hidden rounded-[13px] border border-white/80 shadow-[0_5px_14px_rgba(29,17,65,0.12)]">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-[var(--color-brand-soft)] text-[11px] font-bold text-[var(--color-brand-deep)]">
+                        {settings.companyName.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-bold leading-tight tracking-tight text-[var(--color-ink)]">{settings.companyName || 'Nome da empresa'}</p>
+                    <p className="mt-[2px] line-clamp-2 text-[13px] leading-snug text-[var(--color-ink-muted)]">{description || 'Cardápio digital'}</p>
+                  </div>
+                </div>
+                <div className="flex min-w-0 items-center justify-between gap-3 text-[12px] text-[var(--color-ink-muted)]">
+                  <span className="truncate">{settings.companySpecialty || settings.companyName || 'Restaurante'}</span>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-purple-600">
+                    <Star size={13} strokeWidth={2} />
+                    5.0
+                  </span>
+                </div>
+                <a className="mt-auto inline-flex min-h-[42px] items-center justify-center gap-2 rounded-[13px] border border-purple-100 bg-purple-50 text-[13px] font-extrabold text-purple-700 transition-colors hover:bg-purple-600 hover:text-white">
+                  Abrir cardápio
+                  <ArrowRight size={17} strokeWidth={2.5} />
+                </a>
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] text-[var(--color-ink-muted)]">Salve as configurações para publicar as alterações na vitrine.</p>
+          </div>
 
           {/* ── Welcome text ── */}
           <div>

@@ -59,6 +59,7 @@ import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { loadZeloMenuCustomerCache, saveZeloMenuCustomerCache } from '../domain/zelomenuCustomerCache';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
 import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
+import { PushNotificationButton } from '../components/home/PushNotificationButton';
 import { resolveCheckoutSuggestions } from '../domain/zelomenuRecommendations';
 import { useToast } from '../contexts/ToastContext';
 
@@ -1368,6 +1369,10 @@ export default function ZeloMenuCartPage() {
                           {description}
                         </p>
                       </header>
+
+                      {!isTerminalBad && !isTableOrder && (
+                        <PushNotificationButton variant="order" orderId={payload.session.orderingId ?? undefined} cartToken={token} />
+                      )}
 
                       {hasPix && (
                         <div className="mt-5 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-4">

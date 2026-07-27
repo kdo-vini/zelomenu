@@ -48,8 +48,8 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
       {/* ── Desktop sidebar ── */}
       <aside className="hidden md:flex md:w-64 md:flex-col md:border-r md:border-[var(--color-line)] md:bg-[var(--color-surface)]">
         <div className="flex h-16 items-center gap-3 border-b border-[var(--color-line)] px-5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-brand)] text-white text-xs font-bold">
-            ZM
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--color-brand-soft)]">
+            <img src="/assets/brand/logozelomenu-optimized.png" alt="" className="h-full w-full object-contain" />
           </div>
           <div className="flex flex-col">
             <span className="text-sm font-semibold text-[var(--color-ink)]">ZeloMenu</span>
@@ -65,7 +65,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
               <button
                 key={item.id}
                 onClick={() => onNavigate(item.id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+                className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
                     : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]'
@@ -81,7 +81,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         <div className="border-t border-[var(--color-line)] px-3 py-3">
           <button
             onClick={() => void handleSignOut()}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-alert)]"
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-alert)]"
           >
             <LogOut className="h-5 w-5" strokeWidth={1.7} />
             <span>Sair</span>
@@ -98,18 +98,18 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-[var(--color-surface)] shadow-xl transition-transform duration-200 ease-out md:hidden ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
-        aria-label="Navegacao"
+        aria-label="Navegação"
       >
         <div className="flex h-16 items-center justify-between border-b border-[var(--color-line)] px-5">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-brand)] text-white text-xs font-bold">
-              ZM
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--color-brand-soft)]">
+              <img src="/assets/brand/logozelomenu-optimized.png" alt="" className="h-full w-full object-contain" />
             </div>
             <span className="text-sm font-semibold text-[var(--color-ink)]">ZeloMenu</span>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="rounded-lg p-2 text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]"
+            className="min-h-11 min-w-11 rounded-lg p-2 text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]"
             aria-label="Fechar menu"
           >
             <X className="h-5 w-5" />
@@ -124,7 +124,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
               <button
                 key={item.id}
                 onClick={() => { onNavigate(item.id); setSidebarOpen(false); }}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-colors ${
+                className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
                     : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]'
@@ -140,7 +140,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         <div className="border-t border-[var(--color-line)] px-3 py-3">
           <button
             onClick={() => void handleSignOut()}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-alert)]"
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-alert)]"
           >
             <LogOut className="h-5 w-5" strokeWidth={1.7} />
             <span>Sair</span>
@@ -154,14 +154,14 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         <header className="flex h-14 items-center gap-3 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-4 md:hidden">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
+            className="min-h-11 min-w-11 rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
             aria-label="Abrir menu"
           >
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--color-brand)] text-white text-[10px] font-bold">
-              ZM
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[var(--color-brand-soft)]">
+              <img src="/assets/brand/logozelomenu-optimized.png" alt="" className="h-full w-full object-contain" />
             </div>
             <span className="text-sm font-semibold text-[var(--color-ink)]">ZeloMenu</span>
           </div>
@@ -178,7 +178,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
         {/* ── Mobile bottom nav ── */}
         <nav
           className="flex h-16 shrink-0 items-center border-t border-[var(--color-line)] bg-[var(--color-surface)] px-2 md:hidden"
-          aria-label="Navegacao principal"
+          aria-label="Navegação principal"
         >
           {visibleNavItems.map((item) => {
             const Icon = item.icon;
@@ -187,7 +187,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
               <button
                 key={item.id}
                 onClick={() => onNavigate(item.id)}
-                className={`flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-[11px] font-medium transition-colors ${
+                className={`flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-[11px] font-medium transition-colors ${
                   isActive
                     ? 'text-[var(--color-brand-deep)]'
                     : 'text-[var(--color-ink-muted)]'

@@ -3,12 +3,13 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
-import { HomePage } from './pages/HomePage';
+import HomePage from './pages/HomePage';
 import ZeloMenuStorePage from './pages/ZeloMenuStorePage';
 import ZeloMenuCartPage from './pages/ZeloMenuCartPage';
 import { ZeloMenuMesaPage } from './pages/ZeloMenuMesaPage';
 
 const AdminPage = lazy(() => import('./pages/AdminPage').then((module) => ({ default: module.AdminPage })));
+const ZeloMenuInfoPage = lazy(() => import('./pages/ZeloMenuInfoPage').then((module) => ({ default: module.ZeloMenuInfoPage })));
 
 function RouteLoading() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<HomePage />} />
+              <Route path="/conhecer-zelomenu" element={<ZeloMenuInfoPage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/auth/callback" element={<AuthCallbackPage />} />
               <Route path="/menu/carrinho/:token" element={<ZeloMenuCartPage />} />

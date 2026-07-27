@@ -6,13 +6,15 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug } from './zelomenuCartSessions.js';
+import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug, resolvePublicOrderSubscription } from './zelomenuCartSessions.js';
 import { requireEmpresaId, getEmpresaUserId } from './supabaseServer.js';
 import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
 import { listZeloMenuCoupons, createZeloMenuCoupon, updateZeloMenuCoupon, deleteZeloMenuCoupon } from './zelomenuCoupons.js';
 import { PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
 import type { Response } from 'express';
 import { expireStaleQuoteRequests, getDeliveryHealth, getStoreDeliveryAddress, listDeliveryRanges, lookupCepOnly, resolveDeliveryStoreGeocoding, getDeliveryStoreData, saveDeliverySettings, listPendingDeliveryQuoteRequests, getDeliveryQuoteRequestById, retryDeliveryQuoteRequest, resolveDeliveryQuoteRequest, cancelDeliveryQuoteRequest } from './zelomenuDeliveryService.js';
+import { listBusinesses } from './zelomenuBusinessDirectory.js';
+import { removePublicPushSubscription, savePublicPushSubscription, startOrderStatusPushDispatcher, type PublicPushSubscriptionPayload } from './zelomenuPushSubscriptions.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 
@@ -169,7 +171,7 @@ app.patch('/api/public/zelomenu/cart/:token', cartTokenLimiter, async (req, res)
 
 app.post('/api/public/zelomenu/cart/:token/confirm', confirmLimiter, async (req, res) => {
   try {
-    const result = await confirmPublicCartSession(req.params.token, req.body.expectedRevision, req.body.idempotencyKey);
+    const result = await confirmPublicCartSession(req.params.token, req.body.expectedRevision, req.body.idempotencyKey, typeof req.body.pushClientId === 'string' ? req.body.pushClientId.slice(0, 120) : undefined);
     if (!result) return res.status(404).json({ error: 'CART_NOT_FOUND' });
     res.json(result);
   } catch (error) {
@@ -266,8 +268,11 @@ app.get('/api/admin/zelomenu/settings', async (req, res) => {
 app.patch('/api/admin/zelomenu/settings', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { welcomeText, featuredEnabled, featuredProductIds, recommendationsEnabled, recommendationProductIds, categorySuggestions, categoryOrder, pixKey, pixKeyType, autoAcceptOrders } = req.body ?? {};
+    const { logoUrl, coverUrl, description, welcomeText, featuredEnabled, featuredProductIds, recommendationsEnabled, recommendationProductIds, categorySuggestions, categoryOrder, pixKey, pixKeyType, autoAcceptOrders } = req.body ?? {};
     await updateZeloMenuStoreSettings(empresaId, {
+      ...(logoUrl !== undefined && { logoUrl: typeof logoUrl === 'string' ? logoUrl.slice(0, 1000) : null }),
+      ...(coverUrl !== undefined && { coverUrl: typeof coverUrl === 'string' ? coverUrl.slice(0, 1000) : null }),
+      ...(description !== undefined && { description: typeof description === 'string' ? description.slice(0, 180) : null }),
       ...(welcomeText !== undefined && { welcomeText: typeof welcomeText === 'string' ? welcomeText.slice(0, 500) : null }),
       ...(featuredEnabled !== undefined && { featuredEnabled: Boolean(featuredEnabled) }),
       ...(Array.isArray(featuredProductIds) && { featuredProductIds: featuredProductIds.map(Number).filter(Boolean) }),
@@ -448,6 +453,71 @@ app.get('/api/admin/zelomenu/mesas', async (req, res) => {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ─── Public business directory ───────────────────────────────────────────
+
+app.get('/api/public/businesses', generalPublicLimiter, async (_req, res) => {
+  try {
+    const businesses = await listBusinesses();
+    res.json({ data: businesses, meta: { total: businesses.length } });
+  } catch (error) {
+    console.error('[ZeloMenu] businesses listing error:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
+app.get('/api/public/push/config', generalPublicLimiter, (_req, res) => {
+  const publicKey = process.env.VAPID_PUBLIC_KEY ?? process.env.VITE_VAPID_PUBLIC_KEY ?? null;
+  res.json({ enabled: Boolean(publicKey), publicKey });
+});
+
+app.post('/api/public/push/subscriptions', generalPublicLimiter, async (req, res) => {
+  try {
+    const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId : '';
+    const subscription = req.body?.subscription as PublicPushSubscriptionPayload | undefined;
+    if (!clientId || !subscription || typeof subscription.endpoint !== 'string') {
+      return res.status(400).json({ error: 'INVALID_PUSH_SUBSCRIPTION' });
+    }
+
+    const requestedOrderId = typeof req.body?.orderId === 'string' ? req.body.orderId : undefined;
+    const cartToken = typeof req.body?.cartToken === 'string' ? req.body.cartToken : undefined;
+    let validatedOrder: Awaited<ReturnType<typeof resolvePublicOrderSubscription>> = null;
+    if (requestedOrderId || cartToken) {
+      if (!cartToken) return res.status(400).json({ error: 'INVALID_PUSH_ORDER' });
+      validatedOrder = await resolvePublicOrderSubscription(cartToken, requestedOrderId);
+      if (!validatedOrder) return res.status(403).json({ error: 'INVALID_PUSH_ORDER' });
+    }
+
+    await savePublicPushSubscription({
+      clientId,
+      subscription,
+      preferences: req.body?.preferences,
+      orderId: validatedOrder?.orderId,
+      cartToken: validatedOrder?.cartToken,
+      orderRevision: validatedOrder?.revision,
+      orderStatus: validatedOrder?.status,
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'INVALID_PUSH_SUBSCRIPTION') {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('[ZeloMenu] save push subscription error:', error);
+    return res.status(503).json({ error: 'PUSH_SUBSCRIPTION_UNAVAILABLE' });
+  }
+});
+
+app.delete('/api/public/push/subscriptions', generalPublicLimiter, async (req, res) => {
+  try {
+    const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : '';
+    if (!endpoint) return res.status(400).json({ error: 'INVALID_PUSH_SUBSCRIPTION' });
+    await removePublicPushSubscription(endpoint);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[ZeloMenu] remove push subscription error:', error);
+    return res.status(503).json({ error: 'PUSH_SUBSCRIPTION_UNAVAILABLE' });
+  }
 });
 
 // ─── Delivery por distancia: admin ──────────────────────────────────────────
@@ -716,4 +786,5 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[ZeloMenu] Server listening on port ${PORT}`);
+  startOrderStatusPushDispatcher();
 });

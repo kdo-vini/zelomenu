@@ -11,6 +11,7 @@ import type {
   ZeloMenuCartRevalidationIssue,
   ZeloMenuCartRevalidation,
 } from '../domain/zelomenuCartSchema';
+import { getPushClientId } from './pushNotifications.ts';
 
 export type { ZeloMenuModifierGroup };
 export type { ZeloMenuCartItem, ZeloMenuCartRevalidationIssue, ZeloMenuCartRevalidation };
@@ -188,6 +189,8 @@ export type ZeloMenuPublicStoreResponse = {
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     logoUrl?: string | null;
+    coverUrl?: string | null;
+    description?: string | null;
     welcomeText?: string | null;
     featuredEnabled?: boolean;
     featuredProductIds?: number[];
@@ -293,7 +296,7 @@ export async function confirmPublicCart(token: string, expectedRevision: number,
   const response = await fetchWithTimeout(`/api/public/zelomenu/cart/${encodeURIComponent(token)}/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expectedRevision, idempotencyKey }),
+    body: JSON.stringify({ expectedRevision, idempotencyKey, pushClientId: getPushClientId() }),
   });
   return parseResponse<ZeloMenuConfirmCartResponse>(response);
 }

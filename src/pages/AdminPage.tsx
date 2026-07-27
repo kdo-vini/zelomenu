@@ -1,19 +1,20 @@
-import { useState, useEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
-import { CatalogView } from '../components/views/CatalogView';
 import { LoginForm } from '../components/LoginForm';
 import { NeutralState } from '../components/NeutralState';
 import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
 import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
-import { MesasAdminSection } from '../components/zelomenu/MesasAdminSection';
-import { SettingsPage } from './SettingsPage';
 import { AdminLayout, type NavSection } from '../components/AdminLayout';
 import { OnboardingWizard, ONBOARDING_KEY } from '../components/OnboardingWizard';
 import { getZeloMenuSlug } from '../services/zelomenuAdminApi';
 import { Settings } from 'lucide-react';
 import type { SettingsPath } from './SettingsPage';
+
+const CatalogView = lazy(() => import('../components/views/CatalogView').then((module) => ({ default: module.CatalogView })));
+const SettingsPage = lazy(() => import('./SettingsPage').then((module) => ({ default: module.SettingsPage })));
+const MesasAdminSection = lazy(() => import('../components/zelomenu/MesasAdminSection').then((module) => ({ default: module.MesasAdminSection })));
 
 // ─── Upsell ────────────────────────────────────────────────────────────────
 
@@ -164,20 +165,22 @@ export function AdminPage() {
     entitlement.capabilities.mesas && entitlement.capabilities.menu_publication;
 
   return (
-    <AdminLayout
-      activeSection={activeSection}
-      onNavigate={handleNavigate}
-      catalogContent={catalogContent}
-      publicationContent={<PublicationPage />}
-      settingsContent={
-        <SettingsPage
-          settingsPath={settingsPath}
-          onOpenDelivery={openDeliverySettings}
-          onBackToOverview={returnToSettingsOverview}
-        />
-      }
-      mesasContent={showMesas && slug ? <MesasAdminSection slug={slug} /> : undefined}
-    />
+    <Suspense fallback={<NeutralState title="Carregando painel..." description="Preparando esta área do ZeloMenu." />}>
+      <AdminLayout
+        activeSection={activeSection}
+        onNavigate={handleNavigate}
+        catalogContent={catalogContent}
+        publicationContent={<PublicationPage />}
+        settingsContent={
+          <SettingsPage
+            settingsPath={settingsPath}
+            onOpenDelivery={openDeliverySettings}
+            onBackToOverview={returnToSettingsOverview}
+          />
+        }
+        mesasContent={showMesas && slug ? <MesasAdminSection slug={slug} /> : undefined}
+      />
+    </Suspense>
   );
 }
 

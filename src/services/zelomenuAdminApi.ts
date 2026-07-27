@@ -19,6 +19,8 @@ export type { PixKeyType };
 
 export type ZeloMenuStoreSettings = {
   logoUrl: string | null;
+  coverUrl: string | null;
+  description: string | null;
   companyName: string;
   companySpecialty: string;
   welcomeText: string | null;
@@ -28,7 +30,7 @@ export type ZeloMenuStoreSettings = {
   recommendationProductIds: number[];
   categorySuggestions: Record<string, number[]>;
   categoryOrder: string[];
-  availableProducts: Array<{ id: number; name: string; categoryName: string }>;
+  availableProducts: Array<{ id: number; name: string; categoryName: string; price: number; photoUrl: string | null }>;
   availableCategories: string[];
   pixKey: string | null;
   pixKeyType: PixKeyType | null;
@@ -37,6 +39,9 @@ export type ZeloMenuStoreSettings = {
 };
 
 export type ZeloMenuSettingsPatch = {
+  logoUrl?: string | null;
+  coverUrl?: string | null;
+  description?: string | null;
   welcomeText?: string | null;
   featuredEnabled?: boolean;
   featuredProductIds?: number[];

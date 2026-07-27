@@ -5,6 +5,7 @@ import { Check, ImagePlus, Loader2, Maximize2, Trash2, X } from 'lucide-react';
 type ImageCropFieldProps = {
   value: string | null;
   busy?: boolean;
+  aspect?: number;
   onChange: (file: File) => Promise<void> | void;
   onRemove: () => Promise<void> | void;
   onError: (message: string) => void;
@@ -13,6 +14,7 @@ type ImageCropFieldProps = {
 export function ImageCropField({
   value,
   busy = false,
+  aspect = 1,
   onChange,
   onRemove,
   onError,
@@ -71,7 +73,7 @@ export function ImageCropField({
     if (!sourceFile || !sourceUrl || !croppedArea) return;
     setProcessing(true);
     try {
-      const file = await cropImageToSquare(sourceUrl, croppedArea, sourceFile);
+      const file = await cropImage(sourceUrl, croppedArea, sourceFile, aspect);
       await onChange(file);
       closeCropper();
     } catch {
@@ -118,7 +120,7 @@ export function ImageCropField({
             <div className="flex items-center justify-between border-b border-[var(--color-line)] px-4 py-3">
               <div>
                 <h4 className="text-sm font-bold text-[var(--color-ink)]">Ajustar foto</h4>
-                <p className="text-xs text-[var(--color-ink-muted)]">Arraste e aproxime para preencher o card quadrado.</p>
+                <p className="text-xs text-[var(--color-ink-muted)]">Arraste e aproxime para enquadrar a foto.</p>
               </div>
               <button type="button" onClick={closeCropper} className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--color-surface-muted)]" aria-label="Fechar ajuste de foto">
                 <X className="h-5 w-5" />
@@ -130,7 +132,7 @@ export function ImageCropField({
                 image={sourceUrl}
                 crop={crop}
                 zoom={zoom}
-                aspect={1}
+                aspect={aspect}
                 onCropChange={setCrop}
                 onZoomChange={setZoom}
                 onCropComplete={(_, pixels) => setCroppedArea(pixels)}
@@ -179,12 +181,13 @@ export function ImageCropField({
   );
 }
 
-async function cropImageToSquare(sourceUrl: string, area: Area, sourceFile: File): Promise<File> {
+async function cropImage(sourceUrl: string, area: Area, sourceFile: File, aspect: number = 1): Promise<File> {
   const image = await loadImage(sourceUrl);
-  const size = Math.min(1600, Math.max(1, Math.round(Math.min(area.width, area.height))));
+  const w = Math.min(1600, Math.max(1, Math.round(area.width)));
+  const h = Math.min(1600, Math.max(1, Math.round(w / aspect)));
   const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = w;
+  canvas.height = h;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Canvas indisponível.');
   context.imageSmoothingEnabled = true;
@@ -197,13 +200,13 @@ async function cropImageToSquare(sourceUrl: string, area: Area, sourceFile: File
     area.height,
     0,
     0,
-    size,
-    size,
+    w,
+    h,
   );
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
   if (!blob) throw new Error('Falha ao gerar imagem.');
   const baseName = sourceFile.name.replace(/\.[^.]+$/, '') || 'produto';
-  return new File([blob], `${baseName}-quadrada.jpg`, {
+  return new File([blob], `${baseName}-recortada.jpg`, {
     type: 'image/jpeg',
     lastModified: Date.now(),
   });

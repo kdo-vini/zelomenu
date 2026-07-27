@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createHash, randomBytes } from 'node:crypto';
 import { getConfig, loadCatalogFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { getServiceSupabase, getEmpresaUserId } from './supabaseServer.js';
+import { notifyPushSubscribers } from './zelomenuPushSubscriptions.js';
 import { getMesaContext } from './zelomenuMesaHandler.js';
 import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
 import {
@@ -339,6 +340,8 @@ export type PublicCartResponse = {
     deliveryEnabled: boolean;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     logoUrl?: string | null;
+    coverUrl?: string | null;
+    description?: string | null;
     welcomeText?: string | null;
     featuredEnabled?: boolean;
     featuredProductIds?: number[];
@@ -373,6 +376,8 @@ const PUBLIC_STORE_CACHE_MS = 15_000;
 
 type ZeloMenuProfileRow = {
   logo_url?: string | null;
+  zelomenu_cover_url?: string | null;
+  zelomenu_description?: string | null;
   zelomenu_welcome_text?: string | null;
   zelomenu_featured_enabled?: boolean;
   zelomenu_featured_product_ids?: unknown;
@@ -388,6 +393,7 @@ type ZeloMenuProfileRow = {
 // `chave_pix` já existe (compartilhada com o ZeloChat) — entra direto no core.
 const ZELOMENU_PROFILE_CORE_COLUMNS =
   'logo_url, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_category_order, chave_pix';
+const ZELOMENU_PROFILE_BRANDING_COLUMNS = 'zelomenu_cover_url, zelomenu_description';
 const ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS =
   'zelomenu_recommendations_enabled, zelomenu_recommendation_product_ids';
 const ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS =
@@ -398,7 +404,7 @@ const ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS =
 const ZELOMENU_PROFILE_PIX_COLUMNS = 'zelomenu_pix_key_type';
 const ZELOMENU_PROFILE_ORDER_COLUMNS = 'zelomenu_auto_accept_orders';
 const ZELOMENU_PROFILE_ALL_COLUMNS =
-  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}`;
+  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_BRANDING_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}`;
 
 function isMissingZeloMenuOptionalColumn(
   error: { code?: string; message?: string } | null,
@@ -410,7 +416,9 @@ function isMissingZeloMenuOptionalColumn(
     || message.includes('zelomenu_recommendation_product_ids')
     || message.includes('zelomenu_category_suggestions')
     || message.includes('zelomenu_pix_key_type')
-    || message.includes('zelomenu_auto_accept_orders');
+    || message.includes('zelomenu_auto_accept_orders')
+    || message.includes('zelomenu_cover_url')
+    || message.includes('zelomenu_description');
 }
 
 /**
@@ -427,6 +435,19 @@ async function loadZeloMenuProfile(empresaId: string): Promise<ZeloMenuProfileRo
     .maybeSingle();
   if (!profileResult.error) {
     return (profileResult.data as ZeloMenuProfileRow | null) ?? {};
+  }
+  // The cover field is additive. Keep all other optional settings working on
+  // deployments where this migration has not been applied yet.
+  if (profileResult.error.message?.includes('zelomenu_cover_url') || profileResult.error.message?.includes('zelomenu_description')) {
+    const legacyResult = await supabase
+      .from('empresa_perfil')
+      .select(`${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}`)
+      .eq('id', empresaId)
+      .maybeSingle();
+    if (!legacyResult.error) {
+      return (legacyResult.data as ZeloMenuProfileRow | null) ?? {};
+    }
+    if (!isMissingZeloMenuOptionalColumn(legacyResult.error)) throw legacyResult.error;
   }
   if (!isMissingZeloMenuOptionalColumn(profileResult.error)) {
     throw profileResult.error;
@@ -1411,6 +1432,8 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
       deliveryEnabled: config.deliveryConfig?.enabled === true,
       deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
       logoUrl: perfil?.logo_url ?? null,
+      coverUrl: perfil?.zelomenu_cover_url ?? null,
+      description: perfil?.zelomenu_description ?? null,
       welcomeText: perfil?.zelomenu_welcome_text ?? null,
       featuredEnabled: perfil?.zelomenu_featured_enabled ?? false,
       featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids) ? (perfil.zelomenu_featured_product_ids as number[]) : [],
@@ -1431,6 +1454,8 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
 
 export type ZeloMenuStoreSettings = {
   logoUrl: string | null;
+  coverUrl: string | null;
+  description: string | null;
   companyName: string;
   companySpecialty: string;
   welcomeText: string | null;
@@ -1440,7 +1465,7 @@ export type ZeloMenuStoreSettings = {
   recommendationProductIds: number[];
   categorySuggestions: Record<string, number[]>;
   categoryOrder: string[];
-  availableProducts: Array<{ id: number; name: string; categoryName: string }>;
+  availableProducts: Array<{ id: number; name: string; categoryName: string; price: number; photoUrl: string | null }>;
   availableCategories: string[];
   /** Chave Pix da loja (mesma `empresa_perfil.chave_pix` editada pelo ZeloChat). */
   pixKey: string | null;
@@ -1458,10 +1483,10 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
   const config = getConfig(empresaId);
   const catalog = filterVisibleCatalog(config.catalogHierarchy);
 
-  const availableProducts: Array<{ id: number; name: string; categoryName: string }> = [];
+  const availableProducts: Array<{ id: number; name: string; categoryName: string; price: number; photoUrl: string | null }> = [];
   for (const cat of catalog) {
-    for (const p of cat.produtosDireto) if (p.id != null) availableProducts.push({ id: p.id, name: p.name, categoryName: cat.nome });
-    for (const sub of cat.subcategorias) for (const p of sub.produtos) if (p.id != null) availableProducts.push({ id: p.id, name: p.name, categoryName: cat.nome });
+    for (const p of cat.produtosDireto) if (p.id != null) availableProducts.push({ id: p.id, name: p.name, categoryName: cat.nome, price: p.basePrice, photoUrl: p.photoUrl ?? null });
+    for (const sub of cat.subcategorias) for (const p of sub.produtos) if (p.id != null) availableProducts.push({ id: p.id, name: p.name, categoryName: cat.nome, price: p.basePrice, photoUrl: p.photoUrl ?? null });
   }
 
   const rawPixKeyType = perfil?.zelomenu_pix_key_type;
@@ -1469,8 +1494,10 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
 
   return {
     logoUrl: perfil?.logo_url ?? null,
+    coverUrl: perfil?.zelomenu_cover_url ?? null,
+    description: perfil?.zelomenu_description ?? null,
     companyName: config.name,
-    companySpecialty: '',
+    companySpecialty: perfil?.zelomenu_description ?? '',
     welcomeText: perfil?.zelomenu_welcome_text ?? null,
     featuredEnabled: perfil?.zelomenu_featured_enabled ?? false,
     featuredProductIds: Array.isArray(perfil?.zelomenu_featured_product_ids) ? (perfil.zelomenu_featured_product_ids as number[]) : [],
@@ -1491,11 +1518,15 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
 
 export async function updateZeloMenuStoreSettings(
   empresaId: string,
-  patch: Partial<Pick<ZeloMenuStoreSettings, 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType' | 'autoAcceptOrders'>>,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'logoUrl' | 'coverUrl' | 'description' | 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType' | 'autoAcceptOrders'>>,
 ): Promise<void> {
   const coreUpdate: Record<string, unknown> = {};
+  const brandingUpdate: Record<string, unknown> = {};
   const recommendationUpdate: Record<string, unknown> = {};
   const orderUpdate: Record<string, unknown> = {};
+  if ('logoUrl' in patch) coreUpdate.logo_url = patch.logoUrl?.trim() || null;
+  if ('coverUrl' in patch) brandingUpdate.zelomenu_cover_url = patch.coverUrl?.trim() || null;
+  if ('description' in patch) brandingUpdate.zelomenu_description = patch.description?.trim() || null;
   if ('welcomeText' in patch) coreUpdate.zelomenu_welcome_text = patch.welcomeText ?? null;
   if ('featuredEnabled' in patch) coreUpdate.zelomenu_featured_enabled = patch.featuredEnabled;
   if ('featuredProductIds' in patch) coreUpdate.zelomenu_featured_product_ids = patch.featuredProductIds;
@@ -1529,7 +1560,7 @@ export async function updateZeloMenuStoreSettings(
   }
 
   const supabase = getServiceSupabase();
-  const update = { ...coreUpdate, ...recommendationUpdate, ...orderUpdate };
+  const update = { ...coreUpdate, ...brandingUpdate, ...recommendationUpdate, ...orderUpdate };
   if (Object.keys(update).length === 0) return;
 
   const { error } = await supabase.from('empresa_perfil').update(update).eq('id', empresaId);
@@ -1540,9 +1571,10 @@ export async function updateZeloMenuStoreSettings(
     throw new Error('AUTO_ACCEPT_SETTINGS_UNAVAILABLE');
   }
 
-  if (Object.keys(coreUpdate).length > 0) {
-    const { error: coreError } = await supabase.from('empresa_perfil').update(coreUpdate).eq('id', empresaId);
-    if (coreError) throw coreError;
+  const fallbackUpdate = { ...coreUpdate, ...recommendationUpdate };
+  if (Object.keys(fallbackUpdate).length > 0) {
+    const { error: fallbackError } = await supabase.from('empresa_perfil').update(fallbackUpdate).eq('id', empresaId);
+    if (fallbackError) throw fallbackError;
   }
   console.warn('[ZeloMenu] optional ZeloMenu settings were not persisted because their migration is not applied yet.');
 }
@@ -1752,7 +1784,7 @@ async function tryAutoAcceptPublicOrder(input: {
   };
 }
 
-export async function confirmPublicCartSession(token: string, expectedRevision: number, idempotencyKey: string): Promise<PublicCartConfirmResponse | null> {
+export async function confirmPublicCartSession(token: string, expectedRevision: number, idempotencyKey: string, pushClientId?: string): Promise<PublicCartConfirmResponse | null> {
   const normalized = normalizePublicCartToken(token);
   if (!normalized) return null;
   const tokenRow = await findTokenRowByHash(normalized);
@@ -2042,7 +2074,16 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     : autoAccepted.accepted
       ? `Pedido confirmado! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. A loja já recebeu o seu pedido.`
       : `Pedido enviado para a loja! Número: #${atomicRow.ordering_id.slice(0, 8).toUpperCase()}. Aguarde a confirmação.`;
-  return { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed === true, state: finalState, customerMessage } };
+  const response = { ...atomicPayload, confirmation: { confirmed: true, alreadyConfirmed: atomic.alreadyConfirmed === true, state: finalState, customerMessage } };
+  if (atomicRow.context === 'public_order' && pushClientId && atomicRow.ordering_id) {
+    void notifyPushSubscribers({
+      title: 'Pedido recebido',
+      body: customerMessage,
+      url: `/menu/carrinho/${normalized}`,
+      tag: `order-${atomicRow.ordering_id}`,
+    }, pushClientId, 'order').catch((error) => console.warn('[ZeloMenu] order push notification failed:', error));
+  }
+  return response;
 
 }
 
@@ -2062,4 +2103,34 @@ export async function getEmpresaZeloMenuSlug(empresaId: string): Promise<string 
   const { data, error } = await getServiceSupabase().from('empresa_perfil').select('zelomenu_slug').eq('id', empresaId).maybeSingle();
   if (error) throw error;
   return (data as { zelomenu_slug?: string | null } | null)?.zelomenu_slug ?? null;
+}
+
+export async function resolvePublicOrderSubscription(
+  token: string,
+  requestedOrderId?: string,
+): Promise<{ orderId: string; cartToken: string; revision: number; status: string } | null> {
+  const normalized = normalizePublicCartToken(token);
+  if (!normalized) return null;
+  const tokenRow = await findTokenRowByHash(normalized);
+  if (!tokenRow) return null;
+  const sessionRow = await findSessionById(tokenRow.session_id);
+  if (!sessionRow || sessionRow.archived_at || sessionRow.context !== 'public_order') return null;
+  if (sessionRow.current_token_hash !== tokenRow.token_hash || tokenRow.revoked_at) return null;
+
+  const { data, error } = await getServiceSupabase()
+    .from('zelo_orders')
+    .select('id, status, revision')
+    .eq('zelomenu_session_id', sessionRow.id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  const orderId = String(data.id);
+  if (requestedOrderId && requestedOrderId.trim() !== orderId) return null;
+  return {
+    orderId,
+    cartToken: normalized,
+    revision: Number(data.revision),
+    status: String(data.status),
+  };
 }

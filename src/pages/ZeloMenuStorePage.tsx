@@ -86,6 +86,7 @@ export function ZeloMenuStorePage({
 
   const tabsRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+  const handledHighlightRef = useRef<string | null>(null);
 
   // ── Load store ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -111,6 +112,31 @@ export function ZeloMenuStorePage({
       document.title = 'ZeloMenu';
     };
   }, [slug]);
+
+  // Highlights on the public home carry the product id in the URL. Once the
+  // store is ready, reuse the same cart cache and add the product immediately.
+  // Products with required customizations open the existing product sheet so
+  // the order cannot be created with an invalid modifier selection.
+  useEffect(() => {
+    if (!store) return;
+    const productId = Number(new URLSearchParams(window.location.search).get('destaque'));
+    if (!Number.isSafeInteger(productId) || productId <= 0) return;
+    const intentKey = `${slug}:${productId}`;
+    if (handledHighlightRef.current === intentKey) return;
+
+    const product = getFeaturedProducts(store.catalog, [productId])[0];
+    if (!product) return;
+
+    handledHighlightRef.current = intentKey;
+    const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState(window.history.state, '', cleanUrl);
+    const hasRequiredModifiers = product.modifierGroups.some((group) => group.active && group.minSelections > 0);
+    if (hasRequiredModifiers) {
+      cart.onAddProduct(product);
+    } else {
+      cart.quickAddProduct(product);
+    }
+  }, [store, slug]);
 
   // ── Category tracking via IntersectionObserver ──────────────────────────────
   useEffect(() => {
