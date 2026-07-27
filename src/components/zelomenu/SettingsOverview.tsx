@@ -5,7 +5,13 @@ import { ZeloMenuDeliverySummaryCard } from './ZeloMenuDeliverySummaryCard';
 
 type OverviewAnchor = 'orders' | 'pix' | 'coupons' | 'delivery';
 
-export function SettingsOverview({ onOpenDelivery }: { onOpenDelivery: () => void }) {
+export function SettingsOverview({
+  onOpenDelivery,
+  onOpenHours,
+}: {
+  onOpenDelivery: () => void;
+  onOpenHours: () => void;
+}) {
   const [activeAnchor, setActiveAnchor] = useState<OverviewAnchor>('delivery');
 
   function focusCard(anchor: OverviewAnchor) {
@@ -29,6 +35,7 @@ export function SettingsOverview({ onOpenDelivery }: { onOpenDelivery: () => voi
 
       <nav className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0" aria-label="Seções de configurações">
         <div className="flex min-w-max gap-6 border-b border-[var(--color-line)] sm:gap-8">
+          <OverviewTab label="Horários" active={false} onClick={onOpenHours} />
           <OverviewTab label="Pedidos online" active={activeAnchor === 'orders'} onClick={() => focusCard('orders')} />
           <OverviewTab label="Pagamento via Pix" active={activeAnchor === 'pix'} onClick={() => focusCard('pix')} />
           <OverviewTab label="Cupons" active={activeAnchor === 'coupons'} onClick={() => focusCard('coupons')} />

@@ -1,24 +1,27 @@
 import { useEffect, useState } from 'react';
-import { Settings } from 'lucide-react';
+import { ArrowLeft, Settings } from 'lucide-react';
 import { ZeloMenuCouponsCard } from '../components/zelomenu/ZeloMenuCouponsCard';
 import { ZeloMenuOrderSettingsCard } from '../components/zelomenu/ZeloMenuOrderSettingsCard';
 import { ZeloMenuPixCard } from '../components/zelomenu/ZeloMenuPixCard';
+import { ZeloMenuBusinessHoursCard } from '../components/zelomenu/ZeloMenuBusinessHoursCard';
 import { SettingsOverview } from '../components/zelomenu/SettingsOverview';
 import { ZeloMenuDeliverySettingsPage } from './ZeloMenuDeliverySettingsPage';
 
-export type SettingsPath = 'overview' | 'delivery';
+export type SettingsPath = 'overview' | 'delivery' | 'hours';
 
 type SettingsPageProps = {
   settingsPath?: SettingsPath;
   onOpenDelivery: () => void;
+  onOpenHours: () => void;
   onBackToOverview: () => void;
 };
 
-type DesktopTab = 'orders' | 'pix' | 'coupons' | 'delivery';
+type DesktopTab = 'hours' | 'orders' | 'pix' | 'coupons' | 'delivery';
 
 export function SettingsPage({
   settingsPath = 'overview',
   onOpenDelivery,
+  onOpenHours,
   onBackToOverview,
 }: SettingsPageProps) {
   const isMobile = useMediaQuery('(max-width: 767px)');
@@ -26,30 +29,48 @@ export function SettingsPage({
   if (isMobile) {
     return settingsPath === 'delivery' ? (
       <ZeloMenuDeliverySettingsPage onBack={onBackToOverview} />
+    ) : settingsPath === 'hours' ? (
+      <div className="mx-auto w-full max-w-[1120px] space-y-5 px-4 pb-8 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pt-9">
+        <button
+          type="button"
+          onClick={onBackToOverview}
+          className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-semibold text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Voltar para configurações
+        </button>
+        <ZeloMenuBusinessHoursCard />
+      </div>
     ) : (
-      <SettingsOverview onOpenDelivery={onOpenDelivery} />
+      <SettingsOverview onOpenDelivery={onOpenDelivery} onOpenHours={onOpenHours} />
     );
   }
 
-  return <DesktopSettingsWorkspace settingsPath={settingsPath} onOpenDelivery={onOpenDelivery} onBackToOverview={onBackToOverview} />;
+  return <DesktopSettingsWorkspace settingsPath={settingsPath} onOpenDelivery={onOpenDelivery} onOpenHours={onOpenHours} onBackToOverview={onBackToOverview} />;
 }
 
 function DesktopSettingsWorkspace({
   settingsPath,
   onOpenDelivery,
+  onOpenHours,
   onBackToOverview,
 }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<DesktopTab>(settingsPath === 'delivery' ? 'delivery' : 'orders');
+  const [activeTab, setActiveTab] = useState<DesktopTab>(
+    settingsPath === 'delivery' ? 'delivery' : settingsPath === 'hours' ? 'hours' : 'orders',
+  );
 
   useEffect(() => {
     if (settingsPath === 'delivery') setActiveTab('delivery');
+    if (settingsPath === 'hours') setActiveTab('hours');
   }, [settingsPath]);
 
   function selectTab(tab: DesktopTab) {
     setActiveTab(tab);
-    if (tab === 'delivery') {
+    if (tab === 'hours') {
+      onOpenHours();
+    } else if (tab === 'delivery') {
       onOpenDelivery();
-    } else if (settingsPath === 'delivery') {
+    } else if (settingsPath === 'delivery' || settingsPath === 'hours') {
       onBackToOverview();
     }
   }
@@ -70,6 +91,7 @@ function DesktopSettingsWorkspace({
 
       <nav className="border-b border-[var(--color-line)]" aria-label="Seções de configurações">
         <div className="flex gap-8 overflow-x-auto" role="tablist">
+          <DesktopTabButton label="Horários" active={activeTab === 'hours'} onClick={() => selectTab('hours')} />
           <DesktopTabButton label="Pedidos online" active={activeTab === 'orders'} onClick={() => selectTab('orders')} />
           <DesktopTabButton label="Pagamento via Pix" active={activeTab === 'pix'} onClick={() => selectTab('pix')} />
           <DesktopTabButton label="Cupons de desconto" active={activeTab === 'coupons'} onClick={() => selectTab('coupons')} />
@@ -77,6 +99,7 @@ function DesktopSettingsWorkspace({
         </div>
       </nav>
 
+      {activeTab === 'hours' && <ZeloMenuBusinessHoursCard />}
       {activeTab === 'orders' && <ZeloMenuOrderSettingsCard />}
       {activeTab === 'pix' && <ZeloMenuPixCard />}
       {activeTab === 'coupons' && <ZeloMenuCouponsCard />}

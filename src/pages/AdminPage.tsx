@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
@@ -85,6 +85,10 @@ export function AdminPage() {
     window.location.hash = 'settings/entrega/configurar';
   };
 
+  const openHoursSettings = () => {
+    window.location.hash = 'settings/horarios';
+  };
+
   const returnToSettingsOverview = () => {
     window.location.hash = 'settings';
   };
@@ -97,20 +101,21 @@ export function AdminPage() {
   const catalog = useCatalog(session, { enabled: catalogEnabled });
 
   const [slug, setSlug] = useState<string | null>(null);
-  const slugLoadedRef = useRef(false);
+  const [slugLoading, setSlugLoading] = useState(false);
   useEffect(() => {
     if (!session || !entitlement.hasAccess) return;
+    setSlugLoading(true);
     getZeloMenuSlug()
       .then(({ slug: s }) => {
         setSlug(s);
-        slugLoadedRef.current = true;
         // If server has a slug, consider onboarding done even if localStorage is clean
         if (s) {
           localStorage.setItem(ONBOARDING_KEY, 'done');
           setOnboardingDone(true);
         }
       })
-      .catch(() => { slugLoadedRef.current = true; });
+      .catch(() => undefined)
+      .finally(() => setSlugLoading(false));
   }, [session, entitlement.hasAccess]);
 
   // Loading
@@ -164,6 +169,15 @@ export function AdminPage() {
   const showMesas =
     entitlement.capabilities.mesas && entitlement.capabilities.menu_publication;
 
+  const mesasContent = showMesas
+    ? slug
+      ? <MesasAdminSection slug={slug} />
+      : <NeutralState
+        title={slugLoading ? 'Carregando mesas…' : 'Mesas indisponíveis'}
+        description={slugLoading ? 'Preparando os QR Codes das suas mesas.' : 'Configure o link público do ZeloMenu para acessar esta seção.'}
+      />
+    : undefined;
+
   return (
     <Suspense fallback={<NeutralState title="Carregando painel..." description="Preparando esta área do ZeloMenu." />}>
       <AdminLayout
@@ -175,10 +189,11 @@ export function AdminPage() {
           <SettingsPage
             settingsPath={settingsPath}
             onOpenDelivery={openDeliverySettings}
+            onOpenHours={openHoursSettings}
             onBackToOverview={returnToSettingsOverview}
           />
         }
-        mesasContent={showMesas && slug ? <MesasAdminSection slug={slug} /> : undefined}
+        mesasContent={mesasContent}
       />
     </Suspense>
   );
@@ -186,8 +201,10 @@ export function AdminPage() {
 
 function parseAdminHash(rawHash: string): { section: NavSection; settingsPath: SettingsPath } {
   const hash = rawHash.replace(/^#/, '');
+  if (hash === 'mesas') return { section: 'mesas', settingsPath: 'overview' };
   if (hash === 'publication') return { section: 'publication', settingsPath: 'overview' };
   if (hash === 'settings/entrega/configurar') return { section: 'settings', settingsPath: 'delivery' };
+  if (hash === 'settings/horarios') return { section: 'settings', settingsPath: 'hours' };
   if (hash.startsWith('settings')) return { section: 'settings', settingsPath: 'overview' };
   return { section: 'catalog', settingsPath: 'overview' };
 }

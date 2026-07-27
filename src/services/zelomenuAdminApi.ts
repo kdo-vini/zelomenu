@@ -12,6 +12,7 @@ import type {
   DeliveryGeocodeResult,
   DeliverySettings,
 } from '../domain/deliverySettings';
+import type { WeeklyHours } from '../domain/businessHours';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,8 @@ export type ZeloMenuStoreSettings = {
   pixKeyType: PixKeyType | null;
   autoAcceptOrders: boolean;
   pixReceiptVerificationEnabled: boolean;
+  weeklyHours: WeeklyHours;
+  timezone: string | null;
 };
 
 export type ZeloMenuSettingsPatch = {
@@ -52,6 +55,7 @@ export type ZeloMenuSettingsPatch = {
   pixKey?: string | null;
   pixKeyType?: PixKeyType | null;
   autoAcceptOrders?: boolean;
+  weeklyHours?: WeeklyHours;
 };
 
 export type DeliveryQuoteRequestSummary = {
@@ -90,6 +94,8 @@ async function authHeader(): Promise<Record<string, string>> {
 // Map the server's machine `error` codes to friendly PT-BR copy where useful.
 // Anything not in the table falls through to the raw code / HTTP status.
 const ERROR_MESSAGES: Record<string, string> = {
+  BUSINESS_HOURS_INVALID: 'Horarios invalidos. Use inicio antes do fim em cada faixa (00:00-00:00 = 24h).',
+  BUSINESS_HOURS_UNAVAILABLE: 'Os horarios ainda nao estao disponiveis neste banco. Aplique a migracao compartilhada e tente novamente.',
   INTERNAL_ERROR: 'NÃ£o foi possÃ­vel salvar as configuraÃ§Ãµes. Tente novamente.',
   SLUG_TAKEN: 'Esse link já está em uso.',
   INVALID_SLUG: 'Link inválido.',

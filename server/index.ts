@@ -219,6 +219,8 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'COUPON_INVALID_DISCOUNT_VALUE') return void res.status(400).json({ error: 'COUPON_INVALID_DISCOUNT_VALUE' });
   if (message === 'COUPON_NOT_FOUND') return void res.status(404).json({ error: 'COUPON_NOT_FOUND' });
   if (message === 'PIX_KEY_INVALID') return void res.status(400).json({ error: 'PIX_KEY_INVALID' });
+  if (message === 'BUSINESS_HOURS_INVALID') return void res.status(400).json({ error: 'BUSINESS_HOURS_INVALID' });
+  if (message === 'BUSINESS_HOURS_UNAVAILABLE') return void res.status(503).json({ error: 'BUSINESS_HOURS_UNAVAILABLE' });
   if (message === 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE') return void res.status(503).json({ error: 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE' });
   if (message === 'DELIVERY_CONFIGURATION_INVALID') return void res.status(400).json({ error: 'DELIVERY_CONFIGURATION_INVALID' });
   if (message === 'DELIVERY_SETTINGS_SAVE_FAILED') return void res.status(503).json({ error: 'DELIVERY_SETTINGS_SAVE_FAILED' });
@@ -268,7 +270,7 @@ app.get('/api/admin/zelomenu/settings', async (req, res) => {
 app.patch('/api/admin/zelomenu/settings', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { logoUrl, coverUrl, description, welcomeText, featuredEnabled, featuredProductIds, recommendationsEnabled, recommendationProductIds, categorySuggestions, categoryOrder, pixKey, pixKeyType, autoAcceptOrders } = req.body ?? {};
+    const { logoUrl, coverUrl, description, welcomeText, featuredEnabled, featuredProductIds, recommendationsEnabled, recommendationProductIds, categorySuggestions, categoryOrder, pixKey, pixKeyType, autoAcceptOrders, weeklyHours } = req.body ?? {};
     await updateZeloMenuStoreSettings(empresaId, {
       ...(logoUrl !== undefined && { logoUrl: typeof logoUrl === 'string' ? logoUrl.slice(0, 1000) : null }),
       ...(coverUrl !== undefined && { coverUrl: typeof coverUrl === 'string' ? coverUrl.slice(0, 1000) : null }),
@@ -283,6 +285,7 @@ app.patch('/api/admin/zelomenu/settings', async (req, res) => {
       ...(pixKey !== undefined && { pixKey: typeof pixKey === 'string' ? pixKey.slice(0, 200) : null }),
       ...(pixKeyType !== undefined && { pixKeyType: (typeof pixKeyType === 'string' && (PIX_KEY_TYPES as readonly string[]).includes(pixKeyType)) ? pixKeyType as PixKeyType : null }),
       ...(autoAcceptOrders !== undefined && { autoAcceptOrders: Boolean(autoAcceptOrders) }),
+      ...(weeklyHours !== undefined && { weeklyHours }),
     });
     res.json({ ok: true });
   } catch (error) {

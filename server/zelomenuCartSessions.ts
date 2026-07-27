@@ -33,11 +33,14 @@ import {
 } from '../src/domain/zelomenuBusinessHours.js';
 import {
   DAY_KEYS,
+  deriveLegacyFromWeekly,
   hasAnyOpenWindow,
   isMinuteWithinDay,
   isOpenAt,
+  normalizeWeeklyHoursForWrite,
   weekdayKeyInTz,
   type DayKey,
+  type WeeklyHours,
 } from '../src/domain/businessHours.js';
 
 const FULL_DAY_LABELS: Record<string, string> = {
@@ -1473,6 +1476,8 @@ export type ZeloMenuStoreSettings = {
   pixKeyType: PixKeyType | null;
   autoAcceptOrders: boolean;
   pixReceiptVerificationEnabled: boolean;
+  weeklyHours: WeeklyHours;
+  timezone: string | null;
 };
 
 export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
@@ -1513,17 +1518,20 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     pixKeyType,
     autoAcceptOrders: perfil?.zelomenu_auto_accept_orders ?? false,
     pixReceiptVerificationEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
+    weeklyHours: config.weeklyHours,
+    timezone: config.timezone ?? null,
   };
 }
 
 export async function updateZeloMenuStoreSettings(
   empresaId: string,
-  patch: Partial<Pick<ZeloMenuStoreSettings, 'logoUrl' | 'coverUrl' | 'description' | 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType' | 'autoAcceptOrders'>>,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'logoUrl' | 'coverUrl' | 'description' | 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType' | 'autoAcceptOrders' | 'weeklyHours'>>,
 ): Promise<void> {
   const coreUpdate: Record<string, unknown> = {};
   const brandingUpdate: Record<string, unknown> = {};
   const recommendationUpdate: Record<string, unknown> = {};
   const orderUpdate: Record<string, unknown> = {};
+  const hoursUpdate: Record<string, unknown> = {};
   if ('logoUrl' in patch) coreUpdate.logo_url = patch.logoUrl?.trim() || null;
   if ('coverUrl' in patch) brandingUpdate.zelomenu_cover_url = patch.coverUrl?.trim() || null;
   if ('description' in patch) brandingUpdate.zelomenu_description = patch.description?.trim() || null;
@@ -1535,6 +1543,16 @@ export async function updateZeloMenuStoreSettings(
   if ('recommendationProductIds' in patch) recommendationUpdate.zelomenu_recommendation_product_ids = patch.recommendationProductIds;
   if ('categorySuggestions' in patch) recommendationUpdate.zelomenu_category_suggestions = patch.categorySuggestions;
   if ('autoAcceptOrders' in patch) orderUpdate.zelomenu_auto_accept_orders = patch.autoAcceptOrders;
+
+  if ('weeklyHours' in patch) {
+    const weeklyHours = normalizeWeeklyHoursForWrite(patch.weeklyHours);
+    if (!weeklyHours) throw new Error('BUSINESS_HOURS_INVALID');
+    const legacy = deriveLegacyFromWeekly(weeklyHours);
+    hoursUpdate.horario_semanal = weeklyHours;
+    hoursUpdate.horario_abertura = legacy.openTime;
+    hoursUpdate.horario_fechamento = legacy.closeTime;
+    hoursUpdate.dias_fechamento = legacy.closedDays;
+  }
 
   // Chave Pix + tipo são salvos juntos (o admin manda os dois no mesmo save do
   // formulário). Chave vazia limpa a chave e o tipo. Chave não-vazia exige um
@@ -1560,12 +1578,19 @@ export async function updateZeloMenuStoreSettings(
   }
 
   const supabase = getServiceSupabase();
-  const update = { ...coreUpdate, ...brandingUpdate, ...recommendationUpdate, ...orderUpdate };
+  const update = { ...coreUpdate, ...brandingUpdate, ...recommendationUpdate, ...orderUpdate, ...hoursUpdate };
   if (Object.keys(update).length === 0) return;
 
   const { error } = await supabase.from('empresa_perfil').update(update).eq('id', empresaId);
-  if (!error) return;
+  if (!error) {
+    if (Object.keys(hoursUpdate).length > 0) await loadCatalogFromDb(empresaId);
+    return;
+  }
   if (!isMissingZeloMenuOptionalColumn(error)) throw error;
+
+  if (Object.keys(hoursUpdate).length > 0) {
+    throw new Error('BUSINESS_HOURS_UNAVAILABLE');
+  }
 
   if (Object.keys(orderUpdate).length > 0) {
     throw new Error('AUTO_ACCEPT_SETTINGS_UNAVAILABLE');

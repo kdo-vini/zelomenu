@@ -3,9 +3,11 @@ import {
   CLOSED_DAY_LABELS,
   deriveWeeklyFromLegacy,
   hasAnyOpenWindow,
+  isValidWeeklyWindow,
   isMinuteWithinDay,
   isOpenAt,
   normalizeWeeklyHours,
+  normalizeWeeklyHoursForWrite,
   type WeeklyHours,
 } from './businessHours';
 
@@ -30,6 +32,12 @@ describe('businessHours — normalize', () => {
     expect(normalizeWeeklyHours('x')).toBeNull();
   });
 
+  it('tolerates a malformed day value without throwing', () => {
+    expect(normalizeWeeklyHours({ mon: null })).toEqual({
+      sun: [], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [],
+    });
+  });
+
   it('parses valid weekly shape and keeps empty days closed', () => {
     const weekly = normalizeWeeklyHours({
       mon: [{ start: '11:00', end: '14:00' }, { start: '18:00', end: '23:00' }],
@@ -39,6 +47,30 @@ describe('businessHours — normalize', () => {
     expect(weekly!.mon).toHaveLength(2);
     expect(weekly!.sun).toHaveLength(0);
     expect(hasAnyOpenWindow(weekly!)).toBe(true);
+  });
+});
+
+describe('businessHours — write validation', () => {
+  it('accepts 00:00–00:00 as a 24-hour window', () => {
+    expect(isValidWeeklyWindow(H('00:00', '00:00'))).toBe(true);
+    expect(normalizeWeeklyHoursForWrite({
+      sun: [H('00:00', '00:00')],
+      mon: [], tue: [], wed: [], thu: [], fri: [], sat: [],
+    })?.sun).toEqual([H('00:00', '00:00')]);
+  });
+
+  it('rejects equal non-midnight times and malformed windows instead of filtering them', () => {
+    expect(isValidWeeklyWindow(H('09:00', '09:00'))).toBe(false);
+    expect(normalizeWeeklyHoursForWrite({
+      sun: [], mon: [{ start: 9, end: '18:00' }], tue: [], wed: [], thu: [], fri: [], sat: [],
+    })).toBeNull();
+    expect(normalizeWeeklyHoursForWrite({
+      sun: [], mon: [H('09:00', '09:00')], tue: [], wed: [], thu: [], fri: [], sat: [],
+    })).toBeNull();
+  });
+
+  it('requires all seven day lists in a write payload', () => {
+    expect(normalizeWeeklyHoursForWrite({ mon: [] })).toBeNull();
   });
 });
 
