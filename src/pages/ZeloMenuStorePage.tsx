@@ -65,6 +65,10 @@ function getProductQty(productId: number, items: Record<string, SelectedItem>): 
     .reduce((s, it) => s + it.quantity, 0);
 }
 
+function getProductLineCount(productId: number, items: Record<string, SelectedItem>): number {
+  return Object.values(items).filter((it) => it.productId === productId).length;
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export function ZeloMenuStorePage({
@@ -487,10 +491,13 @@ export function ZeloMenuStorePage({
       {/* ── Card de produto (foto, observação, quantidade e complementos) ── */}
       {cart.sheetProduct ? (() => {
         const product = cart.sheetProduct;
-        const plainKey = `${product.id}::plain`;
-        const existing = product.modifierGroups.length === 0 ? cart.items[plainKey] : undefined;
+        const hasActiveModifiers = product.modifierGroups.some((group) => group.active);
+        const existing = hasActiveModifiers
+          ? undefined
+          : Object.values(cart.items).find((item) => item.productId === product.id && item.selectedOptions.length === 0);
         const categoryName = findCategoryName(store.catalog, product.id);
         const cartProductIds = Object.values(cart.items).map((i) => i.productId).filter((id): id is number => id != null);
+        const existingLineCount = getProductLineCount(product.id, cart.items);
         return (
           <ProductAddModal
             product={product}
@@ -502,6 +509,7 @@ export function ZeloMenuStorePage({
             categorySuggestions={store.business.categorySuggestions}
             catalog={store.catalog}
             cartProductIds={cartProductIds}
+            existingLineCount={existingLineCount}
             onQuickAdd={(p) => cart.quickAddProduct(p)}
           />
         );
@@ -636,14 +644,15 @@ function QtyControl({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onAdd(); }}
-      className={`flex ${addBtn} items-center justify-center rounded-full text-white`}
+      className={`flex ${hasModifiers && qty > 0 && size === 'md' ? 'h-8 min-w-fit gap-1 rounded-full px-2.5' : addBtn} items-center justify-center rounded-full text-white`}
       style={{ background: 'var(--zm-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
       onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
       onMouseUp={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
-      aria-label={`Adicionar ${product.name}`}
+      aria-label={hasModifiers && qty > 0 ? `Adicionar outra montagem de ${product.name}` : `Adicionar ${product.name}`}
     >
       <Plus className={addIcon} strokeWidth={2.5} />
+      {hasModifiers && qty > 0 && size === 'md' ? <span className="text-[11px] font-semibold">Outra</span> : null}
     </button>
   );
 }
@@ -667,7 +676,7 @@ function PhotoRow({
   onSetQty: (key: string, qty: number) => void;
 }) {
   const qty = getProductQty(product.id, items);
-  const hasModifiers = product.modifierGroups.length > 0;
+  const hasModifiers = product.modifierGroups.some((group) => group.active);
   const isUnit = product.unitBased === true;
 
   return (
@@ -748,7 +757,7 @@ function FeaturedCard({
   onSetQty: (key: string, qty: number) => void;
 }) {
   const qty = getProductQty(product.id, items);
-  const hasModifiers = product.modifierGroups.length > 0;
+  const hasModifiers = product.modifierGroups.some((group) => group.active);
   const isUnit = product.unitBased === true;
 
   return (
@@ -823,7 +832,7 @@ function ListRow({
   divider: boolean;
 }) {
   const qty = getProductQty(product.id, items);
-  const hasModifiers = product.modifierGroups.length > 0;
+  const hasModifiers = product.modifierGroups.some((group) => group.active);
   const isUnit = product.unitBased === true;
 
   return (

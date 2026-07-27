@@ -66,6 +66,7 @@ export function ProductAddModal({
   categorySuggestions,
   catalog,
   cartProductIds,
+  existingLineCount = 0,
   onQuickAdd,
 }: {
   product: ZeloMenuCatalogProduct;
@@ -77,6 +78,7 @@ export function ProductAddModal({
   categorySuggestions?: Record<string, number[]>;
   catalog?: ZeloMenuCatalogGroup[];
   cartProductIds?: number[];
+  existingLineCount?: number;
   onQuickAdd?: (product: ZeloMenuCatalogProduct) => void;
 }) {
   const [selections, setSelections] = useState<Record<string, Record<string, number>>>({});
@@ -139,6 +141,7 @@ export function ProductAddModal({
     }))
     .filter((sel) => sel.optionSelections.length > 0);
   const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
+  const hasActiveModifiers = product.modifierGroups.some((group) => group.active);
   const quantity = parseInt(qtyDraft, 10);
   const validQuantity = !isNaN(quantity) && quantity > 0;
   const canConfirm = resolution.ok && validQuantity;
@@ -197,6 +200,11 @@ export function ProductAddModal({
               <p className="mt-2 text-[15px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
                 {resolution.ok ? toBRL(resolution.finalUnitPrice) : toBRL(product.basePrice)}
               </p>
+              {existingLineCount > 0 && product.modifierGroups.some((group) => group.active) ? (
+                <p className="mt-2 rounded-lg bg-[var(--color-brand-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--color-brand-deep)]">
+                  Você já adicionou {existingLineCount === 1 ? 'uma montagem' : `${existingLineCount} montagens`} deste produto. Escolha outra combinação para adicionar uma marmita diferente.
+                </p>
+              ) : null}
             </div>
 
             {product.modifierGroups.filter((g) => g.active).map((group) => (
@@ -435,7 +443,7 @@ export function ProductAddModal({
               onChange={(e) => setQtyDraft(e.target.value)}
               onFocus={(e) => e.currentTarget.select()}
               className="h-10 w-12 rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] text-center text-[15px] font-bold tabular-nums outline-none focus:border-[var(--color-brand)]"
-              aria-label="Quantidade"
+              aria-label={hasActiveModifiers ? 'Quantidade desta montagem' : 'Quantidade'}
             />
             <button
               type="button"

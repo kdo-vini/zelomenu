@@ -19,6 +19,8 @@ export function buildModifierSignature(
 export function buildCartItemKey(
   productId: string | number,
   selectedOptions: ZeloMenuModifierSelectionInput[] | null | undefined,
+  notes?: string | null,
 ): string {
-  return `${productId}::${buildModifierSignature(selectedOptions)}`;
+  const normalizedNotes = notes?.trim() ?? '';
+  return `${productId}::${buildModifierSignature(selectedOptions)}${normalizedNotes ? `::note:${normalizedNotes}` : ''}`;
 }

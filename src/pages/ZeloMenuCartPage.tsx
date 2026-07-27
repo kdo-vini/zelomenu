@@ -291,7 +291,8 @@ function draftItemKey(item: DraftState['items'][number]): string {
     })
     .sort()
     .join('|');
-  return `${idPart}::${selections || 'plain'}`;
+  const normalizedNotes = item.notes.trim();
+  return `${idPart}::${selections || 'plain'}${normalizedNotes ? `::note:${normalizedNotes}` : ''}`;
 }
 
 function selectedOptionsFromSelectedModifiers(

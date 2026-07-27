@@ -89,7 +89,11 @@ export function syncZeloMenuStoreCartCache(input: {
           quantity: option.quantity ?? 1,
         })),
       }));
-      const key = buildCartItemKey(item.productId, selectedOptions);
+      const key = buildCartItemKey(
+        item.productId,
+        selectedOptions,
+        selectedOptions.length > 0 ? item.notes : null,
+      );
       return [[key, {
         key,
         productId: item.productId,

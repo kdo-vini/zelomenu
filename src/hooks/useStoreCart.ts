@@ -89,20 +89,34 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
       .filter((sel) => sel.optionSelections.length > 0);
     const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
     if (!resolved.ok) return;
-    const key = product.modifierGroups.length > 0 ? buildCartItemKey(product.id, selectedOptions) : `${product.id}::plain`;
     const trimmedNotes = notes.trim();
-    setItems((prev) => ({
-      ...prev,
-      [key]: {
+    const hasActiveModifiers = product.modifierGroups.some((group) => group.active);
+    const key = hasActiveModifiers
+      ? buildCartItemKey(product.id, selectedOptions, trimmedNotes)
+      : `${product.id}::plain`;
+    setItems((prev) => {
+      const existingEntry = hasActiveModifiers
+        ? ([key, prev[key]] as const)
+        : Object.entries(prev).find(([, item]) => item.productId === product.id && item.selectedOptions.length === 0);
+      const existing = existingEntry?.[1];
+      const nextQuantity = existing && hasActiveModifiers
+        ? existing.quantity + quantity
+        : quantity;
+      const next = { ...prev };
+      if (!hasActiveModifiers && existingEntry && existingEntry[0] !== key) {
+        delete next[existingEntry[0]];
+      }
+      next[key] = {
         key,
         productId: product.id,
         productName: product.name,
-        quantity,
+        quantity: nextQuantity,
         selectedOptions,
         unitPrice: Number(resolved.finalUnitPrice.toFixed(2)),
         notes: trimmedNotes ? trimmedNotes : null,
-      },
-    }));
+      };
+      return next;
+    });
     setSheetProduct(null);
   }
 
