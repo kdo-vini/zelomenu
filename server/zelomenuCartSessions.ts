@@ -2041,7 +2041,7 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     }
   }
 
-  // ── table_order: write to ZeloPDV pedidos + double-validate comanda ──────────
+  // ── Materialize both public and table orders in the canonical engine ─────────
   const confirmationRpc = usesCanonicalOrderEngine(sessionRow.context)
     ? getServiceSupabase().rpc('create_zelo_order', {
       p_session_id: sessionRow.id,
@@ -2049,6 +2049,13 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
       p_idempotency_key: idempotencyKey,
       p_snapshots: buildCanonicalOrderSnapshots({
         empresaId: sessionRow.empresa_id,
+        source: sessionRow.context === 'table_order' ? 'mesa' : 'zelomenu',
+        tableContext: sessionRow.context === 'table_order'
+          ? {
+            mesaId: sessionRow.metadata?.mesa_id ?? null,
+            comandaId: sessionRow.metadata?.comanda_id ?? null,
+          }
+          : null,
         customer: current.customer,
         cart: revalidation.previewCart,
         fulfillment: current.fulfillment,

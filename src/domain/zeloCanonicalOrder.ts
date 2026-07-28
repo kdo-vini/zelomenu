@@ -14,18 +14,30 @@ export function buildCanonicalOrderSnapshots(input: {
   fulfillment: FulfillmentSnapshot;
   pricing: ZeloMenuPricingSnapshot;
   payment: ZeloMenuPaymentSnapshot;
+  source?: 'zelomenu' | 'mesa';
+  tableContext?: { mesaId?: string | null; comandaId?: string | null } | null;
 }) {
+  const source = input.source ?? 'zelomenu';
+  const fulfillment = input.tableContext
+    ? {
+      ...input.fulfillment,
+      type: 'mesa',
+      mesaId: input.tableContext.mesaId ?? null,
+      comandaId: input.tableContext.comandaId ?? null,
+    }
+    : input.fulfillment;
+
   return {
     empresaId: input.empresaId,
-    source: 'zelomenu' as const,
+    source,
     customer: input.customer,
     cart: input.cart,
-    fulfillment: input.fulfillment,
+    fulfillment,
     pricing: input.pricing,
     payment: input.payment,
   };
 }
 
 export function usesCanonicalOrderEngine(context: string): boolean {
-  return context === 'public_order';
+  return context === 'public_order' || context === 'table_order';
 }
