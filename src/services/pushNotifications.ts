@@ -38,6 +38,11 @@ function decodeBase64Url(value: string): Uint8Array {
   return decoded;
 }
 
+function getApplicationServerKey(value: string): ArrayBuffer {
+  const bytes = decodeBase64Url(value);
+  return (bytes.buffer as ArrayBuffer).slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
 function normalizePublicKey(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -131,7 +136,7 @@ export async function enablePushNotifications(options: { orderId?: string; cartT
     try {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: decodeBase64Url(config.publicKey),
+        applicationServerKey: getApplicationServerKey(config.publicKey),
       });
     } catch (error) {
       await registration.update().catch(() => undefined);

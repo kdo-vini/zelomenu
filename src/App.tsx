@@ -1,15 +1,13 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
-import { ToastProvider } from './contexts/ToastContext';
-import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import HomePage from './pages/HomePage';
-import ZeloMenuStorePage from './pages/ZeloMenuStorePage';
-import ZeloMenuCartPage from './pages/ZeloMenuCartPage';
-import { ZeloMenuMesaPage } from './pages/ZeloMenuMesaPage';
 
 const AdminPage = lazy(() => import('./pages/AdminPage').then((module) => ({ default: module.AdminPage })));
 const ZeloMenuInfoPage = lazy(() => import('./pages/ZeloMenuInfoPage').then((module) => ({ default: module.ZeloMenuInfoPage })));
+const AuthCallbackPage = lazy(() => import('./pages/AuthCallbackPage').then((module) => ({ default: module.AuthCallbackPage })));
+const ZeloMenuStorePage = lazy(() => import('./pages/ZeloMenuStorePage'));
+const ZeloMenuCartPage = lazy(() => import('./pages/ZeloMenuCartPage'));
+const ZeloMenuMesaPage = lazy(() => import('./pages/ZeloMenuMesaPage').then((module) => ({ default: module.ZeloMenuMesaPage })));
 
 function RouteLoading() {
   return (
@@ -21,23 +19,19 @@ function RouteLoading() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <BrowserRouter>
-          <Suspense fallback={<RouteLoading />}>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/conhecer-zelomenu" element={<ZeloMenuInfoPage />} />
-              <Route path="/admin" element={<AdminPage />} />
-              <Route path="/auth/callback" element={<AuthCallbackPage />} />
-              <Route path="/menu/carrinho/:token" element={<ZeloMenuCartPage />} />
-              <Route path="/:slug/mesa/:mesaId" element={<ZeloMenuMesaPage />} />
-              <Route path="/:slug" element={<ZeloMenuStorePage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
-      </ToastProvider>
-    </AuthProvider>
+    <BrowserRouter>
+      <Suspense fallback={<RouteLoading />}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/conhecer-zelomenu" element={<ZeloMenuInfoPage />} />
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          <Route path="/menu/carrinho/:token" element={<ZeloMenuCartPage />} />
+          <Route path="/:slug/mesa/:mesaId" element={<ZeloMenuMesaPage />} />
+          <Route path="/:slug" element={<ZeloMenuStorePage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+    </BrowserRouter>
   );
 }

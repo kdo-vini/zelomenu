@@ -171,3 +171,13 @@ grant execute on function public.update_zelomenu_cart(uuid,text,integer,jsonb,js
 grant execute on function public.confirm_zelomenu_cart(uuid,text,integer,text) to service_role;
 grant execute on function public.issue_table_capability(uuid,uuid,uuid,text,timestamptz) to service_role;
 grant execute on function public.revoke_table_capability(uuid) to service_role;
+
+-- Table capabilities are server-owned. Keep browser roles away from both the
+-- table and the SECURITY DEFINER RPCs; service_role is the only caller.
+alter table public.zelomenu_table_capabilities enable row level security;
+revoke all on table public.zelomenu_table_capabilities from public, anon, authenticated;
+grant all on table public.zelomenu_table_capabilities to service_role;
+revoke all on function public.issue_table_capability(uuid,uuid,uuid,text,timestamptz) from public, anon, authenticated;
+revoke all on function public.revoke_table_capability(uuid) from public, anon, authenticated;
+grant execute on function public.issue_table_capability(uuid,uuid,uuid,text,timestamptz) to service_role;
+grant execute on function public.revoke_table_capability(uuid) to service_role;

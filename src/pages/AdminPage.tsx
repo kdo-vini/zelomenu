@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { ToastProvider } from '../contexts/ToastContext';
 import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
 import { LoginForm } from '../components/LoginForm';
@@ -55,7 +56,7 @@ function PublicationPage() {
 
 // ─── Root ──────────────────────────────────────────────────────────────────
 
-export function AdminPage() {
+function AdminPageContent() {
   const { session, loading: authLoading } = useAuth();
   const entitlement = useZeloMenuEntitlement(session);
 
@@ -196,6 +197,16 @@ export function AdminPage() {
         mesasContent={mesasContent}
       />
     </Suspense>
+  );
+}
+
+export function AdminPage() {
+  return (
+    <AuthProvider>
+      <ToastProvider>
+        <AdminPageContent />
+      </ToastProvider>
+    </AuthProvider>
   );
 }
 
