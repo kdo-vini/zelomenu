@@ -47,7 +47,7 @@ const FULL_DAY_LABELS: Record<string, string> = {
   sun: 'domingo', mon: 'segunda', tue: 'terça', wed: 'quarta', thu: 'quinta', fri: 'sexta', sat: 'sábado',
 };
 
-import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
+import { buildCanonicalOrderSnapshots, usesDirectCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
 import { shouldAutoAcceptPublicOrder } from '../src/domain/zelomenuOrderAcceptance.js';
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
@@ -2041,8 +2041,9 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     }
   }
 
-  // ── Materialize both public and table orders in the canonical engine ─────────
-  const confirmationRpc = usesCanonicalOrderEngine(sessionRow.context)
+  // ── Direct canonical creation for public_order; table_order stays on the
+  // compatibility RPC until the PDV migration patches it to the same engine.
+  const confirmationRpc = usesDirectCanonicalOrderEngine(sessionRow.context)
     ? getServiceSupabase().rpc('create_zelo_order', {
       p_session_id: sessionRow.id,
       p_expected_revision: expectedRevision,

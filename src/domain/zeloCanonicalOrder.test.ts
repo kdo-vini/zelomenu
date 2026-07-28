@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from './zeloCanonicalOrder';
+import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine, usesDirectCanonicalOrderEngine } from './zeloCanonicalOrder';
 
 describe('canonical Zelo order boundary', () => {
   it('routes public and table orders to the canonical engine', () => {
     expect(usesCanonicalOrderEngine('public_order')).toBe(true);
     expect(usesCanonicalOrderEngine('table_order')).toBe(true);
+    expect(usesDirectCanonicalOrderEngine('public_order')).toBe(true);
+    expect(usesDirectCanonicalOrderEngine('table_order')).toBe(false);
   });
 
   it('preserves the server-authoritative snapshots expected by create_zelo_order', () => {

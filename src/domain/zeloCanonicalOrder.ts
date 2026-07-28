@@ -41,3 +41,12 @@ export function buildCanonicalOrderSnapshots(input: {
 export function usesCanonicalOrderEngine(context: string): boolean {
   return context === 'public_order' || context === 'table_order';
 }
+
+/**
+ * Direct creation is only safe for public_order during the deploy window.
+ * table_order stays on confirm_zelomenu_cart until the PDV migration replaces
+ * that RPC; after the migration it reaches the same canonical aggregate.
+ */
+export function usesDirectCanonicalOrderEngine(context: string): boolean {
+  return context === 'public_order';
+}
