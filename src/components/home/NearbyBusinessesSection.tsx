@@ -1,55 +1,37 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { ArrowRight, LocateFixed, MapPin } from 'lucide-react';
 import type { Business } from '../../data/types.ts';
+import { distanceInKm, type GeographicCoordinates } from '../../domain/businessDeliveryRegion.ts';
 import { BusinessCarousel } from './BusinessCarousel.tsx';
 
 interface NearbyBusinessesSectionProps {
   businesses: Business[];
-}
-
-type Coordinates = { latitude: number; longitude: number };
-
-function distanceInKm(from: Coordinates, to: Coordinates): number {
-  const earthRadius = 6371;
-  const latDelta = (to.latitude - from.latitude) * Math.PI / 180;
-  const lngDelta = (to.longitude - from.longitude) * Math.PI / 180;
-  const a = Math.sin(latDelta / 2) ** 2
-    + Math.cos(from.latitude * Math.PI / 180) * Math.cos(to.latitude * Math.PI / 180) * Math.sin(lngDelta / 2) ** 2;
-  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  status: 'idle' | 'loading' | 'granted' | 'denied' | 'unsupported';
+  coordinates: GeographicCoordinates | null;
+  onRequestLocation: () => void;
 }
 
 function formatDistance(distanceKm: number): string {
   return distanceKm < 1 ? `${Math.round(distanceKm * 1000)} m` : `${distanceKm.toFixed(1).replace('.', ',')} km`;
 }
 
-export function NearbyBusinessesSection({ businesses }: NearbyBusinessesSectionProps) {
-  const [status, setStatus] = useState<'idle' | 'loading' | 'granted' | 'denied'>('idle');
-  const [coordinates, setCoordinates] = useState<Coordinates | null>(null);
-
+export function NearbyBusinessesSection({
+  businesses,
+  status,
+  coordinates,
+  onRequestLocation,
+}: NearbyBusinessesSectionProps) {
   const nearby = useMemo(() => {
     if (!coordinates) return [];
     return businesses
       .filter((business) => business.latitude != null && business.longitude != null)
-      .map((business) => ({ business, distance: distanceInKm(coordinates, { latitude: business.latitude!, longitude: business.longitude! }) }))
+      .map((business) => ({
+        business,
+        distance: distanceInKm(coordinates, { latitude: business.latitude!, longitude: business.longitude! }),
+      }))
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 6);
   }, [businesses, coordinates]);
-
-  function requestLocation() {
-    if (!navigator.geolocation) {
-      setStatus('denied');
-      return;
-    }
-    setStatus('loading');
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-        setStatus('granted');
-      },
-      () => setStatus('denied'),
-      { enableHighAccuracy: false, maximumAge: 300_000, timeout: 10_000 },
-    );
-  }
 
   return (
     <section className="home-section home-nearby" aria-labelledby="nearby-businesses-title">
@@ -61,17 +43,23 @@ export function NearbyBusinessesSection({ businesses }: NearbyBusinessesSectionP
         <MapPin size={22} aria-hidden="true" />
       </div>
 
-      {status === 'idle' ? (
+      {status === 'idle' || status === 'unsupported' ? (
         <div className="home-nearby__prompt">
           <div className="home-nearby__prompt-icon"><LocateFixed size={22} aria-hidden="true" /></div>
           <div>
             <strong>Mostre opções próximas</strong>
-            <p>Usamos sua localização apenas para ordenar as empresas ao seu redor.</p>
+            <p>
+              {status === 'unsupported'
+                ? 'Seu navegador não oferece localização. Você ainda pode buscar por cidade acima.'
+                : 'Usamos sua localização apenas para mostrar empresas que atendem sua região.'}
+            </p>
           </div>
-          <button type="button" className="home-button home-button--secondary" onClick={requestLocation}>
-            Usar minha localização
-            <ArrowRight size={16} strokeWidth={2.4} aria-hidden="true" />
-          </button>
+          {status === 'idle' ? (
+            <button type="button" className="home-button home-button--secondary" onClick={onRequestLocation}>
+              Usar minha localização
+              <ArrowRight size={16} strokeWidth={2.4} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -79,7 +67,7 @@ export function NearbyBusinessesSection({ businesses }: NearbyBusinessesSectionP
       {status === 'denied' ? (
         <div className="home-nearby__status" role="status">
           <span>Não conseguimos acessar sua localização. Você ainda pode buscar por cidade acima.</span>
-          <button type="button" onClick={requestLocation}>Tentar novamente</button>
+          <button type="button" onClick={onRequestLocation}>Tentar novamente</button>
         </div>
       ) : null}
       {status === 'granted' && nearby.length ? (
@@ -89,7 +77,7 @@ export function NearbyBusinessesSection({ businesses }: NearbyBusinessesSectionP
         </>
       ) : null}
       {status === 'granted' && !nearby.length ? (
-        <p className="home-nearby__status" role="status">Ainda não há empresas com localização cadastrada nesta região.</p>
+        <p className="home-nearby__status" role="status">Nenhuma empresa com entrega atende sua localização.</p>
       ) : null}
 
       {status === 'granted' && nearby.length ? (

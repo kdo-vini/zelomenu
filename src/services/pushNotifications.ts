@@ -167,7 +167,10 @@ export async function enablePushNotifications(options: { orderId?: string; cartT
 }
 
 function getSubscriptionErrorMessage(error: unknown): string {
-  const name = error instanceof DOMException ? error.name : '';
+  const errorRecord = error && typeof error === 'object' ? error as { name?: unknown; message?: unknown } : null;
+  const name = typeof errorRecord?.name === 'string' ? errorRecord.name : '';
+  const detail = typeof errorRecord?.message === 'string' ? errorRecord.message.trim() : '';
+  console.error('[ZeloMenu] Falha ao registrar push no navegador:', { name, message: detail });
   if (name === 'InvalidAccessError') {
     return 'A chave VAPID publicada pelo servidor é inválida. Confira se VAPID_PUBLIC_KEY contém a chave pública completa, sem espaços ou quebras de linha.';
   }
@@ -178,7 +181,9 @@ function getSubscriptionErrorMessage(error: unknown): string {
     return 'O service worker ainda não terminou de carregar. Atualize a página e tente novamente.';
   }
   if (name === 'AbortError') {
-    return 'O serviço de push não respondeu. Confirme a conexão e tente novamente em alguns segundos.';
+    return detail
+      ? `O serviço de push não respondeu. Detalhe do navegador: ${detail}. Confirme a conexão, desative VPN/proxy se houver e tente novamente em alguns segundos.`
+      : 'O serviço de push não respondeu. Confirme a conexão, desative VPN/proxy se houver e tente novamente em alguns segundos.';
   }
   return 'O navegador não conseguiu registrar o push. Confirme o HTTPS, a permissão de notificações e as VAPID keys do servidor.';
 }

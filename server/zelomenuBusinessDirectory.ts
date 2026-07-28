@@ -16,6 +16,7 @@ export interface BusinessDirectoryEntry {
   description: string | null;
   latitude: number | null;
   longitude: number | null;
+  maxDeliveryDistanceM: number | null;
   rating: number | null;
   ratingCount: number;
   highlights: BusinessDirectoryHighlight[];
@@ -44,7 +45,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
   const supabase = getServiceSupabase();
 
   const baseSelect = 'id, user_id, nome_exibicao, endereco, logo_url, zelomenu_slug, delivery_city, delivery_state';
-  const optionalSelect = 'zelomenu_cover_url, zelomenu_description, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_sponsored_enabled, delivery_latitude, delivery_longitude';
+  const optionalSelect = 'zelomenu_cover_url, zelomenu_description, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids, zelomenu_sponsored_enabled, delivery_latitude, delivery_longitude, delivery_config';
   const initialProfilesResult = await supabase
     .from('empresa_perfil')
     .select(`${baseSelect}, ${optionalSelect}`)
@@ -91,6 +92,26 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
   const userIds = profiles
     .map((row: Record<string, unknown>) => String(row.user_id ?? '').trim())
     .filter(Boolean);
+  const companyIds = profiles
+    .map((row: Record<string, unknown>) => String(row.id ?? '').trim())
+    .filter(Boolean);
+  const deliveryRangesResult = companyIds.length > 0
+    ? await supabase
+        .from('zelomenu_delivery_ranges')
+        .select('company_id, max_distance_m')
+        .in('company_id', companyIds)
+        .order('max_distance_m', { ascending: true })
+    : { data: [], error: null };
+  if (deliveryRangesResult.error) {
+    console.warn('[ZeloMenu] Could not load directory delivery ranges:', deliveryRangesResult.error);
+  }
+  const maxDeliveryDistanceByCompany = new Map<string, number>();
+  for (const range of deliveryRangesResult.data ?? []) {
+    const companyId = String(range.company_id ?? '').trim();
+    const maxDistanceM = Number(range.max_distance_m);
+    if (!companyId || !Number.isFinite(maxDistanceM) || maxDistanceM <= 0) continue;
+    maxDeliveryDistanceByCompany.set(companyId, Math.max(maxDistanceM, maxDeliveryDistanceByCompany.get(companyId) ?? 0));
+  }
   const [productsResult, publicationsResult] = userIds.length > 0
     ? await Promise.all([
         supabase
@@ -148,6 +169,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
     const state = String(row.delivery_state ?? '') || extractStateFromAddress(String(row.endereco ?? ''));
     const slug = row.zelomenu_slug ? String(row.zelomenu_slug) : null;
     const userId = String(row.user_id ?? '').trim();
+    const deliveryConfig = row.delivery_config as { enabled?: boolean } | null;
     const featuredIds = Array.isArray(row.zelomenu_featured_product_ids)
       ? row.zelomenu_featured_product_ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0)
       : [];
@@ -183,6 +205,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
           : null,
       latitude: Number.isFinite(Number(row.delivery_latitude)) ? Number(row.delivery_latitude) : null,
       longitude: Number.isFinite(Number(row.delivery_longitude)) ? Number(row.delivery_longitude) : null,
+      maxDeliveryDistanceM: deliveryConfig?.enabled === true ? maxDeliveryDistanceByCompany.get(String(row.id)) ?? null : null,
       rating: null,
       ratingCount: 0,
       categoryLabel: categoriesByUser.get(userId)?.slice(0, 2).join(' · ') || null,

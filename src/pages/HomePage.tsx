@@ -1,4 +1,6 @@
+import { useMemo, useState } from 'react';
 import { categories } from '../data/categories.ts';
+import { filterBusinessesByLocation, type GeographicCoordinates } from '../domain/businessDeliveryRegion.ts';
 import { useBusinessDiscovery } from '../hooks/useBusinessDiscovery.ts';
 import { useBusinesses } from '../hooks/useBusinesses.ts';
 import { Header } from '../components/home/Header.tsx';
@@ -21,9 +23,17 @@ import { Footer } from '../components/home/Footer.tsx';
 import '../styles/tokens.css';
 import '../styles/home.css';
 
+type LocationStatus = 'idle' | 'loading' | 'granted' | 'denied' | 'unsupported';
+
 export default function HomePage() {
   const businessesState = useBusinesses();
-  const discovery = useBusinessDiscovery(businessesState.data);
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle');
+  const [userCoordinates, setUserCoordinates] = useState<GeographicCoordinates | null>(null);
+  const locationFilteredBusinesses = useMemo(() => {
+    if (locationStatus !== 'granted' || !userCoordinates) return businessesState.data;
+    return filterBusinessesByLocation(businessesState.data, userCoordinates);
+  }, [businessesState.data, locationStatus, userCoordinates]);
+  const discovery = useBusinessDiscovery(locationFilteredBusinesses);
 
   // Destaque editorial é uma camada de visibilidade, não um filtro de catálogo:
   // uma empresa pode aparecer na vitrine e continuar disponível para descoberta.
@@ -31,6 +41,23 @@ export default function HomePage() {
 
   function scrollToResults() {
     document.getElementById('empresas')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function requestLocation() {
+    if (!window.isSecureContext || !navigator.geolocation) {
+      setLocationStatus('unsupported');
+      return;
+    }
+
+    setLocationStatus('loading');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+        setLocationStatus('granted');
+      },
+      () => setLocationStatus('denied'),
+      { enableHighAccuracy: false, maximumAge: 300_000, timeout: 10_000 },
+    );
   }
 
   return (
@@ -45,14 +72,19 @@ export default function HomePage() {
         />
 
         <div className="home-container">
+          {businessesState.status === 'success' ? (
+            <NearbyBusinessesSection
+              businesses={locationFilteredBusinesses}
+              status={locationStatus}
+              coordinates={userCoordinates}
+              onRequestLocation={requestLocation}
+            />
+          ) : null}
+
           <QuickActions />
 
           {businessesState.status === 'success' ? (
-            <HomePersonalizedSections businesses={businessesState.data} />
-          ) : null}
-
-          {businessesState.status === 'success' ? (
-            <NearbyBusinessesSection businesses={businessesState.data} />
+            <HomePersonalizedSections businesses={locationFilteredBusinesses} />
           ) : null}
 
           <section className="home-categories" id="categorias" aria-labelledby="categories-title">
@@ -120,13 +152,18 @@ export default function HomePage() {
                   <BusinessCarousel businesses={remainingBusinesses} ariaLabel="empresas para descobrir" />
                 )
               ) : (
-                <EmptyState onClear={discovery.clearFilters} />
+                <EmptyState
+                  onClear={discovery.clearFilters}
+                  message={locationStatus === 'granted'
+                    ? 'Nenhuma empresa com entrega atende sua localização.'
+                    : undefined}
+                />
               )}
             </section>
           )}
 
           {businessesState.status === 'success' ? (
-            <HighlightsSection businesses={businessesState.data} />
+            <HighlightsSection businesses={locationFilteredBusinesses} />
           ) : null}
 
           <EcosystemSection />

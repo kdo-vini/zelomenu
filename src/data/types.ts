@@ -11,6 +11,7 @@ export interface Business {
   description: string;
   latitude: number | null;
   longitude: number | null;
+  maxDeliveryDistanceM: number | null;
   rating: number | null;
   ratingCount: number;
   highlights: BusinessHighlight[];

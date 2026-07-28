@@ -26,6 +26,7 @@ export const businessesService = {
         description: string | null;
         latitude: number | null;
         longitude: number | null;
+        maxDeliveryDistanceM: number | null;
         rating: number | null;
         ratingCount: number;
         highlights: Array<{ id: number; name: string; price: number; photoUrl: string | null }>;
@@ -51,6 +52,7 @@ export const businessesService = {
         description: b.description ?? '',
         latitude: b.latitude ?? null,
         longitude: b.longitude ?? null,
+        maxDeliveryDistanceM: b.maxDeliveryDistanceM ?? null,
         rating: b.rating ?? null,
         ratingCount: b.ratingCount ?? 0,
         highlights: b.highlights ?? [],
