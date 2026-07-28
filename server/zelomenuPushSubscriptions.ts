@@ -1,5 +1,6 @@
 import { getServiceSupabase } from './supabaseServer.js';
 import webpush from 'web-push';
+import { getVapidConfig } from './vapidConfig.js';
 
 const TABLE = 'zelomenu_push_subscriptions';
 
@@ -33,16 +34,16 @@ type PushSubscriptionRow = {
 };
 
 function configureWebPush(): boolean {
-  const publicKey = process.env.VAPID_PUBLIC_KEY;
-  const privateKey = process.env.VAPID_PRIVATE_KEY;
-  if (!publicKey || !privateKey) return false;
+  const { publicKey, privateKey, subject, publicKeyValid, privateKeyValid, keyPairValid } = getVapidConfig();
+  if (!publicKey || !privateKey || !publicKeyValid || !privateKeyValid || !keyPairValid) return false;
 
-  webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT ?? 'mailto:contato@zelopdv.com.br',
-    publicKey,
-    privateKey,
-  );
-  return true;
+  try {
+    webpush.setVapidDetails(subject, publicKey, privateKey);
+    return true;
+  } catch (error) {
+    console.error('[ZeloMenu] invalid VAPID configuration:', error);
+    return false;
+  }
 }
 
 export async function savePublicPushSubscription(input: {

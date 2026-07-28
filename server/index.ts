@@ -15,6 +15,7 @@ import type { Response } from 'express';
 import { expireStaleQuoteRequests, getDeliveryHealth, getStoreDeliveryAddress, listDeliveryRanges, lookupCepOnly, resolveDeliveryStoreGeocoding, getDeliveryStoreData, saveDeliverySettings, listPendingDeliveryQuoteRequests, getDeliveryQuoteRequestById, retryDeliveryQuoteRequest, resolveDeliveryQuoteRequest, cancelDeliveryQuoteRequest } from './zelomenuDeliveryService.js';
 import { listBusinesses } from './zelomenuBusinessDirectory.js';
 import { removePublicPushSubscription, savePublicPushSubscription, startOrderStatusPushDispatcher, type PublicPushSubscriptionPayload } from './zelomenuPushSubscriptions.js';
+import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 
@@ -471,8 +472,22 @@ app.get('/api/public/businesses', generalPublicLimiter, async (_req, res) => {
 });
 
 app.get('/api/public/push/config', generalPublicLimiter, (_req, res) => {
-  const publicKey = process.env.VAPID_PUBLIC_KEY ?? process.env.VITE_VAPID_PUBLIC_KEY ?? null;
-  res.json({ enabled: Boolean(publicKey), publicKey });
+  const { publicKey, privateKey, publicKeyValid, privateKeyValid, keyPairValid } = getVapidConfig();
+  const enabled = Boolean(publicKey && privateKey && publicKeyValid && privateKeyValid && keyPairValid);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    enabled,
+    publicKey: enabled ? publicKey : null,
+    error: enabled
+      ? null
+      : !publicKey || !privateKey
+      ? 'VAPID_KEYS_MISSING'
+      : !publicKeyValid
+      ? 'VAPID_PUBLIC_KEY_INVALID'
+      : !privateKeyValid
+      ? 'VAPID_PRIVATE_KEY_INVALID'
+      : 'VAPID_KEY_PAIR_INVALID',
+  });
 });
 
 app.post('/api/public/push/subscriptions', generalPublicLimiter, async (req, res) => {
