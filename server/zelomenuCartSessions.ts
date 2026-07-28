@@ -47,7 +47,7 @@ const FULL_DAY_LABELS: Record<string, string> = {
   sun: 'domingo', mon: 'segunda', tue: 'terça', wed: 'quarta', thu: 'quinta', fri: 'sexta', sat: 'sábado',
 };
 
-import { buildCanonicalOrderSnapshots, usesCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
+import { buildCanonicalOrderSnapshots, usesDirectCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
 import { shouldAutoAcceptPublicOrder } from '../src/domain/zelomenuOrderAcceptance.js';
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
@@ -2041,14 +2041,22 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     }
   }
 
-  // ── table_order: write to ZeloPDV pedidos + double-validate comanda ──────────
-  const confirmationRpc = usesCanonicalOrderEngine(sessionRow.context)
+  // ── Direct canonical creation for public_order; table_order stays on the
+  // compatibility RPC until the PDV migration patches it to the same engine.
+  const confirmationRpc = usesDirectCanonicalOrderEngine(sessionRow.context)
     ? getServiceSupabase().rpc('create_zelo_order', {
       p_session_id: sessionRow.id,
       p_expected_revision: expectedRevision,
       p_idempotency_key: idempotencyKey,
       p_snapshots: buildCanonicalOrderSnapshots({
         empresaId: sessionRow.empresa_id,
+        source: sessionRow.context === 'table_order' ? 'mesa' : 'zelomenu',
+        tableContext: sessionRow.context === 'table_order'
+          ? {
+            mesaId: sessionRow.metadata?.mesa_id ?? null,
+            comandaId: sessionRow.metadata?.comanda_id ?? null,
+          }
+          : null,
         customer: current.customer,
         cart: revalidation.previewCart,
         fulfillment: current.fulfillment,

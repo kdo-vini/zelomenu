@@ -39,14 +39,6 @@ describe('resolveZeloMenuCapabilities — truth table', () => {
     expect(caps.pdv_core).toBe(true);
   });
 
-  it('pdv + legacy has_pedidos_addon → menu_publication FALSE but ordering_review TRUE (grandfather, D-099)', () => {
-    const caps = resolveZeloMenuCapabilities({ ...base, hasPedidosAddonLegacy: true });
-    expect(caps.menu_publication).toBe(false);
-    expect(caps.public_menu_runtime).toBe(false);
-    expect(caps.ordering_review).toBe(true);
-    expect(caps.kitchen_queue).toBe(true);
-  });
-
   it('pdv + legacy null/undefined ZeloMenu flag → still no publication', () => {
     expect(resolveZeloMenuCapabilities({ ...base, hasZeloMenuFlag: null }).menu_publication).toBe(false);
     expect(resolveZeloMenuCapabilities({ ...base, hasZeloMenuFlag: undefined }).menu_publication).toBe(false);
@@ -87,7 +79,7 @@ describe('resolveZeloMenuCapabilities — truth table', () => {
 describe('convenience helpers mirror the resolver', () => {
   it('hasZeloMenuAccess === resolver.menu_publication', () => {
     expect(hasZeloMenuAccess({ ...base, hasZeloMenuFlag: true })).toBe(true);
-    expect(hasZeloMenuAccess({ ...base, hasPedidosAddonLegacy: true })).toBe(false);
+    expect(hasZeloMenuAccess({ ...base })).toBe(false);
   });
   it('hasZeloMenuCapability reads a single flag', () => {
     const caps = resolveZeloMenuCapabilities({ planTier: 'bundle', active: true });

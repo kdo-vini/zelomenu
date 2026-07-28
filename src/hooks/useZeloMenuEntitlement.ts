@@ -17,7 +17,6 @@ export interface ZeloMenuSubscription {
   manually_extended_until: string | null;
   cancel_at_period_end: boolean | null;
   has_zelo_menu: boolean | null;
-  has_pedidos_addon: boolean | null;
   has_mesas_addon: boolean | null;
   has_acessos_addon: boolean | null;
 }
@@ -61,7 +60,7 @@ export function useZeloMenuEntitlement(session: Session | null): UseZeloMenuEnti
     }
     const { data, error } = await supabase
       .from('subscriptions')
-      .select('id, status, plan_tier, current_period_end, manually_extended_until, cancel_at_period_end, has_zelo_menu, has_pedidos_addon, has_mesas_addon, has_acessos_addon')
+      .select('id, status, plan_tier, current_period_end, manually_extended_until, cancel_at_period_end, has_zelo_menu, has_mesas_addon, has_acessos_addon')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false })
       .limit(1)
@@ -88,7 +87,6 @@ export function useZeloMenuEntitlement(session: Session | null): UseZeloMenuEnti
       // D-103: `has_zelo_menu` é PDV-owned e agora está publicada. Quando true,
       // concede ZeloMenu mesmo a um `pdv` puro. chat/bundle já entram por D-014.
       hasZeloMenuFlag: subscription?.has_zelo_menu ?? undefined,
-      hasPedidosAddonLegacy: subscription?.has_pedidos_addon ?? undefined,
       hasMesasAddon: subscription?.has_mesas_addon ?? undefined,
       hasAcessosAddon: subscription?.has_acessos_addon ?? undefined,
     }),
