@@ -28,7 +28,7 @@ export function Hero({ query, onQueryChange, onClearQuery, onSearch }: HeroProps
         <div className="home-hero__art" aria-hidden="true">
           <div className="home-hero__glow" />
           <picture>
-            <source srcSet="/assets/hero/zelomenu-hero.webp" type="image/webp" />
+            <source srcSet="/assets/hero/zelomenu-hero-original.webp" type="image/webp" />
             <img
               src="/assets/hero/zelomenu-hero.svg"
               alt=""

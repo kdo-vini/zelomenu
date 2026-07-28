@@ -61,7 +61,7 @@ import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/wha
 import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
 import { PushNotificationButton } from '../components/home/PushNotificationButton';
 import { resolveCheckoutSuggestions } from '../domain/zelomenuRecommendations';
-import { useToast } from '../contexts/ToastContext';
+import { ToastProvider, useToast } from '../contexts/ToastContext';
 
 type DraftState = {
   customerName: string;
@@ -468,7 +468,7 @@ function resolveConfirmedNextStep(orderStatus: string, isDelivery: boolean): str
   }
 }
 
-export default function ZeloMenuCartPage() {
+function ZeloMenuCartPageContent() {
   const { token = '' } = useParams();
   const toast = useToast();
   const [payload, setPayload] = useState<ZeloMenuPublicCartResponse | null>(null);
@@ -2255,5 +2255,13 @@ export default function ZeloMenuCartPage() {
         />
       ) : null}
     </div>
+  );
+}
+
+export default function ZeloMenuCartPage() {
+  return (
+    <ToastProvider>
+      <ZeloMenuCartPageContent />
+    </ToastProvider>
   );
 }

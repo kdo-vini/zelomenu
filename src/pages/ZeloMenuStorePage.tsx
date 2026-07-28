@@ -11,6 +11,7 @@ import {
 
 import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
 import { useStoreCart } from '../hooks/useStoreCart';
+import { ToastProvider } from '../contexts/ToastContext';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { ProductAddModal } from '../components/zelomenu/ZeloMenuProductAddModal';
 
@@ -71,7 +72,7 @@ function getProductLineCount(productId: number, items: Record<string, SelectedIt
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-export function ZeloMenuStorePage({
+function ZeloMenuStorePageContent({
   slug: slugProp,
   mesaBanner,
   mesaUnavailableMessage,
@@ -515,6 +516,14 @@ export function ZeloMenuStorePage({
         );
       })() : null}
     </div>
+  );
+}
+
+export function ZeloMenuStorePage(props: ZeloMenuStorePageProps = {}) {
+  return (
+    <ToastProvider>
+      <ZeloMenuStorePageContent {...props} />
+    </ToastProvider>
   );
 }
 
