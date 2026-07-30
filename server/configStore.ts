@@ -59,6 +59,8 @@ export type BusinessConfig = {
    */
   weeklyHours: WeeklyHours;
   timezone?: string;
+  schedulingEnabled: boolean;
+  schedulingLeadTimeMinutes: number;
   deliveryConfig: DeliveryConfig | null;
   pixReceiptConfig: PixReceiptConfig | null;
   /**
@@ -78,6 +80,8 @@ const DEFAULT_CONFIG: BusinessConfig = {
   contato: null,
   closedDays: [],
   weeklyHours: deriveWeeklyFromLegacy(null, null, null),
+  schedulingEnabled: true,
+  schedulingLeadTimeMinutes: 60,
   deliveryConfig: null,
   pixReceiptConfig: null,
   pixPayment: null,
@@ -361,13 +365,20 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
 
   let perfilRes = await supabase
     .from('empresa_perfil')
-    .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_pix_key_type`)
+    .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_pix_key_type, zelomenu_scheduling_enabled, zelomenu_scheduling_lead_time_minutes`)
     .eq('id', empresaId)
     .maybeSingle();
   if (perfilRes.error && isMissingColumnError(perfilRes.error, ['zelomenu_pix_key_type'])) {
     perfilRes = await supabase
       .from('empresa_perfil')
-      .select(`${PERFIL_BASE_COLUMNS}, horario_semanal`)
+      .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_scheduling_enabled, zelomenu_scheduling_lead_time_minutes`)
+      .eq('id', empresaId)
+      .maybeSingle();
+  }
+  if (perfilRes.error && isMissingColumnError(perfilRes.error, ['zelomenu_scheduling_enabled', 'zelomenu_scheduling_lead_time_minutes'])) {
+    perfilRes = await supabase
+      .from('empresa_perfil')
+      .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_pix_key_type`)
       .eq('id', empresaId)
       .maybeSingle();
   }
@@ -396,6 +407,8 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     timezone?: string | null;
     chave_pix?: string | null;
     zelomenu_pix_key_type?: string | null;
+    zelomenu_scheduling_enabled?: boolean | null;
+    zelomenu_scheduling_lead_time_minutes?: number | null;
   };
 
   const userId = normalizeText(row.user_id);
@@ -559,6 +572,10 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     closeTime,
     closedDays,
     weeklyHours,
+    schedulingEnabled: row.zelomenu_scheduling_enabled !== false,
+    schedulingLeadTimeMinutes: row.zelomenu_scheduling_lead_time_minutes != null
+      ? Math.max(0, Math.trunc(Number(row.zelomenu_scheduling_lead_time_minutes)))
+      : 60,
     timezone: normalizeText(row.timezone) || undefined,
     deliveryConfig: normalizeDeliveryConfig(row.delivery_config),
     pixReceiptConfig: normalizePixReceiptConfig(row.pix_receipt_config),

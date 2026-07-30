@@ -331,6 +331,12 @@ type PublicBusinessHoursStatus = {
   todayWindows: { start: string; end: string }[];
   /** Próxima abertura (dentro de 7 dias), se houver. */
   nextOpen: { day: string; start: string } | null;
+  /** Agendamento: toggle + lead time (exposto ao frontend para validação). */
+  schedulingEnabled: boolean;
+  schedulingLeadTimeMinutes: number;
+  /** Mapa semanal completo de janelas (start/end apenas), para validação
+   * de qualquer data futura no frontend. Chaves: sun..sat. */
+  weeklySchedule: WeeklyHours;
 };
 
 export type PublicCartResponse = {
@@ -391,6 +397,8 @@ type ZeloMenuProfileRow = {
   chave_pix?: string | null;
   zelomenu_pix_key_type?: string | null;
   zelomenu_auto_accept_orders?: boolean;
+  zelomenu_scheduling_enabled?: boolean | null;
+  zelomenu_scheduling_lead_time_minutes?: number | null;
 };
 
 // `chave_pix` já existe (compartilhada com o ZeloChat) — entra direto no core.
@@ -406,8 +414,9 @@ const ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS =
 // tolerante a coluna ausente (mesmo tratamento das colunas de recomendação).
 const ZELOMENU_PROFILE_PIX_COLUMNS = 'zelomenu_pix_key_type';
 const ZELOMENU_PROFILE_ORDER_COLUMNS = 'zelomenu_auto_accept_orders';
+const ZELOMENU_PROFILE_SCHEDULING_COLUMNS = 'zelomenu_scheduling_enabled, zelomenu_scheduling_lead_time_minutes';
 const ZELOMENU_PROFILE_ALL_COLUMNS =
-  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_BRANDING_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}`;
+  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_BRANDING_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}, ${ZELOMENU_PROFILE_SCHEDULING_COLUMNS}`;
 
 function isMissingZeloMenuOptionalColumn(
   error: { code?: string; message?: string } | null,
@@ -421,7 +430,9 @@ function isMissingZeloMenuOptionalColumn(
     || message.includes('zelomenu_pix_key_type')
     || message.includes('zelomenu_auto_accept_orders')
     || message.includes('zelomenu_cover_url')
-    || message.includes('zelomenu_description');
+    || message.includes('zelomenu_description')
+    || message.includes('zelomenu_scheduling_enabled')
+    || message.includes('zelomenu_scheduling_lead_time_minutes');
 }
 
 /**
@@ -762,6 +773,9 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
   const label = openMinutes !== null && closeMinutes !== null
     ? `${publicMinutesLabel(openMinutes)}–${publicMinutesLabel(closeMinutes)}`
     : null;
+  const weeklySchedule = Object.fromEntries(
+    DAY_KEYS.map((k) => [k, config.weeklyHours[k].map((w) => ({ start: w.start, end: w.end }))]),
+  ) as WeeklyHours;
 
   // Modelo multi-janela: "aberto agora" vem de isOpenAt (respeita o vão do dia).
   if (hasAnyOpenWindow(config.weeklyHours)) {
@@ -779,11 +793,14 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
       nextOpen: status.nextOpen
         ? { day: FULL_DAY_LABELS[status.nextOpen.day] || status.nextOpen.day, start: status.nextOpen.start }
         : null,
+      schedulingEnabled: config.schedulingEnabled,
+      schedulingLeadTimeMinutes: config.schedulingLeadTimeMinutes,
+      weeklySchedule,
     };
   }
 
   // Legado single-window (comportamento idêntico ao anterior).
-  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone, todayWindows: [], nextOpen: null };
+  if (openMinutes === null || closeMinutes === null) return { configured: false, openNow: true, label: null, closedDays: config.closedDays ?? [], timezone, todayWindows: [], nextOpen: null, schedulingEnabled: config.schedulingEnabled, schedulingLeadTimeMinutes: config.schedulingLeadTimeMinutes, weeklySchedule };
   const now = new Date();
   const weekday = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, weekday: 'short' }).format(now).toLowerCase().replace(/\./g, '');
   const dayMap: Record<string, string> = { dom: 'Dom', seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', 'sáb': 'Sáb' };
@@ -802,6 +819,9 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
     timezone: timezone,
     todayWindows: [],
     nextOpen: null,
+    schedulingEnabled: config.schedulingEnabled,
+    schedulingLeadTimeMinutes: config.schedulingLeadTimeMinutes,
+    weeklySchedule,
   };
 }
 
@@ -1478,6 +1498,8 @@ export type ZeloMenuStoreSettings = {
   pixReceiptVerificationEnabled: boolean;
   weeklyHours: WeeklyHours;
   timezone: string | null;
+  schedulingEnabled: boolean;
+  schedulingLeadTimeMinutes: number;
 };
 
 export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
@@ -1520,12 +1542,14 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     pixReceiptVerificationEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
     weeklyHours: config.weeklyHours,
     timezone: config.timezone ?? null,
+    schedulingEnabled: config.schedulingEnabled,
+    schedulingLeadTimeMinutes: config.schedulingLeadTimeMinutes,
   };
 }
 
 export async function updateZeloMenuStoreSettings(
   empresaId: string,
-  patch: Partial<Pick<ZeloMenuStoreSettings, 'logoUrl' | 'coverUrl' | 'description' | 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType' | 'autoAcceptOrders' | 'weeklyHours'>>,
+  patch: Partial<Pick<ZeloMenuStoreSettings, 'logoUrl' | 'coverUrl' | 'description' | 'welcomeText' | 'featuredEnabled' | 'featuredProductIds' | 'recommendationsEnabled' | 'recommendationProductIds' | 'categorySuggestions' | 'categoryOrder' | 'pixKey' | 'pixKeyType' | 'autoAcceptOrders' | 'weeklyHours' | 'schedulingEnabled' | 'schedulingLeadTimeMinutes'>>,
 ): Promise<void> {
   const coreUpdate: Record<string, unknown> = {};
   const brandingUpdate: Record<string, unknown> = {};
@@ -1554,6 +1578,16 @@ export async function updateZeloMenuStoreSettings(
     hoursUpdate.dias_fechamento = legacy.closedDays;
   }
 
+  const schedulingUpdate: Record<string, unknown> = {};
+  if ('schedulingEnabled' in patch) {
+    schedulingUpdate.zelomenu_scheduling_enabled = Boolean(patch.schedulingEnabled);
+  }
+  if ('schedulingLeadTimeMinutes' in patch) {
+    const val = Math.trunc(Number(patch.schedulingLeadTimeMinutes));
+    if (val < 0 || val > 10080 || !Number.isFinite(val)) throw new Error('SCHEDULING_LEAD_TIME_INVALID');
+    schedulingUpdate.zelomenu_scheduling_lead_time_minutes = val;
+  }
+
   // Chave Pix + tipo são salvos juntos (o admin manda os dois no mesmo save do
   // formulário). Chave vazia limpa a chave e o tipo. Chave não-vazia exige um
   // tipo válido para ELA — é o que resolve a ambiguidade dos 11 dígitos crus
@@ -1578,7 +1612,7 @@ export async function updateZeloMenuStoreSettings(
   }
 
   const supabase = getServiceSupabase();
-  const update = { ...coreUpdate, ...brandingUpdate, ...recommendationUpdate, ...orderUpdate, ...hoursUpdate };
+  const update = { ...coreUpdate, ...brandingUpdate, ...recommendationUpdate, ...orderUpdate, ...schedulingUpdate, ...hoursUpdate };
   if (Object.keys(update).length === 0) return;
 
   const { error } = await supabase.from('empresa_perfil').update(update).eq('id', empresaId);
@@ -1877,7 +1911,11 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
         );
       }
     } else {
-      // Agendado — validate pickup time against business hours
+      // Agendado — validate scheduling toggle, lead time, and windows
+      if (config.schedulingEnabled === false) {
+        throw new Error('SCHEDULING_DISABLED:Agendamento não está disponível para esta loja.');
+      }
+
       const pickupTime = current.fulfillment.pickupTime;
       const pickupDate = current.fulfillment.pickupDate;
       const pickupMinutes = parseBusinessTime(pickupTime);
@@ -1895,7 +1933,23 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
         }
       }
 
-      if (useWeekly) {
+      // Check lead time: pickup must be at least leadTimeMinutes from now
+      if (config.schedulingLeadTimeMinutes > 0 && typeof pickupDate === 'string' && pickupTime) {
+        const leadMs = config.schedulingLeadTimeMinutes * 60_000;
+        const leadBoundary = new Date(Date.now() + leadMs);
+        if (isPickupInPast(pickupDate, pickupTime, timezone, leadBoundary)) {
+          const leadHours = Math.floor(config.schedulingLeadTimeMinutes / 60);
+          const leadMins = config.schedulingLeadTimeMinutes % 60;
+          const leadStr = leadHours > 0
+            ? (leadMins > 0 ? `${leadHours}h${leadMins}` : `${leadHours}h`)
+            : `${leadMins} min`;
+          throw new Error(
+            `PICKUP_LEAD_TIME:Este horário precisa ter pelo menos ${leadStr} de antecedência. Escolha um horário mais tarde.`
+          );
+        }
+      }
+
+  if (useWeekly) {
         // O horário de retirada precisa cair numa das janelas do DIA escolhido.
         // Isso rejeita corretamente um horário que caia no vão almoço→jantar
         // (o check single-window legado permitiria por engano).
@@ -2050,13 +2104,6 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
       p_idempotency_key: idempotencyKey,
       p_snapshots: buildCanonicalOrderSnapshots({
         empresaId: sessionRow.empresa_id,
-        source: sessionRow.context === 'table_order' ? 'mesa' : 'zelomenu',
-        tableContext: sessionRow.context === 'table_order'
-          ? {
-            mesaId: sessionRow.metadata?.mesa_id ?? null,
-            comandaId: sessionRow.metadata?.comanda_id ?? null,
-          }
-          : null,
         customer: current.customer,
         cart: revalidation.previewCart,
         fulfillment: current.fulfillment,

@@ -12,6 +12,7 @@ import type {
   ZeloMenuCartRevalidation,
 } from '../domain/zelomenuCartSchema';
 import { getPushClientId } from './pushNotifications.ts';
+import type { WeeklyHours } from '../domain/businessHours';
 
 export type { ZeloMenuModifierGroup };
 export type { ZeloMenuCartItem, ZeloMenuCartRevalidationIssue, ZeloMenuCartRevalidation };
@@ -49,6 +50,11 @@ export type ZeloMenuPublicBusinessHoursStatus = {
   todayWindows?: { start: string; end: string }[];
   /** Próxima abertura (dentro de 7 dias), se houver. */
   nextOpen?: { day: string; start: string } | null;
+  /** Agendamento: toggle + lead time */
+  schedulingEnabled: boolean;
+  schedulingLeadTimeMinutes: number;
+  /** Mapa semanal completo de janelas. Chaves: sun..sat. */
+  weeklySchedule: WeeklyHours;
 };
 
 // ─── Cart types ────────────────────────────────────────────────────────────────

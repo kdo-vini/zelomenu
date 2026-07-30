@@ -39,6 +39,8 @@ export type ZeloMenuStoreSettings = {
   pixReceiptVerificationEnabled: boolean;
   weeklyHours: WeeklyHours;
   timezone: string | null;
+  schedulingEnabled: boolean;
+  schedulingLeadTimeMinutes: number;
 };
 
 export type ZeloMenuSettingsPatch = {
@@ -56,6 +58,8 @@ export type ZeloMenuSettingsPatch = {
   pixKeyType?: PixKeyType | null;
   autoAcceptOrders?: boolean;
   weeklyHours?: WeeklyHours;
+  schedulingEnabled?: boolean;
+  schedulingLeadTimeMinutes?: number;
 };
 
 export type DeliveryQuoteRequestSummary = {

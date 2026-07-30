@@ -45,10 +45,14 @@ import {
 import { resolveOrderStatus } from '../domain/zelomenuOrderStatus';
 import {
   businessDayLabel,
-  isBusinessWindowOpen,
-  isPickupInPast,
   parseBusinessTime,
 } from '../domain/zelomenuBusinessHours';
+import {
+  validateScheduling,
+  resolveEarliestPickup,
+  availablePickupSlots,
+} from '../domain/zelomenuScheduling';
+import type { DayKey } from '../domain/businessHours';
 import {
   firstZeloMenuCheckoutError,
   validateZeloMenuCheckoutDetails,
@@ -59,6 +63,7 @@ import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
 import { loadZeloMenuCustomerCache, saveZeloMenuCustomerCache } from '../domain/zelomenuCustomerCache';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
 import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
+import { ZeloMenuScheduleCalendar } from '../components/zelomenu/ZeloMenuScheduleCalendar';
 import { PushNotificationButton } from '../components/home/PushNotificationButton';
 import { resolveCheckoutSuggestions } from '../domain/zelomenuRecommendations';
 import { ToastProvider, useToast } from '../contexts/ToastContext';
@@ -633,11 +638,11 @@ function ZeloMenuCartPageContent() {
   const isWaitingPayment = payload?.session.state === 'confirmed_waiting_payment';
   const orderStatus = payload?.order?.status ?? (isWaitingPayment ? 'pending_payment' : 'pending_review');
 
-  // ── Auto-switch to scheduled mode when store is closed but accepts scheduling ──
+  // ── Auto-switch to scheduled mode when store is closed but scheduling is on ──
   useEffect(() => {
     const bh = payload?.business?.businessHours;
     if (!bh || !isOpen || isConfirmed) return;
-    if (scheduleMode === 'asap' && bh.configured === true && bh.openNow === false) {
+    if (scheduleMode === 'asap' && bh.configured === true && bh.openNow === false && bh.schedulingEnabled === true) {
       const canSchedule = bh.nextOpen || (Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0);
       if (canSchedule) {
         setScheduleMode('scheduled');
@@ -667,87 +672,35 @@ function ZeloMenuCartPageContent() {
 
   const validateDetails = (): string | null => firstZeloMenuCheckoutError(detailErrors);
 
-  // ── Business hours validation (frontend) ──────────────────────────────────
-  const scheduleTimeError: string | null = useMemo(() => {
+  // ── Earliest eligible pickup, recomputed on business hours change ───────
+  const earliestPickup = useMemo(() => {
     const bh = payload?.business?.businessHours;
-    if (!bh || !bh.configured || !bh.label) return null;
+    if (!bh || !bh.configured) return null;
+    const tz = bh.timezone || 'America/Sao_Paulo';
+    return resolveEarliestPickup(
+      bh.weeklySchedule,
+      { enabled: bh.schedulingEnabled, leadTimeMinutes: bh.schedulingLeadTimeMinutes },
+      tz,
+      new Date(),
+    );
+  }, [payload?.business?.businessHours]);
 
-    const hasWindows = Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0;
-
-    // "Pra já" — check if store is currently open
-    if (scheduleMode === 'asap') {
-      if (bh.openNow === false) {
-        const canSchedule = bh.nextOpen || (Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0);
-        if (canSchedule) {
-          // Don't block — user should switch to scheduled mode via "Agendar retirada"
-          return null;
-        }
-        return `Loja fechada agora${bh.nextOpen ? `. Próximo horário: ${bh.nextOpen.day} às ${bh.nextOpen.start}.` : '.'}`;
-      }
-      return null;
+  // ── Available hour/minute slots for the selected date ──────────────────
+  const availableSlots = useMemo(() => {
+    if (scheduleMode !== 'scheduled' || !draft?.pickupDate) return null;
+    const bh = payload?.business?.businessHours;
+    const lbl = businessDayLabel(draft.pickupDate);
+    if (!bh || !lbl) return null;
+    const map: Record<string, DayKey> = { Dom: 'sun', Seg: 'mon', Ter: 'tue', Qua: 'wed', Qui: 'thu', Sex: 'fri', Sáb: 'sat' };
+    const dayKey = map[lbl];
+    if (!dayKey) return null;
+    let mm = 0;
+    if (earliestPickup && draft.pickupDate === earliestPickup.date) {
+      const p = parseBusinessTime(earliestPickup.time);
+      if (p !== null) mm = p;
     }
-
-    if (!draft) return null;
-    if (!draft.pickupTime || !draft.pickupDate) return null;
-
-    // Multi-janela: valida contra as janelas reais do dia selecionado
-    if (hasWindows) {
-      const dayLabel = businessDayLabel(draft.pickupDate);
-      if (!dayLabel) return null;
-      const closedDays = bh.closedDays ?? [];
-      if (closedDays.includes(dayLabel)) {
-        return `A loja não funciona aos ${dayLabel.toLowerCase() === 'dom' ? 'domingos' : dayLabel.toLowerCase() + 's'}. Escolha outro dia.`;
-      }
-      const pickupMinutes = parseBusinessTime(draft.pickupTime);
-      if (pickupMinutes === null) return null;
-      // Checa se cai em pelo menos uma das janelas de hoje (aproximação:
-      // para dias diferentes o servidor valida com precisão no confirm).
-      const inApproxWindow = bh.todayWindows!.some((w) => {
-        const open = parseBusinessTime(w.start);
-        const close = parseBusinessTime(w.end);
-        if (open === null || close === null) return false;
-        return isBusinessWindowOpen(pickupMinutes, open, close);
-      });
-      if (!inApproxWindow) {
-        const windowsStr = bh.todayWindows!.map((w) => `${w.start}–${w.end}`).join(' e ');
-        return `Horário fora do funcionamento da loja (hoje: ${windowsStr}).`;
-      }
-    } else {
-      // Legado single-window — valida contra o label lossy
-      const parts = bh.label.split('–');
-      if (parts.length !== 2) return null;
-      const [openStr, closeStr] = parts.map((s: string) => s.trim());
-      if (!openStr || !closeStr) return null;
-
-      const pickupMinutes = parseBusinessTime(draft.pickupTime);
-      const openMinutes = parseBusinessTime(openStr);
-      const closeMinutes = parseBusinessTime(closeStr);
-      if (
-        pickupMinutes === null
-        || openMinutes === null
-        || closeMinutes === null
-        || !isBusinessWindowOpen(pickupMinutes, openMinutes, closeMinutes)
-      ) {
-        return `Horário fora do funcionamento da loja (${bh.label}).`;
-      }
-    }
-
-    const storeTz = bh.timezone || 'America/Sao_Paulo';
-    if (isPickupInPast(draft.pickupDate, draft.pickupTime, storeTz)) {
-      return 'Horário de retirada já passou. Escolha um horário futuro.';
-    }
-
-    // Weekly closed days apply to the selected civil date.
-    const closedDays = bh.closedDays;
-    if (closedDays && closedDays.length > 0) {
-      const mapped = businessDayLabel(draft.pickupDate);
-      if (mapped && closedDays.includes(mapped)) {
-        return `A loja não funciona aos ${mapped.toLowerCase() === 'dom' ? 'domingos' : mapped.toLowerCase() + 's'}. Escolha outro dia.`;
-      }
-    }
-
-    return null;
-  }, [payload?.business?.businessHours, scheduleMode, draft?.pickupTime, draft?.pickupDate, payload?.business?.businessHours?.timezone]);
+    return availablePickupSlots(bh.weeklySchedule, dayKey, mm);
+  }, [scheduleMode, draft?.pickupDate, payload?.business?.businessHours, earliestPickup]);
 
   const deliveryQuoteState = resolveDeliveryQuoteUiState(draft, payload, saveStatus === 'error');
   const deliveryQuoteModalOpen = deliveryQuoteState === 'calculating' && saveStatus === 'saving';
@@ -755,7 +708,6 @@ function ZeloMenuCartPageContent() {
   const canConfirm = isOpen
     && !isStale
     && (draft?.items.length ?? 0) > 0
-    && !scheduleTimeError
     && deliveryQuoteReady;
 
   const autosavePayload = useMemo(
@@ -895,12 +847,6 @@ function ZeloMenuCartPageContent() {
         toast.error(validationError);
         return;
       }
-    }
-    if (scheduleTimeError) {
-      setShowErrors(true);
-      setStep(1);
-      toast.error(scheduleTimeError);
-      return;
     }
     try {
       setConfirming(true);
@@ -1116,8 +1062,22 @@ function ZeloMenuCartPageContent() {
 
   const enableScheduled = () => {
     if (scheduleMode === 'asap') {
-      updateField('pickupDate', '');
-      updateField('pickupTime', '');
+      // Set first eligible date/time based on business hours
+      const bh = payload?.business?.businessHours;
+      if (bh && bh.configured) {
+        const tz = bh.timezone || 'America/Sao_Paulo';
+        const earliest = resolveEarliestPickup(
+          bh.weeklySchedule,
+          { enabled: bh.schedulingEnabled, leadTimeMinutes: bh.schedulingLeadTimeMinutes },
+          tz,
+          new Date(),
+        );
+        updateField('pickupDate', earliest.date);
+        updateField('pickupTime', earliest.time);
+      } else {
+        updateField('pickupDate', '');
+        updateField('pickupTime', '');
+      }
     }
     setScheduleMode('scheduled');
   };
@@ -1987,39 +1947,95 @@ function ZeloMenuCartPageContent() {
                           {isDelivery ? 'Entrega o quanto antes.' : 'Retirada o quanto antes.'} Data e horário serão preenchidos automaticamente. É uma encomenda para outro momento? Toque em <span className="font-semibold text-[var(--zm-ink-soft)]">Agendar</span>.
                         </p>
                       ) : (
-                        <div className="grid grid-cols-2 gap-3">
-                          <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>{isDelivery ? 'Data da entrega' : 'Data da retirada'} {requiredMark}</span>
-                            <input
-                              type="date"
-                              lang="pt-BR"
+                        <div className="flex flex-col gap-3">
+                          {/* Custom monthly calendar */}
+                          <div className="rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3">
+                            <ZeloMenuScheduleCalendar
                               value={draft.pickupDate}
-                              onChange={(event) => updateField('pickupDate', event.target.value)}
-                              readOnly={!isOpen}
-                              required
-                              min={todayISOdate()}
-                              aria-invalid={showErrors && Boolean(detailErrors.pickupDate)}
-                              className={`${inputCls} ${showErrors && detailErrors.pickupDate ? invalidInputCls : ''}`}
+                              onChange={(date) => {
+                                const bh = payload?.business?.businessHours;
+                                if (draft?.pickupTime && bh?.configured) {
+                                  const tz = bh.timezone || 'America/Sao_Paulo';
+                                  const result = validateScheduling(
+                                    bh.weeklySchedule,
+                                    { enabled: bh.schedulingEnabled, leadTimeMinutes: bh.schedulingLeadTimeMinutes },
+                                    tz, date, draft.pickupTime, new Date(),
+                                  );
+                                  if (result.ok) {
+                                    updateField('pickupDate', date);
+                                  } else if (result.nextEligible) {
+                                    setDraft((c) => c
+                                      ? { ...c, pickupDate: result.nextEligible!.date, pickupTime: result.nextEligible!.time }
+                                      : c);
+                                  }
+                                } else {
+                                  updateField('pickupDate', date);
+                                }
+                              }}
+                              minDate={earliestPickup?.date ?? todayISOdate()}
+                              maxDaysAhead={90}
+                              isDayOpen={(date) => {
+                                const bh = payload?.business?.businessHours;
+                                if (!bh) return true;
+                                const lbl = businessDayLabel(date);
+                                if (!lbl) return false;
+                                if ((bh.closedDays ?? []).includes(lbl)) return false;
+                                if (bh.weeklySchedule) {
+                                  const LABEL_TO_KEY: Record<string, DayKey> = { Dom:'sun', Seg:'mon', Ter:'tue', Qua:'wed', Qui:'thu', Sex:'fri', Sáb:'sat' };
+                                  const key = LABEL_TO_KEY[lbl];
+                                  const ws = key ? bh.weeklySchedule[key] : undefined;
+                                  return !!ws && ws.length > 0;
+                                }
+                                return true;
+                              }}
+                              timezone={payload?.business?.businessHours?.timezone || 'America/Sao_Paulo'}
                             />
-                            {fieldError(detailErrors.pickupDate)}
-                          </label>
-                          <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>Horário {requiredMark}</span>
-                            <input
-                              type="time"
-                              lang="pt-BR"
-                              value={draft.pickupTime}
-                              onChange={(event) => updateField('pickupTime', event.target.value)}
-                              readOnly={!isOpen}
-                              required
-                              aria-invalid={Boolean((showErrors && detailErrors.pickupTime) || scheduleTimeError)}
-                              className={`${inputCls} ${(showErrors && detailErrors.pickupTime) || scheduleTimeError ? invalidInputCls : ''}`}
-                            />
-                            {fieldError(detailErrors.pickupTime)}
-                            {scheduleTimeError ? (
-                              <span role="alert" className="text-[11px] text-[var(--color-alert)]">{scheduleTimeError}</span>
-                            ) : null}
-                          </label>
+                          </div>
+
+                          <div className="flex gap-3">
+                            <label className="flex flex-1 flex-col gap-1.5">
+                              <span className={labelCls}>Hora {requiredMark}</span>
+                              <select
+                                value={draft.pickupTime ? Number(draft.pickupTime.split(':')[0]) : ''}
+                                onChange={(e) => {
+                                  const h = Number(e.target.value);
+                                  const m = availableSlots?.minutesByHour[h]?.[0] ?? 0;
+                                  updateField('pickupTime', `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                                }}
+                                disabled={!isOpen || !availableSlots}
+                                required
+                                className={`${inputCls} ${showErrors && detailErrors.pickupTime ? invalidInputCls : ''}`}
+                                style={{ minHeight: '44px' }}
+                                aria-label="Hora"
+                              >
+                                {availableSlots?.hours.map((h) => (
+                                  <option key={h} value={h}>{String(h).padStart(2, '0')}h</option>
+                                ))}
+                              </select>
+                              {fieldError(detailErrors.pickupTime)}
+                            </label>
+                            <label className="flex flex-1 flex-col gap-1.5">
+                              <span className={labelCls}>Minuto {requiredMark}</span>
+                              <select
+                                value={draft.pickupTime ? Number(draft.pickupTime.split(':')[1]) : ''}
+                                onChange={(e) => {
+                                  const [hourPart] = (draft.pickupTime ?? ':').split(':');
+                                  updateField('pickupTime', `${hourPart}:${String(Number(e.target.value)).padStart(2, '0')}`);
+                                }}
+                                disabled={!isOpen || !availableSlots}
+                                required
+                                className={`${inputCls} ${showErrors && detailErrors.pickupTime ? invalidInputCls : ''}`}
+                                style={{ minHeight: '44px' }}
+                                aria-label="Minuto"
+                              >
+                                {draft.pickupTime ? (
+                                  (availableSlots?.minutesByHour[Number(draft.pickupTime.split(':')[0])] ?? []).map((m) => (
+                                    <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
+                                  ))
+                                ) : null}
+                              </select>
+                            </label>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2171,15 +2187,6 @@ function ZeloMenuCartPageContent() {
                   </button>
                 ) : null}
               </div>
-              {scheduleTimeError ? (
-                <div className="mb-3 flex items-start gap-2 rounded-xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-3">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-[var(--color-alert)]" strokeWidth={1.8} />
-                  <div className="flex flex-col gap-1">
-                    <p className="text-[12px] font-semibold text-[var(--color-alert)]">Não é possível confirmar agora</p>
-                    <p className="text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">{scheduleTimeError}</p>
-                  </div>
-                </div>
-              ) : null}
               <div className="flex items-center gap-3">
                 <div className="flex flex-col leading-tight">
                   <span className="text-[11px] font-semibold text-[var(--zm-ink-soft)]">{isTableOrder || step === 0 ? 'Subtotal' : 'Total'}</span>

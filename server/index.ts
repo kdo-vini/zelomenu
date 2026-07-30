@@ -193,6 +193,8 @@ app.post('/api/public/zelomenu/cart/:token/confirm', confirmLimiter, async (req,
     if (message.startsWith('PICKUP_CLOSED_DAY:')) return res.status(400).json({ error: 'PICKUP_CLOSED_DAY', detail: message.slice('PICKUP_CLOSED_DAY:'.length) });
     if (message.startsWith('PICKUP_TIME_INVALID:')) return res.status(400).json({ error: 'PICKUP_TIME_INVALID', detail: message.slice('PICKUP_TIME_INVALID:'.length) });
     if (message.startsWith('PICKUP_IN_PAST:')) return res.status(400).json({ error: 'PICKUP_IN_PAST', detail: message.slice('PICKUP_IN_PAST:'.length) });
+    if (message.startsWith('SCHEDULING_DISABLED:')) return res.status(400).json({ error: 'SCHEDULING_DISABLED', detail: message.slice('SCHEDULING_DISABLED:'.length) });
+    if (message.startsWith('PICKUP_LEAD_TIME:')) return res.status(400).json({ error: 'PICKUP_LEAD_TIME', detail: message.slice('PICKUP_LEAD_TIME:'.length) });
     if (message === 'DELIVERY_FEE_CHANGED') return res.status(409).json({ error: 'DELIVERY_FEE_CHANGED' });
     if (message === 'COUPON_INVALID') return res.status(400).json({ error: 'COUPON_INVALID' });
     if (message === 'COUPON_EXPIRED') return res.status(400).json({ error: 'COUPON_EXPIRED' });
@@ -231,6 +233,7 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'CART_SESSION_NOT_OPEN') return void res.status(409).json({ error: 'CART_SESSION_NOT_OPEN' });
   if (message === 'DELIVERY_QUOTE_RESOLUTION_FAILED') return void res.status(503).json({ error: 'DELIVERY_QUOTE_RESOLUTION_FAILED' });
   if (message === 'INVALID_FEE') return void res.status(400).json({ error: 'INVALID_FEE' });
+  if (message === 'SCHEDULING_LEAD_TIME_INVALID') return void res.status(400).json({ error: 'SCHEDULING_LEAD_TIME_INVALID' });
   res.status(500).json({ error: 'INTERNAL_ERROR' });
 }
 
@@ -271,7 +274,7 @@ app.get('/api/admin/zelomenu/settings', async (req, res) => {
 app.patch('/api/admin/zelomenu/settings', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { logoUrl, coverUrl, description, welcomeText, featuredEnabled, featuredProductIds, recommendationsEnabled, recommendationProductIds, categorySuggestions, categoryOrder, pixKey, pixKeyType, autoAcceptOrders, weeklyHours } = req.body ?? {};
+    const { logoUrl, coverUrl, description, welcomeText, featuredEnabled, featuredProductIds, recommendationsEnabled, recommendationProductIds, categorySuggestions, categoryOrder, pixKey, pixKeyType, autoAcceptOrders, weeklyHours, schedulingEnabled, schedulingLeadTimeMinutes } = req.body ?? {};
     await updateZeloMenuStoreSettings(empresaId, {
       ...(logoUrl !== undefined && { logoUrl: typeof logoUrl === 'string' ? logoUrl.slice(0, 1000) : null }),
       ...(coverUrl !== undefined && { coverUrl: typeof coverUrl === 'string' ? coverUrl.slice(0, 1000) : null }),
@@ -287,6 +290,8 @@ app.patch('/api/admin/zelomenu/settings', async (req, res) => {
       ...(pixKeyType !== undefined && { pixKeyType: (typeof pixKeyType === 'string' && (PIX_KEY_TYPES as readonly string[]).includes(pixKeyType)) ? pixKeyType as PixKeyType : null }),
       ...(autoAcceptOrders !== undefined && { autoAcceptOrders: Boolean(autoAcceptOrders) }),
       ...(weeklyHours !== undefined && { weeklyHours }),
+      ...(schedulingEnabled !== undefined && { schedulingEnabled: Boolean(schedulingEnabled) }),
+      ...(schedulingLeadTimeMinutes !== undefined && { schedulingLeadTimeMinutes: Number(schedulingLeadTimeMinutes) }),
     });
     res.json({ ok: true });
   } catch (error) {
