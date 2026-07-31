@@ -241,7 +241,7 @@ function ZeloMenuStorePageContent({
   const outsideBusinessHours = businessHours?.configured === true && businessHours.openNow === false;
 
   return (
-    <div className="zelomenu-theme min-h-screen bg-[var(--zm-canvas)]" style={{ paddingBottom: 'max(7rem, calc(7rem + env(safe-area-inset-bottom)))' }}>
+    <div className="zelomenu-theme flex min-h-screen flex-col bg-[var(--zm-canvas)]">
 
       {/* ── Mesa banner ────────────────────────────────────────────────────── */}
       {mesaBanner ? (
@@ -346,7 +346,7 @@ function ZeloMenuStorePageContent({
       </header>
 
       {/* ── Catalog body ──────────────────────────────────────────────────── */}
-      <main className="mx-auto max-w-5xl px-4 pb-28 pt-5">
+      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-28 pt-5">
 
         {/* Mesa unavailability notice */}
         {mesaUnavailableMessage ? (

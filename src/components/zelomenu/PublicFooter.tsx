@@ -13,15 +13,7 @@ export function PublicFooter() {
         </a>
       </p>
       <p className="mt-1">
-        Desenvolvido por{' '}
-        <a
-          href="https://techneia.com.br"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-semibold text-[var(--color-brand-deep)] hover:underline"
-        >
-          Techne
-        </a>
+        Feito com <span role="img" aria-label="amor">💜</span> © {new Date().getFullYear()}
       </p>
     </footer>
   );
