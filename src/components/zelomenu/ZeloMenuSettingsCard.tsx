@@ -21,7 +21,9 @@ const MAX_DESCRIPTION = 180;
 //
 // (zelochat wrapped this in a shared <SectionCard>; this app has no such
 // component, so the icon+title header is inlined to match the look.)
-export function ZeloMenuSettingsCard() {
+export type ZeloMenuSettingsTab = 'visual' | 'highlights';
+
+export function ZeloMenuSettingsCard({ activeTab = 'visual' }: { activeTab?: ZeloMenuSettingsTab }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -211,6 +213,8 @@ export function ZeloMenuSettingsCard() {
       <div className="p-5">
         <div className="space-y-6">
 
+          {activeTab === 'visual' ? (
+            <>
           {/* ── Public business card identity ── */}
           <div>
             <div className="mb-3">
@@ -345,6 +349,9 @@ export function ZeloMenuSettingsCard() {
             </p>
           </div>
 
+            </>
+          ) : (
+            <>
           {/* ── Featured products ── */}
           <div>
             <div className="mb-3 flex items-center justify-between">
@@ -744,6 +751,9 @@ export function ZeloMenuSettingsCard() {
               </Reorder.Group>
             </div>
           ) : null}
+
+            </>
+          )}
 
           {/* ── Save ── */}
           {error ? (

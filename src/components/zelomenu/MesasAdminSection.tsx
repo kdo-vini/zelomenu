@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { QrCode } from 'lucide-react';
+import { ExternalLink, QrCode } from 'lucide-react';
 import { listMesasAdmin, type MesaRow } from '../../services/zelomenuAdminApi';
 
 interface Props {
   slug: string;
 }
+
+const ZELOPDV_TABLES_URL = 'https://zelopdv.com.br/gestao/mesas';
 
 // "Mesas & QR Codes" admin card. Lists the store's tables (fetched from the
 // admin API) and lets the owner download a QR code PNG for each table.
@@ -59,9 +61,20 @@ export function MesasAdminSection({ slug }: Props) {
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]">
-      <div className="flex items-center gap-2 border-b border-[var(--color-line)] px-5 py-4">
-        <QrCode className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
-        <h3 className="text-[14px] font-semibold text-[var(--color-ink)]">Mesas &amp; QR Codes</h3>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-line)] px-5 py-4">
+        <div className="flex items-center gap-2">
+          <QrCode className="h-4 w-4 text-[var(--color-ink-muted)]" strokeWidth={1.8} />
+          <h3 className="text-[14px] font-semibold text-[var(--color-ink)]">Mesas &amp; QR Codes</h3>
+        </div>
+        <a
+          href={ZELOPDV_TABLES_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40"
+        >
+          Gerenciar no ZeloPDV
+          <ExternalLink className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+        </a>
       </div>
 
       <div className="p-5">
@@ -71,8 +84,7 @@ export function MesasAdminSection({ slug }: Props) {
           <p className="text-[13px] text-[var(--color-alert)]">{error}</p>
         ) : mesas.length === 0 ? (
           <p className="text-[13px] text-[var(--color-ink-muted)]">
-            Nenhuma mesa cadastrada. Gerencie suas mesas no{' '}
-            <strong>ZeloPDV → Gestão → Mesas</strong>.
+            Nenhuma mesa cadastrada. Use o botão acima para cadastrar suas mesas no ZeloPDV.
           </p>
         ) : (
           <div className="space-y-4">

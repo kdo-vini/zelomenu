@@ -1,27 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Search, Check, ChevronLeft, ChevronRight, ExternalLink, Globe2, Loader2, Sparkles, X } from 'lucide-react';
-import { motion, useMotionValue, useTransform } from 'motion/react';
-import { useId } from 'react';
+import { useEffect, useState, useId, type FormEvent, type ReactNode } from 'react';
+import { Check, Globe2, Loader2, X } from 'lucide-react';
 import { ConfirmModal } from '../../ConfirmModal';
 import { Modal } from '../../Modal';
-import { ImageCropField } from '../../zelomenu/ImageCropField';
 import type {
   Categoria,
   Subcategoria,
   ProdutoRow,
   ZeloMenuModifierGroupRow,
-  ZeloMenuProductPublicationInput,
-  ZeloMenuProductPublicationRow,
   CategoriaInput,
   SubcategoriaInput,
-  ProdutoInput,
 } from '../../../hooks/useCatalog';
-import {
-  validateModifierGroupDrafts,
-  type ZeloMenuModifierGroupDraft,
-  type ZeloMenuModifierGroupKind,
-  type ZeloMenuModifierOptionDraft,
-} from '../../../domain/zelomenuModifiers';
+import type { ZeloMenuModifierGroupDraft } from '../../../domain/zelomenuModifiers';
 
 type ModalShellProps = {
   title: string;
@@ -31,7 +20,7 @@ type ModalShellProps = {
   wide?: boolean;
 };
 
-function ModalShell({ title, subtitle, onClose, children, wide = false }: ModalShellProps) {
+export function ModalShell({ title, subtitle, onClose, children, wide = false }: ModalShellProps) {
   const titleId = useId();
 
   return (
@@ -52,7 +41,7 @@ function ModalShell({ title, subtitle, onClose, children, wide = false }: ModalS
       </div>
 
       {/* Sticky header */}
-      <div className="flex items-start justify-between gap-4 border-b border-[var(--color-line)] px-5 pb-4 pt-3 sm:pt-4">
+      <div className="relative z-30 flex shrink-0 items-start justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-surface)] px-5 pb-4 pt-3 sm:pt-4">
         <div className="min-w-0">
           <h3 id={titleId} className="text-[17px] font-bold leading-tight text-[var(--color-ink)] sm:text-base">
             {title}
@@ -83,15 +72,22 @@ type ActionBarProps = {
   loading?: boolean;
   disabled?: boolean;
   destructive?: boolean;
+  saveStatus?: 'idle' | 'saving' | 'saved' | 'error';
+  dirty?: boolean;
 };
 
-function ActionBar({ onCancel, submitLabel, loading, disabled, destructive }: ActionBarProps) {
+export function ActionBar({ onCancel, submitLabel, loading, disabled, destructive, saveStatus, dirty = false }: ActionBarProps) {
   return (
     // Pinned to the bottom of the scroll area: on mobile the primary action is
     // always reachable with the thumb. Full-width buttons on mobile, right-
     // aligned auto-width on sm+. Reversed DOM order so primary sits on the
     // right on desktop while staying first (bottom-most = easiest reach) on mobile.
     <div className="sticky bottom-0 -mx-5 -mb-5 mt-6 flex flex-col-reverse gap-2 border-t border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4 sm:flex-row sm:justify-end sm:py-3">
+      {(saveStatus && (dirty || saveStatus !== 'idle')) ? (
+        <div className="flex min-h-[44px] items-center sm:mr-auto">
+          <SaveIndicator status={saveStatus} dirty={dirty} />
+        </div>
+      ) : <span className="hidden sm:block sm:mr-auto" />}
       <button
         type="button"
         onClick={onCancel}
@@ -114,9 +110,9 @@ function ActionBar({ onCancel, submitLabel, loading, disabled, destructive }: Ac
   );
 }
 
-const LABEL_CLS = 'block text-[13px] font-semibold text-[var(--color-ink-soft)] mb-1.5';
+export const LABEL_CLS = 'block text-[13px] font-semibold text-[var(--color-ink-soft)] mb-1.5';
 // 16px on mobile prevents iOS Safari from zooming the viewport on focus.
-const INPUT_CLS =
+export const INPUT_CLS =
   'w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-3.5 py-2.5 text-base text-[var(--color-ink)] placeholder:text-[var(--color-ink-faint)] transition-colors focus:border-[var(--color-brand)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/20 sm:text-sm';
 
 // ---------- Categoria ----------
@@ -279,639 +275,7 @@ export function SubcategoriaModal({
   );
 }
 
-// ---------- Produto ----------
-type ProductModalProps = {
-  open: boolean;
-  initial?: ProdutoRow | null;
-  defaultCategoriaId?: number | null;
-  defaultSubcategoriaId?: number | null;
-  categorias: Categoria[];
-  subcategorias: Subcategoria[];
-  onClose: () => void;
-  onSubmit: (patch: ProdutoInput) => Promise<void>;
-};
-
-export function ProductModal({
-  open,
-  initial,
-  defaultCategoriaId,
-  defaultSubcategoriaId,
-  categorias,
-  subcategorias,
-  onClose,
-  onSubmit,
-}: ProductModalProps) {
-  const [nome, setNome] = useState('');
-  const [precoStr, setPrecoStr] = useState('');
-  const [idCategoria, setIdCategoria] = useState<number | ''>('');
-  const [idSubcategoria, setIdSubcategoria] = useState<number | ''>('');
-  const [ocultar, setOcultar] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setNome(initial?.nome ?? '');
-      setPrecoStr(initial ? formatPrecoInput(initial.preco) : '');
-      setIdCategoria(initial?.id_categoria ?? defaultCategoriaId ?? '');
-      setIdSubcategoria(initial?.id_subcategoria ?? defaultSubcategoriaId ?? '');
-      setOcultar(initial?.ocultar_no_pdv ?? false);
-      setErr(null);
-    }
-  }, [open, initial, defaultCategoriaId, defaultSubcategoriaId]);
-
-  if (!open) return null;
-
-  const subcategoriasFiltered = subcategorias.filter((s) => (idCategoria ? s.id_categoria === Number(idCategoria) : true));
-
-  const handleCategoriaChange = (v: string) => {
-    const newId = v === '' ? '' : Number(v);
-    setIdCategoria(newId);
-    // Reset subcategoria if it no longer belongs
-    if (idSubcategoria && newId) {
-      const stillValid = subcategorias.some((s) => s.id === idSubcategoria && s.id_categoria === newId);
-      if (!stillValid) setIdSubcategoria('');
-    } else if (!newId) {
-      setIdSubcategoria('');
-    }
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const trimmed = nome.trim();
-    if (!trimmed) {
-      setErr('Informe o nome do produto.');
-      return;
-    }
-    const preco = parsePrecoInput(precoStr);
-    if (Number.isNaN(preco) || preco < 0) {
-      setErr('Informe um preço válido.');
-      return;
-    }
-    setLoading(true);
-    setErr(null);
-    try {
-      await onSubmit({
-        nome: trimmed,
-        preco,
-        id_categoria: idCategoria ? Number(idCategoria) : null,
-        id_subcategoria: idSubcategoria ? Number(idSubcategoria) : null,
-        ocultar_no_pdv: ocultar,
-      });
-      onClose();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Erro ao salvar.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <ModalShell
-      title={initial ? 'Editar produto' : 'Novo produto'}
-      subtitle="Cadastro rápido — a IA usa esses dados para responder clientes."
-      onClose={onClose}
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className={LABEL_CLS}>Nome</label>
-          <input
-            autoFocus
-            value={nome}
-            onChange={(e) => setNome(e.target.value)}
-            placeholder="Ex: X-Tudo, Coca-Cola 2L"
-            className={INPUT_CLS}
-          />
-        </div>
-
-        <div>
-          <label className={LABEL_CLS}>Preço (R$)</label>
-          <input
-            value={precoStr}
-            onChange={(e) => setPrecoStr(e.target.value)}
-            inputMode="decimal"
-            placeholder="0,00"
-            className={INPUT_CLS}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={LABEL_CLS}>Categoria</label>
-            <select
-              value={idCategoria}
-              onChange={(e) => handleCategoriaChange(e.target.value)}
-              className={INPUT_CLS}
-            >
-              <option value="">Sem categoria</option>
-              {categorias.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className={LABEL_CLS}>Subcategoria</label>
-            <select
-              value={idSubcategoria}
-              onChange={(e) => setIdSubcategoria(e.target.value === '' ? '' : Number(e.target.value))}
-              disabled={!idCategoria || subcategoriasFiltered.length === 0}
-              className={`${INPUT_CLS} disabled:cursor-not-allowed disabled:bg-[var(--color-surface-muted)] disabled:text-[var(--color-ink-faint)]`}
-            >
-              <option value="">Nenhuma</option>
-              {subcategoriasFiltered.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <label className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
-          <input
-            type="checkbox"
-            checked={ocultar}
-            onChange={(e) => setOcultar(e.target.checked)}
-            className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
-          />
-          Ocultar nos cardápios (produto fica inativo)
-        </label>
-
-        <div className="rounded-lg bg-[#F2F3F8] p-3 text-[12px] text-[var(--color-ink-soft)]">
-          Para detalhes avançados de estoque e imagens próprias, acesse o{' '}
-          <a
-            href="https://zelopdv.com.br"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 font-semibold text-[var(--color-brand-deep)] hover:underline"
-          >
-            ZeloPDV <ExternalLink className="h-3 w-3" />
-          </a>
-          .
-        </div>
-
-        {err && <p className="text-xs text-[var(--color-alert)]">{err}</p>}
-        <ActionBar onCancel={onClose} submitLabel={initial ? 'Salvar' : 'Criar produto'} loading={loading} />
-      </form>
-    </ModalShell>
-  );
-}
-
-// ---------- Publicação ZeloMenu ----------
-export type ProductPublicationModalProps = {
-  open: boolean;
-  product: ProdutoRow | null;
-  products: ProdutoRow[];
-  initial?: ZeloMenuProductPublicationRow | null;
-  modifierGroups: ZeloMenuModifierGroupRow[];
-  modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
-  uploadImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
-  deleteImage: (url: string | null | undefined) => Promise<void>;
-  onClose: () => void;
-  onNavigate: (product: ProdutoRow) => void;
-  onSavePublication: (
-    productId: number,
-    patch: ZeloMenuProductPublicationInput,
-  ) => Promise<ZeloMenuProductPublicationRow>;
-  onSaveModifierGroups: (
-    productId: number,
-    modifierGroups: ZeloMenuModifierGroupDraft[],
-  ) => Promise<ZeloMenuModifierGroupRow[]>;
-};
-
-export function ProductPublicationModal({
-  open,
-  product,
-  products,
-  initial,
-  modifierGroups,
-  modifierOptionProducts,
-  uploadImage,
-  deleteImage,
-  onClose,
-  onNavigate,
-  onSavePublication,
-  onSaveModifierGroups,
-}: ProductPublicationModalProps) {
-  const [visivelOnline, setVisivelOnline] = useState(false);
-  const [pausado, setPausado] = useState(false);
-  const [nomePublico, setNomePublico] = useState('');
-  const [descricaoPublica, setDescricaoPublica] = useState('');
-  const [fotoUrl, setFotoUrl] = useState('');
-  const [ordem, setOrdem] = useState('0');
-  const [groupsDraft, setGroupsDraft] = useState<ZeloMenuModifierGroupDraft[]>([]);
-  const [groupsDirty, setGroupsDirty] = useState(false);
-  const [fieldsDirty, setFieldsDirty] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [err, setErr] = useState<string | null>(null);
-  const [aiLoadingDesc, setAiLoadingDesc] = useState(false);
-  const hydratedProductRef = useRef<number | null>(null);
-  const queueRef = useRef<Promise<unknown>>(Promise.resolve());
-  const saveTokenRef = useRef(0);
-  const swipeRef = useRef({ startX: 0, startY: 0, dragging: false, suppressed: false });
-
-  // Tinder card animation state
-  const cardX = useMotionValue(0);
-  const cardRotate = useTransform(cardX, [-300, 0, 300], [-6, 0, 6]);
-  const cardScale = useTransform(cardX, [-300, 0, 300], [0.94, 1, 0.94]);
-  const cardOpacity = useTransform(cardX, [-250, 0, 250], [0.85, 1, 0.85]);
-
-  useEffect(() => {
-    if (!open) {
-      hydratedProductRef.current = null;
-      return;
-    }
-    if (!product || hydratedProductRef.current === product.id) return;
-    hydratedProductRef.current = product.id;
-    setVisivelOnline(initial?.visivel_online ?? false);
-    setPausado(initial?.pausado_manualmente ?? false);
-    setNomePublico(initial?.nome_publico ?? '');
-    setDescricaoPublica(initial?.descricao_publica ?? '');
-    setFotoUrl(initial?.foto_url ?? '');
-    setOrdem(String(initial?.ordem ?? 0));
-    setGroupsDraft(toModifierDrafts(modifierGroups, modifierOptionProducts));
-    setGroupsDirty(false);
-    setFieldsDirty(false);
-    setSaveStatus('idle');
-    setErr(null);
-    setAiLoadingDesc(false);
-    cardX.set(0);
-  }, [open, product, initial, modifierGroups, cardX]);
-
-  const enqueueSave = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
-    const token = ++saveTokenRef.current;
-    setSaveStatus('saving');
-    setErr(null);
-    const next = queueRef.current.catch(() => undefined).then(operation);
-    queueRef.current = next;
-    try {
-      const result = await next;
-      if (saveTokenRef.current === token) setSaveStatus('saved');
-      return result;
-    } catch (error) {
-      if (saveTokenRef.current === token) setSaveStatus('error');
-      setErr(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.');
-      throw error;
-    }
-  }, []);
-
-  const savePublication = useCallback((patch: ZeloMenuProductPublicationInput) => {
-    if (!product) return Promise.resolve(null);
-    return enqueueSave(() => onSavePublication(product.id, patch));
-  }, [enqueueSave, onSavePublication, product]);
-
-  if (!open || !product) return null;
-
-  const productId = product.id;
-  const productIndex = products.findIndex((entry) => entry.id === product.id);
-  const previousProduct = productIndex > 0 ? products[productIndex - 1] : null;
-  const nextProduct = productIndex >= 0 && productIndex < products.length - 1 ? products[productIndex + 1] : null;
-  const currentPhotoUrl = fotoUrl.trim() || null;
-
-  async function flushAll(): Promise<boolean> {
-    const parsedOrder = Number.parseInt(ordem, 10);
-    if (!Number.isFinite(parsedOrder) || parsedOrder < 0) {
-      setErr('Informe uma ordem válida.');
-      return false;
-    }
-    const trimmedFoto = fotoUrl.trim();
-    if (trimmedFoto && !/^https:\/\//i.test(trimmedFoto)) {
-      setErr('Use um link de foto começando com https://.');
-      return false;
-    }
-    const draftError = validateModifierGroupDrafts(groupsDraft);
-    if (draftError) {
-      setErr(draftError);
-      return false;
-    }
-    try {
-      await savePublication({
-          visivel_online: visivelOnline,
-          pausado_manualmente: visivelOnline ? pausado : false,
-          nome_publico: nomePublico,
-          descricao_publica: descricaoPublica,
-          foto_url: trimmedFoto || null,
-          ordem: parsedOrder,
-      });
-      if (groupsDirty) {
-        await enqueueSave(() => onSaveModifierGroups(productId, groupsDraft));
-        setGroupsDirty(false);
-      }
-      setFieldsDirty(false);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async function finish(action: () => void) {
-    if (await flushAll()) action();
-  }
-
-  async function navigateTo(target: ProdutoRow | null) {
-    if (!target) return;
-    await finish(() => onNavigate(target));
-  }
-
-  return (
-    <ModalShell
-      title={product.nome}
-      subtitle={products.length > 1 ? `Produto ${productIndex + 1} de ${products.length} · deslize para navegar` : 'Visibilidade no cardápio'}
-      onClose={() => void finish(onClose)}
-      wide
-    >
-      <div
-        className="space-y-5"
-        onPointerDown={(event) => {
-          swipeRef.current.startX = event.clientX;
-          swipeRef.current.startY = event.clientY;
-          swipeRef.current.dragging = true;
-          swipeRef.current.suppressed = false;
-        }}
-        onPointerMove={(event) => {
-          if (!swipeRef.current.dragging) return;
-          if (!swipeRef.current.suppressed) {
-            const target = event.target as HTMLElement;
-            const tag = target.tagName.toLowerCase();
-            if (['input', 'textarea', 'select', 'button', 'label'].includes(tag) || target.closest('label, button, [role="slider"]')) {
-              swipeRef.current.suppressed = true;
-              swipeRef.current.dragging = false;
-              cardX.set(0);
-              return;
-            }
-            // only start after 10px to avoid accidental triggers
-            if (Math.abs(event.clientX - swipeRef.current.startX) > 10) {
-              swipeRef.current.suppressed = true;
-            }
-          }
-          const deltaX = event.clientX - swipeRef.current.startX;
-          const deltaY = event.clientY - swipeRef.current.startY;
-          if (Math.abs(deltaX) < Math.abs(deltaY) * 1.2) {
-            cardX.set(0);
-            return;
-          }
-          cardX.set(deltaX);
-        }}
-        onPointerUp={(event) => {
-          swipeRef.current.dragging = false;
-          if (swipeRef.current.suppressed) {
-            cardX.set(0);
-            return;
-          }
-          const deltaX = event.clientX - swipeRef.current.startX;
-          const velocity = Math.abs(event.movementX);
-          if (Math.abs(deltaX) > 70 || velocity > 400) {
-            void navigateTo(deltaX > 0 ? previousProduct : nextProduct);
-          } else {
-            cardX.set(0);
-          }
-        }}
-        onPointerLeave={() => {
-          if (swipeRef.current.dragging) {
-            swipeRef.current.dragging = false;
-            cardX.set(0);
-          }
-        }}
-      >
-        <motion.div
-          style={{ x: cardX, rotate: cardRotate, scale: cardScale, opacity: cardOpacity }}
-          transition={{ type: 'spring', stiffness: 300, damping: 30, mass: 0.8 }}
-        >
-        <div className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-surface-muted)] p-2">
-          <button
-            type="button"
-            onClick={() => void navigateTo(previousProduct)}
-            disabled={!previousProduct || saveStatus === 'saving'}
-            className="flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface)] disabled:opacity-35"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            <span className="hidden sm:inline">Anterior</span>
-          </button>
-          <SaveIndicator status={saveStatus} dirty={fieldsDirty || groupsDirty} />
-          <button
-            type="button"
-            onClick={() => void navigateTo(nextProduct)}
-            disabled={!nextProduct || saveStatus === 'saving'}
-            className="flex min-h-[44px] items-center gap-1 rounded-lg px-3 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface)] disabled:opacity-35"
-          >
-            <span className="hidden sm:inline">Próximo</span>
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_260px]">
-          <div className="space-y-4">
-            <div className="sticky top-0 z-10 bg-[var(--color-surface)] -mx-5 px-5 pb-4 border-b border-[var(--color-line)] mb-4">
-              <p className="mb-2 text-[13px] font-bold text-[var(--color-ink)]">Visibilidade</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <ToggleCard
-                  checked={visivelOnline}
-                  title="Publicado no cardápio"
-                  description="Aparece no link quando estiver disponível."
-                  onChange={(checked) => {
-                    setVisivelOnline(checked);
-                    if (!checked) setPausado(false);
-                    setFieldsDirty(true);
-                  }}
-                />
-                <ToggleCard
-                  checked={pausado}
-                  disabled={!visivelOnline}
-                  title="Pausar temporariamente"
-                  description="Mantém configurado, mas esconde por enquanto."
-                  onChange={(checked) => {
-                    setPausado(checked);
-                    setFieldsDirty(true);
-                  }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className={LABEL_CLS}>Nome público</label>
-              <input
-                value={nomePublico}
-                onChange={(event) => {
-                  setNomePublico(event.target.value);
-                  setFieldsDirty(true);
-                }}
-                placeholder={product.nome}
-                className={INPUT_CLS}
-              />
-            </div>
-            <div className="group relative">
-              <div className="flex items-center justify-between">
-                <label className={LABEL_CLS}>Descrição pública</label>
-                <button
-                  type="button"
-                  disabled={aiLoadingDesc}
-                  onClick={() => {
-                    const name = nomePublico.trim() || product.nome;
-                    setAiLoadingDesc(true);
-                    import('../../../services/zelomenuAdminApi').then((m) =>
-                      m.generateZeloMenuProductDescription(name).then((t) => {
-                        setDescricaoPublica(t);
-                        setFieldsDirty(true);
-                        setAiLoadingDesc(false);
-                      }).catch(() => setAiLoadingDesc(false)),
-                    );
-                  }}
-                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-[var(--color-ink-faint)] opacity-0 transition-all hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-brand)] group-hover:opacity-100"
-                  aria-label="Gerar descrição com IA"
-                >
-                  {aiLoadingDesc ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  IA
-                </button>
-              </div>
-              <textarea
-                value={descricaoPublica}
-                onChange={(event) => {
-                  setDescricaoPublica(event.target.value);
-                  setFieldsDirty(true);
-                }}
-                placeholder="Ingredientes, tamanho ou detalhe importante para o cliente."
-                rows={3}
-                className={`${INPUT_CLS} min-h-24 resize-y`}
-              />
-            </div>
-
-            <div>
-              <label className={LABEL_CLS}>Foto do produto</label>
-              <ImageCropField
-                value={currentPhotoUrl}
-                busy={saveStatus === 'saving'}
-                onError={setErr}
-                onChange={async (file) => {
-                  const uploadedUrl = await enqueueSave(() => uploadImage(product.id, file, currentPhotoUrl));
-                  setFotoUrl(uploadedUrl);
-                  setFieldsDirty(true);
-                }}
-                onRemove={async () => {
-                  const previous = currentPhotoUrl;
-                  setFotoUrl('');
-                  setFieldsDirty(true);
-                  if (previous) await deleteImage(previous).catch(() => undefined);
-                }}
-              />
-              <p className="mt-2 text-[11px] text-[var(--color-ink-muted)]">
-                O recorte quadrado preenche melhor o card. “Imagem inteira” preserva o enquadramento original.
-              </p>
-            </div>
-
-            <div>
-              <label className={LABEL_CLS}>Link externo da foto</label>
-              <input
-                value={fotoUrl}
-                onChange={(event) => {
-                  setFotoUrl(event.target.value);
-                  setFieldsDirty(true);
-                }}
-                placeholder="https://..."
-                className={INPUT_CLS}
-              />
-            </div>
-
-            <div className="max-w-32">
-              <label className={LABEL_CLS}>Ordem</label>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                value={ordem}
-                onChange={(event) => {
-                  setOrdem(event.target.value);
-                  setFieldsDirty(true);
-                }}
-                className={INPUT_CLS}
-              />
-            </div>
-          </div>
-
-          <aside className="md:sticky md:top-0 md:self-start">
-            <p className="mb-2 text-xs font-semibold text-[var(--color-ink-muted)]">Prévia no cardápio</p>
-            <ProductCardPreview
-              product={product}
-              name={nomePublico.trim() || product.nome}
-              description={descricaoPublica.trim()}
-              photoUrl={currentPhotoUrl}
-            />
-          </aside>
-        </div>
-
-        <div className="space-y-3 rounded-xl bg-[var(--color-surface-muted)] p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-[var(--color-ink)]">Adicionais e variações</p>
-              <p className="text-xs text-[var(--color-ink-muted)]">Salvos ao clicar em "Salvar item", concluir ou trocar de produto.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setGroupsDraft((prev) => [...prev, createEmptyModifierGroup(prev.length)]);
-                setGroupsDirty(true);
-              }}
-              className="min-h-[44px] rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-white"
-            >
-              Novo grupo
-            </button>
-          </div>
-          {groupsDraft.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] px-3 py-4 text-center text-xs text-[var(--color-ink-muted)]">
-              Nenhum adicional ou variação configurado.
-            </p>
-          ) : groupsDraft.map((group, groupIndex) => (
-            <ModifierGroupEditor
-              key={group.id ?? `group-${groupIndex}`}
-              group={group}
-              products={products}
-              onChange={(nextGroup) => {
-                setGroupsDirty(true);
-                setGroupsDraft((prev) => prev.map((entry, index) => index === groupIndex ? nextGroup : entry));
-              }}
-              onDelete={() => {
-                setGroupsDirty(true);
-                setGroupsDraft((prev) => prev.filter((_, index) => index !== groupIndex));
-              }}
-            />
-          ))}
-        </div>
-
-        {err && <p className="text-xs text-[var(--color-alert)]">{err}</p>}
-        <div className="sticky bottom-0 -mx-5 -mb-5 flex items-center justify-between gap-3 border-t border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4">
-          <SaveIndicator status={saveStatus} dirty={fieldsDirty || groupsDirty} />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void flushAll()}
-              disabled={saveStatus === 'saving' || (!fieldsDirty && !groupsDirty)}
-              className="min-h-[44px] rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 text-sm font-semibold text-[var(--color-ink-soft)] hover:bg-white disabled:opacity-40"
-            >
-              Salvar item
-            </button>
-            <button
-              type="button"
-              onClick={() => void finish(onClose)}
-              disabled={saveStatus === 'saving'}
-              className="min-h-[44px] rounded-xl bg-[var(--color-brand)] px-6 text-sm font-semibold text-white hover:bg-[var(--color-brand-deep)] disabled:opacity-50"
-            >
-              Concluir
-            </button>
-          </div>
-        </div>
-      </motion.div>
-      </div>
-    </ModalShell>
-  );
-}
-
-function toModifierDrafts(
+export function toModifierDrafts(
   groups: ZeloMenuModifierGroupRow[],
   optionProducts: Record<string, { productId: number; priceOverride: number | null }>,
 ): ZeloMenuModifierGroupDraft[] {
@@ -941,23 +305,23 @@ function toModifierDrafts(
   }));
 }
 
-function SaveIndicator({ status, dirty }: { status: 'idle' | 'saving' | 'saved' | 'error'; dirty: boolean }) {
+export function SaveIndicator({ status, dirty }: { status: 'idle' | 'saving' | 'saved' | 'error'; dirty: boolean }) {
   if (status === 'saving') {
-    return <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-ink-muted)]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Salvando…</span>;
+    return <span aria-live="polite" className="inline-flex whitespace-nowrap items-center gap-1.5 text-xs font-medium text-[var(--color-ink-muted)]"><Loader2 className="h-3.5 w-3.5 animate-spin" />{'Salvando\u2026'}</span>;
   }
   if (status === 'error') {
-    return <span className="text-xs font-semibold text-[var(--color-alert)]">Não salvo</span>;
+    return <span aria-live="polite" className="whitespace-nowrap text-xs font-semibold text-[var(--color-alert)]">{'N\u00e3o salvo'}</span>;
   }
   if (dirty) {
-    return <span className="text-xs font-semibold text-[var(--color-ink-soft)]">Alterações não salvas</span>;
+    return <span aria-live="polite" className="whitespace-nowrap text-xs font-semibold text-[var(--color-ink-soft)]">{'Altera\u00e7\u00f5es n\u00e3o salvas'}</span>;
   }
   if (status === 'saved') {
-    return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-brand-deep)]"><Check className="h-3.5 w-3.5" /> Salvo</span>;
+    return <span aria-live="polite" className="inline-flex whitespace-nowrap items-center gap-1.5 text-xs font-semibold text-[var(--color-brand-deep)]"><Check className="h-3.5 w-3.5" /> Salvo</span>;
   }
   return null;
 }
 
-function ToggleCard({
+export function ToggleCard({
   checked,
   disabled = false,
   title,
@@ -987,7 +351,7 @@ function ToggleCard({
   );
 }
 
-function ProductCardPreview({
+export function ProductCardPreview({
   product,
   name,
   description,
@@ -1018,344 +382,8 @@ function ProductCardPreview({
   );
 }
 
-function ModifierGroupEditor({
-  group,
-  products,
-  onChange,
-  onDelete,
-}: {
-  group: ZeloMenuModifierGroupDraft;
-  products: ProdutoRow[];
-  onChange: (group: ZeloMenuModifierGroupDraft) => void;
-  onDelete: () => void;
-}) {
-  const updateGroup = (patch: Partial<ZeloMenuModifierGroupDraft>) => {
-    onChange({ ...group, ...patch });
-  };
-  const updateOption = (index: number, patch: Partial<ZeloMenuModifierOptionDraft>) => {
-    onChange({
-      ...group,
-      options: group.options.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)),
-    });
-  };
 
-  const [productPickerIndex, setProductPickerIndex] = useState<number | null>(null);
-  const [productSearch, setProductSearch] = useState('');
-  const pickerRef = useRef<HTMLDivElement>(null);
-
-  // Close picker on outside click
-  useEffect(() => {
-    if (productPickerIndex == null) return;
-    const handleClick = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setProductPickerIndex(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [productPickerIndex]);
-
-  const filteredProducts = products
-    .filter((p) => p.nome.toLowerCase().includes(productSearch.toLowerCase()))
-    .sort((a, b) => a.nome.localeCompare(b.nome));
-
-  return (
-    <div className="rounded-xl border border-[var(--color-line)] bg-white p-3">
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="space-y-1.5">
-          <span className={LABEL_CLS}>Nome do grupo</span>
-          <input
-            value={group.name}
-            onChange={(event) => updateGroup({ name: event.target.value })}
-            placeholder="Ex.: Escolha o recheio"
-            className={INPUT_CLS}
-          />
-        </label>
-
-        <label className="space-y-1.5">
-          <span className={LABEL_CLS}>Tipo</span>
-          <select
-            value={group.kind}
-            onChange={(event) => {
-              const nextKind = event.target.value as ZeloMenuModifierGroupKind;
-              updateGroup({
-                kind: nextKind,
-                allowsQuantity: nextKind !== 'adicional' ? false : group.allowsQuantity,
-                maxPerOption: nextKind !== 'adicional' ? null : group.maxPerOption,
-              });
-            }}
-            className={INPUT_CLS}
-          >
-            <option value="adicional">Adicional</option>
-            <option value="variacao">Variação</option>
-          </select>
-        </label>
-
-        <label className="space-y-1.5">
-          <span className={LABEL_CLS}>Mínimo</span>
-          <input
-            type="number"
-            min={0}
-            value={String(group.minSelections)}
-            onChange={(event) => updateGroup({ minSelections: Number(event.target.value || 0) })}
-            className={INPUT_CLS}
-          />
-        </label>
-
-        <label className="space-y-1.5">
-          <span className={LABEL_CLS}>Máximo</span>
-          <input
-            type="number"
-            min={1}
-            value={group.maxSelections == null ? '' : String(group.maxSelections)}
-            onChange={(event) => {
-              const next = event.target.value === '' ? null : Number(event.target.value || 1);
-              updateGroup({
-                maxSelections: next,
-                allowsQuantity: next === 1 ? false : group.allowsQuantity,
-                maxPerOption: next === 1 ? null : group.maxPerOption,
-              });
-            }}
-            className={INPUT_CLS}
-            placeholder="Sem limite"
-          />
-        </label>
-
-        <label className="space-y-1.5">
-          <span className={LABEL_CLS}>Preço do grupo</span>
-          <select
-            value={group.pricingMode}
-            onChange={(event) => {
-              const pricingMode = event.target.value as 'somar' | 'substituir';
-              updateGroup({
-                pricingMode,
-                // When switching to 'substituir', force max = 1
-                ...(pricingMode === 'substituir' ? { maxSelections: 1 } : {}),
-              });
-            }}
-            className={INPUT_CLS}
-          >
-            <option value="somar">Somar ao base</option>
-            <option value="substituir">Substituir o base</option>
-          </select>
-        </label>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
-          <input
-            type="checkbox"
-            checked={group.active}
-            onChange={(event) => updateGroup({ active: event.target.checked })}
-            className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
-          />
-          Grupo ativo no link
-        </label>
-
-        <label className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
-          <input
-            type="checkbox"
-            checked={group.allowsQuantity}
-            disabled={group.maxSelections === 1 || group.kind !== 'adicional'}
-            onChange={(event) => {
-              const on = event.target.checked;
-              if (on && (group.maxSelections === 1 || group.kind !== 'adicional')) return;
-              updateGroup({
-                allowsQuantity: on,
-                maxPerOption: on ? group.maxPerOption : null,
-              });
-            }}
-            className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-40"
-          />
-          Permite quantidade por opção (ex.: 2x, 3x)
-        </label>
-
-        <button
-          type="button"
-          onClick={onDelete}
-          className="rounded-lg px-2 py-1 text-xs font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
-        >
-          Remover grupo
-        </button>
-      </div>
-
-      {group.allowsQuantity ? (
-        <div className="mt-3">
-          <label className="space-y-1.5">
-            <span className={LABEL_CLS}>Máximo por opção</span>
-            <input
-              type="number"
-              min={1}
-              value={group.maxPerOption == null ? '' : String(group.maxPerOption)}
-              onChange={(event) => updateGroup({
-                maxPerOption: event.target.value === '' ? null : Number(event.target.value || 1),
-              })}
-              className={INPUT_CLS + ' max-w-[140px]'}
-              placeholder="Sem limite"
-            />
-          </label>
-        </div>
-      ) : null}
-
-      <div className="mt-4 space-y-2">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">Opções</p>
-          <button
-            type="button"
-            onClick={() => onChange({
-              ...group,
-              options: [...group.options, createEmptyModifierOption(group.options.length)],
-            })}
-            className="rounded-lg border border-[var(--color-line)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
-          >
-            Nova opção
-          </button>
-        </div>
-
-        {group.options.map((option, optionIndex) => (
-          <div key={option.id ?? `option-${optionIndex}`} className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3">
-            <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_auto]">
-              <label className="space-y-1">
-                <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Nome</span>
-                <input
-                  value={option.name}
-                  onChange={(event) => updateOption(optionIndex, { name: event.target.value })}
-                  placeholder="Ex.: Catupiry"
-                  className={INPUT_CLS}
-                />
-              </label>
-
-              <label className="space-y-1">
-                <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Adicional (R$)</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={String(option.priceDelta)}
-                  onChange={(event) => updateOption(optionIndex, { priceDelta: Number(event.target.value || 0) })}
-                  className={INPUT_CLS}
-                />
-              </label>
-
-              <div className="flex items-end justify-between gap-2">
-                <label className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
-                  <input
-                    type="checkbox"
-                    checked={option.active}
-                    onChange={(event) => updateOption(optionIndex, { active: event.target.checked })}
-                    className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
-                  />
-                  Ativa
-                </label>
-                <button
-                  type="button"
-                  onClick={() => onChange({
-                    ...group,
-                    options: group.options.filter((_, index) => index !== optionIndex),
-                  })}
-                  className="rounded-lg px-2 py-1 text-xs font-semibold text-[var(--color-alert)] hover:bg-[var(--color-alert-soft)]"
-                >
-                  Remover
-                </button>
-              </div>
-            </div>
-
-            {/* ── Vincular a produto ── */}
-            <div className="border-t border-[var(--color-line)] pt-2">
-              <label className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
-                <input
-                  type="checkbox"
-                  checked={!!option.linkedProductId}
-                  onChange={(event) => {
-                    const linking = event.target.checked;
-                    updateOption(optionIndex, {
-                      linkedProductId: linking ? (option.linkedProductId ?? products[0]?.id ?? null) : null,
-                      priceOverride: linking ? option.priceOverride : null,
-                    });
-                    if (linking) setProductPickerIndex(optionIndex);
-                  }}
-                  className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
-                />
-                Vincular a um produto do catálogo
-              </label>
-
-              {option.linkedProductId && (
-                <div className="relative mt-2" ref={productPickerIndex === optionIndex ? pickerRef : undefined}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setProductPickerIndex(productPickerIndex === optionIndex ? null : optionIndex);
-                      setProductSearch('');
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg border border-[var(--color-line)] bg-white px-3 py-2 text-left text-xs"
-                  >
-                    <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)]" />
-                    <span className="truncate text-[var(--color-ink)]">
-                      {products.find((p) => p.id === option.linkedProductId)?.nome ?? 'Produto não encontrado'}
-                    </span>
-                  </button>
-
-                  {productPickerIndex === optionIndex && (
-                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-lg border border-[var(--color-line)] bg-white shadow-lg">
-                      <div className="sticky top-0 border-b border-[var(--color-line)] bg-white p-2">
-                        <input
-                          autoFocus
-                          value={productSearch}
-                          onChange={(e) => setProductSearch(e.target.value)}
-                          placeholder="Buscar produto..."
-                          className="w-full rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--color-brand)]"
-                        />
-                      </div>
-                      {filteredProducts.length === 0 ? (
-                        <p className="px-3 py-4 text-center text-xs text-[var(--color-ink-faint)]">Nenhum produto encontrado</p>
-                      ) : filteredProducts.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => {
-                            updateOption(optionIndex, { linkedProductId: p.id });
-                            setProductPickerIndex(null);
-                          }}
-                          className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-[var(--color-surface-muted)] ${
-                            option.linkedProductId === p.id ? 'bg-[var(--color-brand-soft)] font-semibold' : ''
-                          }`}
-                        >
-                          <span className="truncate">{p.nome}</span>
-                          <span className="shrink-0 text-[var(--color-ink-muted)]">
-                            R$ {Number(p.preco).toFixed(2).replace('.', ',')}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {option.linkedProductId && (
-                    <label className="mt-1.5 flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
-                      <span className="shrink-0">Preço (R$) no combo:</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={option.priceOverride == null ? '' : String(option.priceOverride)}
-                        onChange={(event) => updateOption(optionIndex, {
-                          priceOverride: event.target.value === '' ? null : Number(event.target.value || 0),
-                        })}
-                        placeholder="Usar preço do produto"
-                        className="w-32 rounded-md border border-[var(--color-line)] bg-white px-2 py-1 text-xs outline-none focus:border-[var(--color-brand)]"
-                      />
-                    </label>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function createEmptyModifierGroup(order: number): ZeloMenuModifierGroupDraft {
+export function createEmptyModifierGroup(order: number): ZeloMenuModifierGroupDraft {
   return {
     name: '',
     kind: 'adicional',
@@ -1366,18 +394,7 @@ function createEmptyModifierGroup(order: number): ZeloMenuModifierGroupDraft {
     maxPerOption: null,
     active: true,
     order,
-    options: [createEmptyModifierOption(order)],
-  };
-}
-
-function createEmptyModifierOption(order: number) {
-  return {
-    name: '',
-    priceDelta: 0,
-    active: true,
-    order,
-    linkedProductId: null,
-    priceOverride: null,
+    options: [{ name: '', priceDelta: 0, active: true, order, linkedProductId: null, priceOverride: null }],
   };
 }
 
@@ -1402,16 +419,4 @@ export function ConfirmDelete({ open, title, message, onClose, onConfirm }: Conf
       confirmLoadingLabel="Excluindo..."
     />
   );
-}
-
-// ---------- utils ----------
-function formatPrecoInput(preco: number): string {
-  if (!Number.isFinite(preco)) return '';
-  return preco.toFixed(2).replace('.', ',');
-}
-
-function parsePrecoInput(v: string): number {
-  const cleaned = v.replace(/\./g, '').replace(',', '.').trim();
-  if (!cleaned) return 0;
-  return Number(cleaned);
 }

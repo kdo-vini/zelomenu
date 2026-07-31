@@ -41,10 +41,9 @@ import {
 import {
   CategoriaModal,
   ConfirmDelete,
-  ProductModal,
-  ProductPublicationModal,
   SubcategoriaModal,
 } from './catalog/CatalogModals';
+import { ProductModal, type ProductModalTab } from './catalog/ProductEditorModal';
 
 interface Props {
   isAuthenticated: boolean;
@@ -94,8 +93,13 @@ interface Props {
 type CatModalState =
   | { kind: 'categoria'; initial: Categoria | null }
   | { kind: 'subcategoria'; initial: Subcategoria | null; defaultCategoriaId: number | null }
-  | { kind: 'produto'; initial: ProdutoRow | null; defaultCategoriaId: number | null; defaultSubcategoriaId: number | null }
-  | { kind: 'publication'; product: ProdutoRow }
+  | {
+      kind: 'produto';
+      initial: ProdutoRow | null;
+      defaultCategoriaId: number | null;
+      defaultSubcategoriaId: number | null;
+      initialTab?: ProductModalTab;
+    }
   | null;
 
 type DeleteState =
@@ -679,7 +683,7 @@ export const CatalogView = ({
                   }
                   onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
                   productPublications={productPublications}
-                  onConfigurePublication={(p) => setModal({ kind: 'publication', product: p })}
+                  onConfigurePublication={(p) => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
                   onSetCategoryPublication={(ids, state) => {
                     setUndoAction(null);
                     setConfirmCategoryAction({ ids, state });
@@ -733,7 +737,7 @@ export const CatalogView = ({
                   }
                   onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
                   productPublications={productPublications}
-                  onConfigurePublication={(p) => setModal({ kind: 'publication', product: p })}
+                  onConfigurePublication={(p) => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
                   onSetCategoryPublication={(ids, state) => {
                     setUndoAction(null);
                     setConfirmCategoryAction({ ids, state });
@@ -783,7 +787,7 @@ export const CatalogView = ({
                         }
                         onDelete={() => setDel({ kind: 'produto', item: p })}
                         publication={productPublications[p.id] ?? null}
-                        onConfigurePublication={() => setModal({ kind: 'publication', product: p })}
+                        onConfigurePublication={() => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
                         onTogglePublication={() => handleProductPublicationToggle(p)}
                         publicationActionBusy={bulk.busyAction !== null}
                       />
@@ -806,7 +810,7 @@ export const CatalogView = ({
                           }
                           onDelete={() => setDel({ kind: 'produto', item: p })}
                           publication={productPublications[p.id] ?? null}
-                          onConfigurePublication={() => setModal({ kind: 'publication', product: p })}
+                          onConfigurePublication={() => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
                           onTogglePublication={() => handleProductPublicationToggle(p)}
                           publicationActionBusy={bulk.busyAction !== null}
                         />
@@ -845,7 +849,7 @@ export const CatalogView = ({
           onEditProduto={(produto) =>
             setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria })
           }
-          onConfigurePublication={(produto) => setModal({ kind: 'publication', product: produto })}
+          onConfigurePublication={(produto) => setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria, initialTab: 'publicacao' })}
           statusFilter={statusFilter}
           onSetStatusFilter={(status) => {
             setStatusFilter(status);
@@ -889,33 +893,39 @@ export const CatalogView = ({
       <ProductModal
         open={modal?.kind === 'produto'}
         initial={modal?.kind === 'produto' ? modal.initial : null}
+        initialTab={modal?.kind === 'produto' ? modal.initialTab : 'produto'}
+        initialPublication={modal?.kind === 'produto' && modal.initial ? productPublications[modal.initial.id] ?? null : null}
         defaultCategoriaId={modal?.kind === 'produto' ? modal.defaultCategoriaId : null}
         defaultSubcategoriaId={modal?.kind === 'produto' ? modal.defaultSubcategoriaId : null}
         categorias={categorias}
         subcategorias={subcategorias}
+        products={editorProducts}
+        modifierGroups={
+          modal?.kind === 'produto' && modal.initial
+            ? productModifierGroups[modal.initial.id] ?? []
+            : []
+        }
+        modifierOptionProducts={modifierOptionProducts}
         onClose={() => setModal(null)}
         onSubmit={async (input) => {
           if (modal?.kind === 'produto' && modal.initial) {
             await updateProduto(modal.initial.id, input);
+            return modal.initial;
           } else {
-            await createProduto(input);
+            return createProduto(input);
           }
         }}
-      />
-
-      <ProductPublicationModal
-        open={modal?.kind === 'publication'}
-        product={modal?.kind === 'publication' ? modal.product : null}
-        products={editorProducts}
-        initial={modal?.kind === 'publication' ? productPublications[modal.product.id] ?? null : null}
-        modifierGroups={modal?.kind === 'publication' ? productModifierGroups[modal.product.id] ?? [] : []}
-        modifierOptionProducts={modifierOptionProducts}
+        onSaveModifierGroups={replaceProductModifierGroups}
         uploadImage={uploadProductPublicationImage}
         deleteImage={deleteProductPublicationImage}
-        onClose={() => setModal(null)}
-        onNavigate={(product) => setModal({ kind: 'publication', product })}
         onSavePublication={upsertProductPublication}
-        onSaveModifierGroups={replaceProductModifierGroups}
+        onNavigate={(product, tab) => setModal({
+          kind: 'produto',
+          initial: product,
+          defaultCategoriaId: product.id_categoria,
+          defaultSubcategoriaId: product.id_subcategoria,
+          initialTab: tab,
+        })}
       />
 
       <ConfirmDelete

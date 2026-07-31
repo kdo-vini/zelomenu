@@ -22,6 +22,7 @@ export function useCatalogModifiers(
     if (!userId) throw new Error('Faça login para continuar.');
 
     const currentGroups = dataRef.current.productModifierGroups[productId] ?? [];
+    const productsById = new Map(dataRef.current.produtos.map((product) => [product.id, product]));
     const nextGroups = groups.map((group, groupIndex) => {
       const groupId = group.id ?? globalThis.crypto.randomUUID();
       return {
@@ -43,7 +44,13 @@ export function useCatalogModifiers(
           active: option.active,
           order: Math.max(0, Math.trunc(option.order ?? optionIndex)),
           linkedProduct: option.linkedProductId
-            ? { productId: option.linkedProductId, name: '', photoUrl: null, price: Number(option.priceOverride ?? 0), available: true }
+            ? {
+                productId: option.linkedProductId,
+                name: productsById.get(option.linkedProductId)?.nome ?? '',
+                photoUrl: null,
+                price: Number(option.priceOverride ?? productsById.get(option.linkedProductId)?.preco ?? 0),
+                available: true,
+              }
             : null,
         })),
       };

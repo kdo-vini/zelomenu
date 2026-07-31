@@ -5,13 +5,13 @@ import { useZeloMenuEntitlement } from '../hooks/useZeloMenuEntitlement';
 import { useCatalog } from '../hooks/useCatalog';
 import { LoginForm } from '../components/LoginForm';
 import { NeutralState } from '../components/NeutralState';
-import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
 import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
 import { AdminLayout, type NavSection } from '../components/AdminLayout';
 import { OnboardingWizard, ONBOARDING_KEY } from '../components/OnboardingWizard';
 import { getZeloMenuSlug } from '../services/zelomenuAdminApi';
-import { Settings } from 'lucide-react';
+import { Globe2 } from 'lucide-react';
 import type { SettingsPath } from './SettingsPage';
+import type { ZeloMenuSettingsTab } from '../components/zelomenu/ZeloMenuSettingsCard';
 
 const CatalogView = lazy(() => import('../components/views/CatalogView').then((module) => ({ default: module.CatalogView })));
 const SettingsPage = lazy(() => import('./SettingsPage').then((module) => ({ default: module.SettingsPage })));
@@ -35,22 +35,65 @@ function UpsellScreen({ isActiveWithoutMenu }: { isActiveWithoutMenu: boolean })
 // ─── Publication page ──────────────────────────────────────────────────────
 
 function PublicationPage() {
+  const [activeTab, setActiveTab] = useState<ZeloMenuSettingsTab>('visual');
+
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6 lg:p-8">
-      <header className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-brand-soft)]">
-          <Settings className="h-5 w-5 text-[var(--color-brand-deep)]" />
+    <div className="mx-auto w-full max-w-[1180px] space-y-6 px-4 pb-8 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pt-9">
+      <header className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]">
+          <Globe2 className="h-5 w-5" strokeWidth={1.8} />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-[var(--color-ink)]">Publicação</h1>
-          <p className="text-sm text-[var(--color-ink-muted)]">
-            Configure o link público e as informações da sua loja no cardápio digital.
+          <h1 className="text-2xl font-extrabold tracking-[-0.02em] text-[var(--color-ink)]">Publicação</h1>
+          <p className="mt-1 text-sm leading-relaxed text-[var(--color-ink-muted)]">
+            Organize a aparência e o conteúdo que seus clientes encontram no cardápio.
           </p>
         </div>
       </header>
-      <ZeloMenuSlugCard />
-      <ZeloMenuSettingsCard />
+
+      <nav className="border-b border-[var(--color-line)]" aria-label="Seções de publicação">
+        <div className="flex gap-8 overflow-x-auto" role="tablist">
+          <PublicationTabButton
+            label="Visual externo"
+            active={activeTab === 'visual'}
+            onClick={() => setActiveTab('visual')}
+          />
+          <PublicationTabButton
+            label="Destaques e categorias"
+            active={activeTab === 'highlights'}
+            onClick={() => setActiveTab('highlights')}
+          />
+        </div>
+      </nav>
+
+      <ZeloMenuSettingsCard activeTab={activeTab} />
     </div>
+  );
+}
+
+function PublicationTabButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`min-h-12 whitespace-nowrap border-b-2 px-0.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40 focus-visible:ring-offset-2 ${
+        active
+          ? 'border-[var(--color-brand)] text-[var(--color-brand-deep)]'
+          : 'border-transparent text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -88,6 +131,10 @@ function AdminPageContent() {
 
   const openHoursSettings = () => {
     window.location.hash = 'settings/horarios';
+  };
+
+  const openAdminSettings = () => {
+    window.location.hash = 'settings/acoes-administrativas';
   };
 
   const returnToSettingsOverview = () => {
@@ -191,6 +238,7 @@ function AdminPageContent() {
             settingsPath={settingsPath}
             onOpenDelivery={openDeliverySettings}
             onOpenHours={openHoursSettings}
+            onOpenAdmin={openAdminSettings}
             onBackToOverview={returnToSettingsOverview}
           />
         }
@@ -216,6 +264,7 @@ function parseAdminHash(rawHash: string): { section: NavSection; settingsPath: S
   if (hash === 'publication') return { section: 'publication', settingsPath: 'overview' };
   if (hash === 'settings/entrega/configurar') return { section: 'settings', settingsPath: 'delivery' };
   if (hash === 'settings/horarios') return { section: 'settings', settingsPath: 'hours' };
+  if (hash === 'settings/acoes-administrativas' || hash === 'settings/admin') return { section: 'settings', settingsPath: 'admin' };
   if (hash.startsWith('settings')) return { section: 'settings', settingsPath: 'overview' };
   return { section: 'catalog', settingsPath: 'overview' };
 }

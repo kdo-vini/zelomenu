@@ -5,23 +5,26 @@ import { ZeloMenuOrderSettingsCard } from '../components/zelomenu/ZeloMenuOrderS
 import { ZeloMenuPixCard } from '../components/zelomenu/ZeloMenuPixCard';
 import { ZeloMenuBusinessHoursCard } from '../components/zelomenu/ZeloMenuBusinessHoursCard';
 import { SettingsOverview } from '../components/zelomenu/SettingsOverview';
+import { ZeloMenuSlugCard } from '../components/zelomenu/ZeloMenuSlugCard';
 import { ZeloMenuDeliverySettingsPage } from './ZeloMenuDeliverySettingsPage';
 
-export type SettingsPath = 'overview' | 'delivery' | 'hours';
+export type SettingsPath = 'overview' | 'delivery' | 'hours' | 'admin';
 
 type SettingsPageProps = {
   settingsPath?: SettingsPath;
   onOpenDelivery: () => void;
   onOpenHours: () => void;
+  onOpenAdmin: () => void;
   onBackToOverview: () => void;
 };
 
-type DesktopTab = 'hours' | 'orders' | 'pix' | 'coupons' | 'delivery';
+type DesktopTab = 'hours' | 'orders' | 'pix' | 'coupons' | 'delivery' | 'admin';
 
 export function SettingsPage({
   settingsPath = 'overview',
   onOpenDelivery,
   onOpenHours,
+  onOpenAdmin,
   onBackToOverview,
 }: SettingsPageProps) {
   const isMobile = useMediaQuery('(max-width: 767px)');
@@ -41,28 +44,39 @@ export function SettingsPage({
         </button>
         <ZeloMenuBusinessHoursCard />
       </div>
+    ) : settingsPath === 'admin' ? (
+      <AdminActionsSettings onBack={onBackToOverview} />
     ) : (
-      <SettingsOverview onOpenDelivery={onOpenDelivery} onOpenHours={onOpenHours} />
+      <SettingsOverview onOpenDelivery={onOpenDelivery} onOpenHours={onOpenHours} onOpenAdmin={onOpenAdmin} />
     );
   }
 
-  return <DesktopSettingsWorkspace settingsPath={settingsPath} onOpenDelivery={onOpenDelivery} onOpenHours={onOpenHours} onBackToOverview={onBackToOverview} />;
+  return <DesktopSettingsWorkspace settingsPath={settingsPath} onOpenDelivery={onOpenDelivery} onOpenHours={onOpenHours} onOpenAdmin={onOpenAdmin} onBackToOverview={onBackToOverview} />;
 }
 
 function DesktopSettingsWorkspace({
   settingsPath,
   onOpenDelivery,
   onOpenHours,
+  onOpenAdmin,
   onBackToOverview,
 }: SettingsPageProps) {
   const [activeTab, setActiveTab] = useState<DesktopTab>(
-    settingsPath === 'delivery' ? 'delivery' : settingsPath === 'hours' ? 'hours' : 'orders',
+    settingsPath === 'delivery'
+      ? 'delivery'
+      : settingsPath === 'hours'
+        ? 'hours'
+        : settingsPath === 'admin'
+          ? 'admin'
+          : 'orders',
   );
 
   useEffect(() => {
     if (settingsPath === 'delivery') setActiveTab('delivery');
     if (settingsPath === 'hours') setActiveTab('hours');
-  }, [settingsPath]);
+    if (settingsPath === 'admin') setActiveTab('admin');
+    if (settingsPath === 'overview' && activeTab === 'admin') setActiveTab('orders');
+  }, [activeTab, settingsPath]);
 
   function selectTab(tab: DesktopTab) {
     setActiveTab(tab);
@@ -70,7 +84,9 @@ function DesktopSettingsWorkspace({
       onOpenHours();
     } else if (tab === 'delivery') {
       onOpenDelivery();
-    } else if (settingsPath === 'delivery' || settingsPath === 'hours') {
+    } else if (tab === 'admin') {
+      onOpenAdmin();
+    } else if (settingsPath !== 'overview') {
       onBackToOverview();
     }
   }
@@ -96,6 +112,7 @@ function DesktopSettingsWorkspace({
           <DesktopTabButton label="Pagamento via Pix" active={activeTab === 'pix'} onClick={() => selectTab('pix')} />
           <DesktopTabButton label="Cupons de desconto" active={activeTab === 'coupons'} onClick={() => selectTab('coupons')} />
           <DesktopTabButton label="Entrega" active={activeTab === 'delivery'} onClick={() => selectTab('delivery')} />
+          <DesktopTabButton label="Ações administrativas" active={activeTab === 'admin'} onClick={() => selectTab('admin')} />
         </div>
       </nav>
 
@@ -104,6 +121,31 @@ function DesktopSettingsWorkspace({
       {activeTab === 'pix' && <ZeloMenuPixCard />}
       {activeTab === 'coupons' && <ZeloMenuCouponsCard />}
       {activeTab === 'delivery' && <ZeloMenuDeliverySettingsPage onBack={onBackToOverview} />}
+      {activeTab === 'admin' && <AdminActionsSettings onBack={onBackToOverview} />}
+    </div>
+  );
+}
+
+function AdminActionsSettings({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="space-y-5">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-semibold text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)] md:hidden"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Voltar para configurações
+      </button>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+        <div>
+          <h2 className="text-lg font-bold tracking-[-0.01em] text-[var(--color-ink)]">Ações administrativas</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[var(--color-ink-muted)]">
+            Ajustes de acesso e manutenção do seu cardápio. Novas ações administrativas ficarão aqui.
+          </p>
+        </div>
+      </div>
+      <ZeloMenuSlugCard />
     </div>
   );
 }

@@ -8,9 +8,11 @@ type OverviewAnchor = 'orders' | 'pix' | 'coupons' | 'delivery';
 export function SettingsOverview({
   onOpenDelivery,
   onOpenHours,
+  onOpenAdmin,
 }: {
   onOpenDelivery: () => void;
   onOpenHours: () => void;
+  onOpenAdmin: () => void;
 }) {
   const [activeAnchor, setActiveAnchor] = useState<OverviewAnchor>('delivery');
 
@@ -40,6 +42,7 @@ export function SettingsOverview({
           <OverviewTab label="Pagamento via Pix" active={activeAnchor === 'pix'} onClick={() => focusCard('pix')} />
           <OverviewTab label="Cupons" active={activeAnchor === 'coupons'} onClick={() => focusCard('coupons')} />
           <OverviewTab label="Entrega" active={activeAnchor === 'delivery'} onClick={() => focusCard('delivery')} />
+          <OverviewTab label="Ações administrativas" active={false} onClick={onOpenAdmin} />
         </div>
       </nav>
 
