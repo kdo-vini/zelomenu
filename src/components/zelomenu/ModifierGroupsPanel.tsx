@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronLeft, Plus, Search, ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronLeft, Copy, Plus, Search, ChevronDown, ChevronRight } from 'lucide-react';
 import { useToast } from '../../contexts/ToastContext';
 import type {
   ZeloMenuModifierGroupDraft,
@@ -127,6 +127,7 @@ interface ModifierGroupsPanelProps {
   productName: string;
   onChange: (index: number, group: ZeloMenuModifierGroupDraft) => void;
   onAdd: () => void;
+  onDuplicate: (index: number) => void;
   onDelete: (index: number) => void;
 }
 
@@ -136,6 +137,7 @@ export function ModifierGroupsPanel({
   productName,
   onChange,
   onAdd,
+  onDuplicate,
   onDelete,
 }: ModifierGroupsPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -148,6 +150,11 @@ export function ModifierGroupsPanel({
   const handleAdd = () => {
     justAddedRef.current = true;
     onAdd();
+  };
+
+  const handleDuplicate = (index: number) => {
+    justAddedRef.current = true;
+    onDuplicate(index);
   };
 
   useEffect(() => {
@@ -218,6 +225,7 @@ export function ModifierGroupsPanel({
               onChange={(g) => selectedIndex != null && onChange(selectedIndex, g)}
               onBack={() => setSelectedIndex(null)}
               onDelete={() => selectedIndex != null && handleDelete(selectedIndex)}
+              onDuplicate={() => selectedIndex != null && handleDuplicate(selectedIndex)}
             />
           ) : (
             <div className="flex items-center justify-center rounded-xl border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] p-8 text-sm text-[var(--color-ink-muted)]">
@@ -378,6 +386,7 @@ function GroupDetail({
   onModelSelect,
   onChange,
   onBack,
+  onDuplicate,
   onDelete,
 }: {
   group: ZeloMenuModifierGroupDraft;
@@ -387,6 +396,7 @@ function GroupDetail({
   onModelSelect: (modelId: ModifierModelId) => void;
   onChange: (group: ZeloMenuModifierGroupDraft) => void;
   onBack: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -453,6 +463,17 @@ function GroupDetail({
         <ChevronLeft className="h-4 w-4" />
         Voltar
       </button>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onDuplicate}
+          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/30"
+        >
+          <Copy className="h-3.5 w-3.5" strokeWidth={1.8} />
+          Duplicar grupo
+        </button>
+      </div>
 
       {/* Group name */}
       <label className="space-y-1.5">

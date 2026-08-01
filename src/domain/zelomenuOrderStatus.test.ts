@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOrderStatus } from './zelomenuOrderStatus';
+import { normalizePublicOrderStatus, resolveOrderStatus } from './zelomenuOrderStatus';
 
 describe('resolveOrderStatus', () => {
   // ── Delivery progression ─────────────────────────────────────────────────
@@ -92,5 +92,20 @@ describe('resolveOrderStatus', () => {
     const r = resolveOrderStatus('rejected', true);
     expect(r.isTerminal).toBe(true);
     expect(r.isCancelled).toBe(false);
+  });
+});
+
+describe('normalizePublicOrderStatus', () => {
+  it('maps table-order statuses from the PDV vocabulary', () => {
+    expect(normalizePublicOrderStatus('aberto')).toBe('pending_review');
+    expect(normalizePublicOrderStatus('em_preparo')).toBe('preparing');
+    expect(normalizePublicOrderStatus('pronto')).toBe('ready');
+    expect(normalizePublicOrderStatus('entregue')).toBe('delivered');
+    expect(normalizePublicOrderStatus('cancelado')).toBe('cancelled');
+  });
+
+  it('keeps canonical statuses unchanged', () => {
+    expect(normalizePublicOrderStatus('accepted')).toBe('accepted');
+    expect(normalizePublicOrderStatus('pending_review')).toBe('pending_review');
   });
 });

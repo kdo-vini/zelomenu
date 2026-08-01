@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug, resolvePublicOrderSubscription } from './zelomenuCartSessions.js';
+import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug, resolvePublicOrderSubscription, getZeloMenuOperationalMetrics } from './zelomenuCartSessions.js';
 import { requireEmpresaId, getEmpresaUserId } from './supabaseServer.js';
 import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
 import { listZeloMenuCoupons, createZeloMenuCoupon, updateZeloMenuCoupon, deleteZeloMenuCoupon } from './zelomenuCoupons.js';
@@ -116,7 +116,7 @@ app.post('/api/public/zelomenu/store/:slug/cart', generalPublicLimiter, async (r
     if (message === 'EMPTY_CART') return res.status(400).json({ error: 'EMPTY_CART' });
     if (message === 'PRODUCT_NOT_FOUND') return res.status(400).json({ error: 'PRODUCT_NOT_FOUND' });
     if (message === 'PRODUCT_UNAVAILABLE') return res.status(400).json({ error: 'PRODUCT_UNAVAILABLE' });
-    if (message === 'PRODUCT_STOCK_EXCEEDED') return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
+    if (message === 'PRODUCT_STOCK_EXCEEDED' || message.startsWith('PRODUCT_STOCK_EXCEEDED:')) return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
     if (message === 'MISSING_TABLE_CONTEXT') return res.status(400).json({ error: 'MISSING_TABLE_CONTEXT' });
@@ -157,7 +157,7 @@ app.patch('/api/public/zelomenu/cart/:token', cartTokenLimiter, async (req, res)
     if (message === 'CART_ALREADY_CONFIRMED') return res.status(409).json({ error: 'CART_ALREADY_CONFIRMED' });
     if (message === 'PRODUCT_NOT_FOUND') return res.status(400).json({ error: 'PRODUCT_NOT_FOUND' });
     if (message === 'PRODUCT_UNAVAILABLE') return res.status(400).json({ error: 'PRODUCT_UNAVAILABLE' });
-    if (message === 'PRODUCT_STOCK_EXCEEDED') return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
+    if (message === 'PRODUCT_STOCK_EXCEEDED' || message.startsWith('PRODUCT_STOCK_EXCEEDED:')) return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
     if (message === 'INVALID_QUANTITY' || message === 'CART_LINE_LIMIT_EXCEEDED' || message === 'ORDER_TOTAL_LIMIT_EXCEEDED') return res.status(400).json({ error: message, requestId: res.locals.requestId });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
@@ -300,6 +300,16 @@ app.patch('/api/admin/zelomenu/settings', async (req, res) => {
 });
 
 // ─── AI welcome-text generation (admin, Bearer-authed) ─────────────────────────
+
+app.get('/api/admin/zelomenu/metrics', async (req, res) => {
+  try {
+    const empresaId = await requireEmpresaId(req);
+    const metrics = await getZeloMenuOperationalMetrics(empresaId);
+    res.json(metrics);
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
 
 app.post('/api/admin/zelomenu/welcome', async (req, res) => {
   try {

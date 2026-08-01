@@ -243,16 +243,17 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 12_000): Promise<Response> {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if ((error instanceof DOMException && error.name === 'AbortError')
+      || (error instanceof Error && error.name === 'AbortError')) {
       throw new ZeloMenuApiError(408, 'REQUEST_TIMEOUT', 'A conexão demorou demais. Tente novamente.');
     }
     throw error;
   } finally {
-    window.clearTimeout(timer);
+    globalThis.clearTimeout(timer);
   }
 }
 
@@ -324,7 +325,11 @@ export async function startPublicOrder(
     tableOrderContext?: TableOrderContext;
   },
 ): Promise<{ token: string; path: string; orderingId: string }> {
-  const response = await fetch(`/api/public/zelomenu/store/${encodeURIComponent(slug)}/cart`, {
+  // This is a POST that creates a new cart session. Use the shared timeout,
+  // but leave retries to the caller (the CTA can be pressed again) because
+  // the endpoint has no idempotency contract and an automatic retry could
+  // create a second session after a server-side success with a lost response.
+  const response = await fetchWithTimeout(`/api/public/zelomenu/store/${encodeURIComponent(slug)}/cart`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

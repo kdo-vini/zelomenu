@@ -3,8 +3,10 @@ import { ArrowRight, Check, ChevronDown, GripVertical, Loader2, Search, Shopping
 import { Reorder } from 'motion/react';
 import { ImageCropField } from './ImageCropField';
 import {
+  buildZeloMenuPublicUrl,
   generateZeloMenuWelcome,
   getZeloMenuSettings,
+  getZeloMenuSlug,
   updateZeloMenuSettings,
   type ZeloMenuStoreSettings,
 } from '../../services/zelomenuAdminApi';
@@ -31,6 +33,7 @@ export function ZeloMenuSettingsCard({ activeTab = 'visual' }: { activeTab?: Zel
   const [saved, setSaved] = useState(false);
 
   const [settings, setSettings] = useState<ZeloMenuStoreSettings | null>(null);
+  const [publicSlug, setPublicSlug] = useState<string | null>(null);
   // local draft state
   const [welcomeText, setWelcomeText] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -83,6 +86,18 @@ export function ZeloMenuSettingsCard({ activeTab = 'visual' }: { activeTab?: Zel
         if (active) setLoading(false);
       }
     })();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void getZeloMenuSlug()
+      .then(({ slug }) => {
+        if (active) setPublicSlug(slug);
+      })
+      .catch(() => {
+        if (active) setPublicSlug(null);
+      });
     return () => { active = false; };
   }, []);
 
@@ -310,10 +325,21 @@ export function ZeloMenuSettingsCard({ activeTab = 'visual' }: { activeTab?: Zel
                     5.0
                   </span>
                 </div>
-                <a className="mt-auto inline-flex min-h-[42px] items-center justify-center gap-2 rounded-[13px] border border-purple-100 bg-purple-50 text-[13px] font-extrabold text-purple-700 transition-colors hover:bg-purple-600 hover:text-white">
-                  Abrir cardápio
-                  <ArrowRight size={17} strokeWidth={2.5} />
-                </a>
+                {publicSlug ? (
+                  <a
+                    href={buildZeloMenuPublicUrl(publicSlug)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-auto inline-flex min-h-[42px] items-center justify-center gap-2 rounded-[13px] border border-purple-100 bg-purple-50 text-[13px] font-extrabold text-purple-700 transition-colors hover:bg-purple-600 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/30"
+                  >
+                    Abrir cardápio
+                    <ArrowRight size={17} strokeWidth={2.5} />
+                  </a>
+                ) : (
+                  <span className="mt-auto inline-flex min-h-[42px] items-center justify-center rounded-[13px] border border-dashed border-[var(--color-line-strong)] text-[12px] font-semibold text-[var(--color-ink-muted)]">
+                    Defina o link para abrir o cardápio
+                  </span>
+                )}
               </div>
             </div>
             <p className="mt-2 text-[11px] text-[var(--color-ink-muted)]">Salve as configurações para publicar as alterações na vitrine.</p>

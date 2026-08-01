@@ -899,6 +899,10 @@ function normalizeIncomingItems(items: unknown): ZeloMenuCartItemInput[] {
   });
 }
 
+function stockExceededError(productName: string, availableQuantity: number, requestedQuantity: number): Error {
+  return new Error(`PRODUCT_STOCK_EXCEEDED:${JSON.stringify({ productName, availableQuantity, requestedQuantity })}`);
+}
+
 function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
   return cart.items.map((item) => ({
     productId: item.productId,
@@ -948,11 +952,12 @@ async function resolveSnapshots(
   for (const item of params.items) {
     const product = findCatalogProduct(config.products, { productId: item.productId ?? null, productName: item.productName });
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
-    if (!product.available) throw new Error('PRODUCT_UNAVAILABLE');
     if (product.stockControlled) {
       const stockQuantity = Number(product.stockQuantity ?? 0);
-      if ((item.productId != null ? aggregated.get(item.productId) ?? item.quantity : item.quantity) > stockQuantity) throw new Error('PRODUCT_STOCK_EXCEEDED');
+      const requestedQuantity = item.productId != null ? aggregated.get(item.productId) ?? item.quantity : item.quantity;
+      if (requestedQuantity > stockQuantity) throw stockExceededError(product.name, stockQuantity, requestedQuantity);
     }
+    if (!product.available) throw new Error('PRODUCT_UNAVAILABLE');
     const baseUnitPrice = Number(product.basePrice ?? product.price);
     const modifierResolution = resolveModifierSelections(product.modifierGroups, item.selectedOptions ?? [], baseUnitPrice);
     if (modifierResolution.ok === false) throw new Error(`MODIFIER_INVALID:${modifierResolution.message}`);
@@ -966,13 +971,13 @@ async function resolveSnapshots(
           if (!modifierGroup) continue;
           const modifierOption = modifierGroup.options.find((o) => o.id === opt.optionId);
           if (!modifierOption?.linkedProduct) continue;
-          if (modifierOption.linkedProduct.available === false) throw new Error('MODIFIER_INVALID:Uma opção vinculada não está mais disponível.');
           const linkedProductInCatalog = config.products.find((p) => p.id === modifierOption.linkedProduct!.productId);
           if (linkedProductInCatalog?.stockControlled) {
             const stockQuantity = Number(linkedProductInCatalog.stockQuantity ?? 0);
             const linkedAgg = aggregated.get(modifierOption.linkedProduct.productId) ?? item.quantity;
-            if (linkedAgg > stockQuantity) throw new Error('PRODUCT_STOCK_EXCEEDED');
+            if (linkedAgg > stockQuantity) throw stockExceededError(linkedProductInCatalog.name, stockQuantity, linkedAgg);
           }
+          if (modifierOption.linkedProduct.available === false) throw new Error('MODIFIER_INVALID:Uma opção vinculada não está mais disponível.');
         }
       }
     }
@@ -1187,6 +1192,27 @@ function cartIssueFromError(message: string): ZeloMenuCartRevalidationIssue | nu
   if (message === 'PRODUCT_NOT_FOUND') return { code: 'product_missing', message: 'Um item desse carrinho não existe mais no cardápio.' };
   if (message === 'PRODUCT_UNAVAILABLE') return { code: 'product_unavailable', message: 'Um item desse carrinho não está disponível no momento.' };
   if (message === 'PRODUCT_STOCK_EXCEEDED') return { code: 'stock_insufficient', message: 'A quantidade de um item ultrapassa o estoque atual.' };
+  if (message.startsWith('PRODUCT_STOCK_EXCEEDED:')) {
+    try {
+      const detail = JSON.parse(message.slice('PRODUCT_STOCK_EXCEEDED:'.length)) as {
+        productName?: string;
+        availableQuantity?: number;
+        requestedQuantity?: number;
+      };
+      const productName = typeof detail.productName === 'string' ? detail.productName : 'Um item';
+      const availableQuantity = Number.isFinite(detail.availableQuantity) ? Math.max(0, Number(detail.availableQuantity)) : null;
+      const requestedQuantity = Number.isFinite(detail.requestedQuantity) ? Math.max(0, Number(detail.requestedQuantity)) : undefined;
+      return {
+        code: 'stock_insufficient',
+        productName,
+        availableQuantity,
+        requestedQuantity,
+        message: `${productName} tem apenas ${availableQuantity ?? 0} unidade(s) disponível(is).`,
+      };
+    } catch {
+      return { code: 'stock_insufficient', message: 'A quantidade de um item ultrapassa o estoque atual.' };
+    }
+  }
   if (message === 'DELIVERY_DISABLED') return { code: 'schedule_unavailable', message: 'A entrega precisa ser revista antes da confirmação.' };
   if (message.startsWith('MODIFIER_INVALID:')) return { code: 'modifier_invalid', message: message.slice('MODIFIER_INVALID:'.length) };
   if (message === 'COUPON_INVALID') return { code: 'coupon_invalid', message: 'Este cupom não é válido para esta loja.' };
@@ -1365,18 +1391,25 @@ async function buildPublicResponse(
   session.metadata = publicMetadata;
 
   let order: PublicCartResponse['order'] = null;
-  if (session.context === 'public_order' && session.state !== 'cart_open') {
-    const { data, error } = await getServiceSupabase()
-      .from('zelo_orders')
-      .select('id, status, revision')
-      .eq('zelomenu_session_id', session.id)
-      .maybeSingle();
-    if (error) throw error;
-    order = data ? {
-      id: String(data.id),
-      status: String(data.status),
-      revision: Number(data.revision),
-    } : null;
+  if (session.state !== 'cart_open' && (session.context === 'public_order' || session.context === 'table_order')) {
+    const tableOrder = session.context === 'table_order';
+    if (tableOrder) {
+      const { data, error } = await getServiceSupabase()
+        .from('pedidos')
+        .select('id, status')
+        .eq('zelomenu_session_id', session.id)
+        .maybeSingle();
+      if (error) throw error;
+      order = data ? { id: String(data.id), status: String(data.status), revision: 0 } : null;
+    } else {
+      const { data, error } = await getServiceSupabase()
+        .from('zelo_orders')
+        .select('id, status, revision')
+        .eq('zelomenu_session_id', session.id)
+        .maybeSingle();
+      if (error) throw error;
+      order = data ? { id: String(data.id), status: String(data.status), revision: Number(data.revision) } : null;
+    }
   }
 
   const perfilData = await loadZeloMenuProfile(sessionRow.empresa_id);
@@ -1500,6 +1533,16 @@ export type ZeloMenuStoreSettings = {
   timezone: string | null;
   schedulingEnabled: boolean;
   schedulingLeadTimeMinutes: number;
+  publicationSummary: {
+    total: number;
+    published: number;
+    unpublished: number;
+    paused: number;
+    hidden: number;
+    outOfStock: number;
+    missingCategory: number;
+    attention: number;
+  };
 };
 
 export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloMenuStoreSettings> {
@@ -1544,6 +1587,58 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     timezone: config.timezone ?? null,
     schedulingEnabled: config.schedulingEnabled,
     schedulingLeadTimeMinutes: config.schedulingLeadTimeMinutes,
+    publicationSummary: config.publicationSummary,
+  };
+}
+
+export type ZeloMenuOperationalMetrics = {
+  cartsStarted: number;
+  ordersCreated: number;
+  conversionRate: number;
+  revenue: number;
+};
+
+export async function getZeloMenuOperationalMetrics(empresaId: string, periodDays = 7): Promise<ZeloMenuOperationalMetrics> {
+  const days = Math.min(30, Math.max(1, Math.trunc(periodDays)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const supabase = getServiceSupabase();
+  const [sessionsResult, ordersResult] = await Promise.all([
+    supabase
+      .from('zelomenu_cart_sessions')
+      .select('state')
+      .eq('empresa_id', empresaId)
+      .eq('context', 'public_order')
+      .gte('created_at', since)
+      .limit(5000),
+    supabase
+      .from('zelo_orders')
+      .select('status, total')
+      .eq('empresa_id', empresaId)
+      .eq('source', 'zelomenu')
+      .gte('created_at', since)
+      .limit(5000),
+  ]);
+  if (sessionsResult.error) throw sessionsResult.error;
+  if (ordersResult.error) throw ordersResult.error;
+
+  const sessions = sessionsResult.data ?? [];
+  const orders = ordersResult.data ?? [];
+  let revenue = 0;
+  for (const order of orders) {
+    const status = typeof order.status === 'string' ? order.status : 'unknown';
+    if (!['rejected', 'cancelled', 'canceled'].includes(status)) {
+      const total = Number(order.total);
+      if (Number.isFinite(total)) revenue += total;
+    }
+  }
+
+  const cartsStarted = sessions.length;
+  const ordersCreated = orders.length;
+  return {
+    cartsStarted,
+    ordersCreated,
+    conversionRate: cartsStarted > 0 ? Math.round((ordersCreated / cartsStarted) * 1000) / 10 : 0,
+    revenue: Math.round(revenue * 100) / 100,
   };
 }
 

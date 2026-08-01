@@ -1,4 +1,5 @@
-const CUSTOMER_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const CUSTOMER_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CUSTOMER_CACHE_CONSENT_VALUE = 'granted';
 
 export type ZeloMenuCustomerCache = {
   name: string;
@@ -13,12 +14,59 @@ export type ZeloMenuCustomerCache = {
   deliveryState?: string;
 };
 
-function zeloMenuCustomerStorageKey(slug: string): string {
+export function zeloMenuCustomerStorageKey(slug: string): string {
   return `zelomenu_customer_${slug}`;
+}
+
+export function zeloMenuCustomerConsentStorageKey(slug: string): string {
+  return `zelomenu_customer_consent_${slug}`;
+}
+
+export function hasZeloMenuCustomerCacheConsent(slug: string): boolean {
+  if (!slug) return false;
+  try {
+    return localStorage.getItem(zeloMenuCustomerConsentStorageKey(slug)) === CUSTOMER_CACHE_CONSENT_VALUE;
+  } catch {
+    return false;
+  }
+}
+
+export function setZeloMenuCustomerCacheConsent(slug: string, granted: boolean): void {
+  if (!slug) return;
+  try {
+    if (granted) {
+      localStorage.setItem(zeloMenuCustomerConsentStorageKey(slug), CUSTOMER_CACHE_CONSENT_VALUE);
+      return;
+    }
+    localStorage.removeItem(zeloMenuCustomerConsentStorageKey(slug));
+    localStorage.removeItem(zeloMenuCustomerStorageKey(slug));
+  } catch {
+    // localStorage indisponível: o autofill continua opcional e não crítico.
+  }
+}
+
+export function clearZeloMenuCustomerCache(slug: string): void {
+  if (!slug) return;
+  try {
+    localStorage.removeItem(zeloMenuCustomerStorageKey(slug));
+    localStorage.removeItem(zeloMenuCustomerConsentStorageKey(slug));
+  } catch {
+    // localStorage indisponível.
+  }
 }
 
 export function loadZeloMenuCustomerCache(slug: string): ZeloMenuCustomerCache | null {
   if (!slug) return null;
+  if (!hasZeloMenuCustomerCacheConsent(slug)) {
+    // Data written by older versions had no consent marker. Remove it on the
+    // next visit instead of silently reviving it as autofill data.
+    try {
+      localStorage.removeItem(zeloMenuCustomerStorageKey(slug));
+    } catch {
+      // localStorage indisponível.
+    }
+    return null;
+  }
   try {
     const raw = localStorage.getItem(zeloMenuCustomerStorageKey(slug));
     if (!raw) return null;
@@ -46,7 +94,7 @@ export function loadZeloMenuCustomerCache(slug: string): ZeloMenuCustomerCache |
 }
 
 export function saveZeloMenuCustomerCache(slug: string, data: ZeloMenuCustomerCache): void {
-  if (!slug) return;
+  if (!slug || !hasZeloMenuCustomerCacheConsent(slug)) return;
   try {
     localStorage.setItem(zeloMenuCustomerStorageKey(slug), JSON.stringify({ ...data, savedAt: Date.now() }));
   } catch {

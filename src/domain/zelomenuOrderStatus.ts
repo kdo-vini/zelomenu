@@ -11,6 +11,56 @@ export type OrderStatusInfo = {
 };
 
 /**
+ * The table-order compatibility RPC persists the operational status using
+ * the Portuguese PDV vocabulary (`aberto`, `em_preparo`, ...), while public
+ * orders use the canonical English vocabulary. Keep that translation at the
+ * public boundary so both flows render the same customer timeline.
+ */
+export function normalizePublicOrderStatus(status: string): string {
+  const normalized = status.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  switch (normalized) {
+    case 'aberto':
+    case 'novo':
+    case 'aguardando':
+    case 'aguardando_confirmacao':
+    case 'recebido':
+    case 'pending':
+    case 'pending_review':
+      return 'pending_review';
+    case 'aceito':
+    case 'confirmado':
+    case 'accepted':
+      return 'accepted';
+    case 'preparando':
+    case 'em preparo':
+    case 'em_preparo':
+    case 'preparing':
+      return 'preparing';
+    case 'pronto':
+    case 'pronto_para_retirada':
+    case 'ready':
+      return 'ready';
+    case 'saiu_para_entrega':
+    case 'out_for_delivery':
+      return 'out_for_delivery';
+    case 'entregue':
+    case 'retirado':
+    case 'finalizado':
+    case 'delivered':
+      return 'delivered';
+    case 'recusado':
+    case 'rejeitado':
+    case 'rejected':
+      return 'rejected';
+    case 'cancelado':
+    case 'cancelled':
+      return 'cancelled';
+    default:
+      return status;
+  }
+}
+
+/**
  * Maps an order status and fulfillment type to a visual step timeline.
  *
  * Delivery steps (6): Pedido recebido → Confirmado → Em preparo → Pronto →

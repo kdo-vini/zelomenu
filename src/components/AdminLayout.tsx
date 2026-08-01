@@ -1,10 +1,10 @@
 import { type ReactNode, useState } from 'react';
-import { Menu, ShoppingBag, Globe2, LayoutGrid, LogOut, Settings, X } from 'lucide-react';
+import { Menu, ShoppingBag, Globe2, LayoutGrid, LogOut, Settings, BarChart3, X } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 
 // ─── Navigation definition ─────────────────────────────────────────────────
 
-export type NavSection = 'catalog' | 'publication' | 'settings' | 'mesas';
+export type NavSection = 'catalog' | 'publication' | 'settings' | 'mesas' | 'metrics';
 
 interface NavItem {
   id: NavSection;
@@ -16,6 +16,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'catalog', label: 'Cardápio', icon: ShoppingBag },
   { id: 'publication', label: 'Publicação', icon: Globe2 },
   { id: 'settings', label: 'Configurações', icon: Settings },
+  { id: 'metrics', label: 'Indicadores', icon: BarChart3 },
   { id: 'mesas', label: 'Mesas', icon: LayoutGrid },
 ];
 
@@ -27,12 +28,13 @@ interface AdminLayoutProps {
   catalogContent: ReactNode;
   publicationContent: ReactNode;
   settingsContent: ReactNode;
+  metricsContent: ReactNode;
   mesasContent?: ReactNode;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent, settingsContent, mesasContent }: AdminLayoutProps) {
+export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent, settingsContent, metricsContent, mesasContent }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const visibleNavItems = NAV_ITEMS.filter(
@@ -172,6 +174,7 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
           {activeSection === 'catalog' && catalogContent}
           {activeSection === 'publication' && publicationContent}
           {activeSection === 'settings' && settingsContent}
+          {activeSection === 'metrics' && metricsContent}
           {activeSection === 'mesas' && mesasContent}
         </main>
 

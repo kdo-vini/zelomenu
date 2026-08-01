@@ -42,7 +42,7 @@ import {
   type ZeloMenuModifierSelectionInput,
   type ZeloMenuSelectedModifierGroup,
 } from '../domain/zelomenuModifiers';
-import { resolveOrderStatus } from '../domain/zelomenuOrderStatus';
+import { normalizePublicOrderStatus, resolveOrderStatus } from '../domain/zelomenuOrderStatus';
 import {
   businessDayLabel,
   parseBusinessTime,
@@ -57,10 +57,17 @@ import {
   firstZeloMenuCheckoutError,
   validateZeloMenuCheckoutDetails,
 } from '../domain/zelomenuCheckout';
+import type { ZeloMenuCartSnapshot } from '../domain/zelomenuCartSchema';
 import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
 import { buildPublicStorePath } from '../domain/zelomenuSlug';
 import { maskBrazilianPhone, normalizePhoneNumber } from '../domain/chat';
-import { loadZeloMenuCustomerCache, saveZeloMenuCustomerCache } from '../domain/zelomenuCustomerCache';
+import {
+  clearZeloMenuCustomerCache,
+  hasZeloMenuCustomerCacheConsent,
+  loadZeloMenuCustomerCache,
+  saveZeloMenuCustomerCache,
+  setZeloMenuCustomerCacheConsent,
+} from '../domain/zelomenuCustomerCache';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
 import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
 import { ZeloMenuScheduleCalendar } from '../components/zelomenu/ZeloMenuScheduleCalendar';
@@ -136,11 +143,14 @@ function nowTimeBR(): string {
   }).format(new Date());
 }
 
-function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState {
+function buildDraftFromPayload(
+  payload: ZeloMenuPublicCartResponse,
+  cart: ZeloMenuCartSnapshot = payload.session.cart,
+): DraftState {
   return {
     customerName: payload.session.customer.name ?? '',
     customerPhone: maskBrazilianPhone(payload.session.customer.phone ?? ''),
-    items: payload.session.cart.items.map((item) => ({
+    items: cart.items.map((item) => ({
       productId: item.productId,
       productName: item.productName,
       quantity: item.quantity,
@@ -168,7 +178,7 @@ function buildDraftFromPayload(payload: ZeloMenuPublicCartResponse): DraftState 
     deliveryCity: payload.session.fulfillment.deliveryCity ?? '',
     deliveryState: payload.session.fulfillment.deliveryState ?? '',
     paymentMethod: payload.session.payment.declaredMethod ?? '',
-    observations: payload.session.cart.observations ?? '',
+    observations: cart.observations ?? '',
     couponCode: payload.session.pricing.couponCode ?? '',
   };
 }
@@ -418,7 +428,7 @@ function resolveConfirmedStatusCopy(
   isDelivery: boolean,
   isTableOrder: boolean,
 ): { title: string; description: string } {
-  if (isTableOrder) {
+  if (isTableOrder && !['accepted', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'rejected', 'cancelled'].includes(orderStatus)) {
     return { title: 'Pedido enviado!', description: 'Seu pedido já está na fila da cozinha.' };
   }
   switch (orderStatus) {
@@ -451,10 +461,12 @@ function resolveConfirmedStatusCopy(
   }
 }
 
-function resolveConfirmedNextStep(orderStatus: string, isDelivery: boolean): string | null {
+function resolveConfirmedNextStep(orderStatus: string, isDelivery: boolean, isTableOrder = false): string | null {
   switch (orderStatus) {
     case 'pending_review':
-      return 'A loja vai confirmar seu pedido em instantes. Você será avisado automaticamente.';
+      return isTableOrder
+        ? 'A cozinha recebeu seu pedido. A equipe avisará quando houver uma atualização.'
+        : 'A loja vai confirmar seu pedido em instantes. Você será avisado automaticamente.';
     case 'pending_payment':
       return 'Depois de pagar, envie o comprovante no WhatsApp da loja.';
     case 'accepted':
@@ -487,6 +499,7 @@ function ZeloMenuCartPageContent() {
   const [showErrors, setShowErrors] = useState(false);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [rememberCustomerData, setRememberCustomerData] = useState(false);
   const [deliveryCepLoading, setDeliveryCepLoading] = useState(false);
   const [deliveryAddressEditing, setDeliveryAddressEditing] = useState(false);
   const revalidationToastShownRef = useRef('');
@@ -548,35 +561,34 @@ function ZeloMenuCartPageContent() {
       if (requestId !== loadRequestRef.current) return;
       if (mode === 'refresh') revalidationToastShownRef.current = '';
       setPayload(next);
+      const fresh = buildDraftFromPayload(next);
+      const slug = typeof next.session.metadata.slug === 'string' ? next.session.metadata.slug : null;
+      const hasConsent = slug ? hasZeloMenuCustomerCacheConsent(slug) : false;
+      const cached = slug && hasConsent ? loadZeloMenuCustomerCache(slug) : null;
+      setRememberCustomerData(hasConsent);
       setDraft((prev) => {
-        const fresh = buildDraftFromPayload(next);
-        // Autofill: preenche dados do cliente do cache se o payload está vazio
-        const slug = typeof next.session.metadata.slug === 'string' ? next.session.metadata.slug : null;
-        if (slug) {
-          const cached = loadZeloMenuCustomerCache(slug);
-          if (cached) {
-            if (
-              fresh.fulfillmentType === 'delivery'
-              && !fresh.deliveryPostalCode
-              && cached.deliveryPostalCode
-              && cached.deliveryNumber
-            ) {
-              customerCacheHydratedRef.current = true;
-            }
-            return {
-              ...fresh,
-              customerName: fresh.customerName || cached.name,
-              customerPhone: fresh.customerPhone || cached.phone,
-              deliveryAddress: fresh.deliveryAddress || cached.deliveryAddress,
-              deliveryNeighborhood: fresh.deliveryNeighborhood || cached.deliveryNeighborhood,
-              deliveryPostalCode: fresh.deliveryPostalCode || cached.deliveryPostalCode || '',
-              deliveryNumber: fresh.deliveryNumber || cached.deliveryNumber || '',
-              deliveryComplement: fresh.deliveryComplement || cached.deliveryComplement || '',
-              deliveryStreet: fresh.deliveryStreet || cached.deliveryStreet || '',
-              deliveryCity: fresh.deliveryCity || cached.deliveryCity || '',
-              deliveryState: fresh.deliveryState || cached.deliveryState || '',
-            };
+        if (cached) {
+          if (
+            fresh.fulfillmentType === 'delivery'
+            && !fresh.deliveryPostalCode
+            && cached.deliveryPostalCode
+            && cached.deliveryNumber
+          ) {
+            customerCacheHydratedRef.current = true;
           }
+          return {
+            ...fresh,
+            customerName: fresh.customerName || cached.name,
+            customerPhone: fresh.customerPhone || cached.phone,
+            deliveryAddress: fresh.deliveryAddress || cached.deliveryAddress,
+            deliveryNeighborhood: fresh.deliveryNeighborhood || cached.deliveryNeighborhood,
+            deliveryPostalCode: fresh.deliveryPostalCode || cached.deliveryPostalCode || '',
+            deliveryNumber: fresh.deliveryNumber || cached.deliveryNumber || '',
+            deliveryComplement: fresh.deliveryComplement || cached.deliveryComplement || '',
+            deliveryStreet: fresh.deliveryStreet || cached.deliveryStreet || '',
+            deliveryCity: fresh.deliveryCity || cached.deliveryCity || '',
+            deliveryState: fresh.deliveryState || cached.deliveryState || '',
+          };
         }
         return prev ?? fresh;
       });
@@ -636,7 +648,8 @@ function ZeloMenuCartPageContent() {
   const isTableOrder = payload?.session.context === 'table_order';
   const isConfirmed = payload?.session.state === 'confirmed_waiting_review' || payload?.session.state === 'confirmed_waiting_payment';
   const isWaitingPayment = payload?.session.state === 'confirmed_waiting_payment';
-  const orderStatus = payload?.order?.status ?? (isWaitingPayment ? 'pending_payment' : 'pending_review');
+  const pixReceiptRequired = payload?.session.payment.pixReceiptRequired === true;
+  const orderStatus = normalizePublicOrderStatus(payload?.order?.status ?? (isWaitingPayment ? 'pending_payment' : 'pending_review'));
 
   // ── Auto-switch to scheduled mode when store is closed but scheduling is on ──
   useEffect(() => {
@@ -657,6 +670,21 @@ function ZeloMenuCartPageContent() {
       : '';
   const revalidationIssues = payload?.revalidation.issues ?? [];
   const revalidationIssueSignature = revalidationSignature(revalidationIssues);
+  const applyRevalidationPreview = useCallback(() => {
+    if (!payload?.revalidation.previewCart) {
+      void load('refresh');
+      return;
+    }
+    const refreshedDraft = buildDraftFromPayload(payload, payload.revalidation.previewCart);
+    setDraft((current) => current ? {
+      ...current,
+      items: refreshedDraft.items,
+      observations: refreshedDraft.observations,
+    } : refreshedDraft);
+    setQuantityDrafts({});
+    setStep(0);
+    toast.info('Atualizamos os itens e valores do carrinho. Confira antes de confirmar.');
+  }, [payload, toast]);
   const effectivePickupDate = scheduleMode === 'asap' ? todayISOdate() : (draft?.pickupDate ?? '');
   const effectivePickupTime = scheduleMode === 'asap' ? nowTimeBR() : (draft?.pickupTime ?? '');
   const detailErrors = draft && isPublicOrder
@@ -816,7 +844,7 @@ function ZeloMenuCartPageContent() {
   }, [revalidationIssueSignature, revalidationIssues, toast]);
 
   useEffect(() => {
-    if (!isConfirmed || isTableOrder) return;
+    if (!isConfirmed) return;
     const refreshStatus = () => {
       if (document.visibilityState === 'visible') void load('refresh');
     };
@@ -883,7 +911,8 @@ function ZeloMenuCartPageContent() {
       // Autofill: salva dados do cliente no cache local após confirmação
       if (next.confirmation.confirmed && isPublicOrder) {
         const slug = typeof next.session.metadata.slug === 'string' ? next.session.metadata.slug : null;
-        if (slug && (draft.customerName || draft.customerPhone)) {
+        if (slug && rememberCustomerData && (draft.customerName || draft.customerPhone)) {
+          setZeloMenuCustomerCacheConsent(slug, true);
           saveZeloMenuCustomerCache(slug, {
             name: draft.customerName,
             phone: normalizePhoneNumber(draft.customerPhone).slice(0, 11),
@@ -896,6 +925,8 @@ function ZeloMenuCartPageContent() {
             deliveryCity: draft.deliveryCity,
             deliveryState: draft.deliveryState,
           });
+        } else if (slug && !rememberCustomerData) {
+          clearZeloMenuCustomerCache(slug);
         }
       }
       if (next.confirmation.confirmed) {
@@ -1234,7 +1265,7 @@ function ZeloMenuCartPageContent() {
                 {(() => {
                   const isTerminalBad = orderStatus === 'rejected' || orderStatus === 'cancelled';
                   const { title, description } = resolveConfirmedStatusCopy(orderStatus, isDelivery, isTableOrder);
-                  const nextStepText = resolveConfirmedNextStep(orderStatus, isDelivery);
+                  const nextStepText = resolveConfirmedNextStep(orderStatus, isDelivery, isTableOrder);
                   const orderInfo = resolveOrderStatus(orderStatus, isDelivery);
                   const slug = payload?.session?.metadata?.slug;
                   const storeSlug = typeof slug === 'string' ? slug : null;
@@ -1359,10 +1390,17 @@ function ZeloMenuCartPageContent() {
                             Copiar código Pix
                           </button>
                           <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--zm-ink-soft)]">
-                            Cole no app do seu banco, pague e envie o comprovante no WhatsApp da loja.
+                            Cole no app do seu banco e pague. {pixReceiptRequired ? 'Se a loja solicitar, envie o comprovante no WhatsApp.' : 'O andamento será atualizado nesta tela.'}
                           </p>
                         </div>
                       )}
+
+                      {isWaitingPayment && pixReceiptRequired && !hasPix ? (
+                        <div role="alert" className="mt-5 flex items-start gap-2.5 rounded-2xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-4 text-[12px] leading-relaxed text-[var(--color-alert)]">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={1.9} />
+                          <span>A loja solicitou um comprovante, mas não há código Pix disponível neste momento. Use o WhatsApp da loja para confirmar o pagamento.</span>
+                        </div>
+                      ) : null}
 
                       {!hasPix && timelineEl}
 
@@ -1460,7 +1498,7 @@ function ZeloMenuCartPageContent() {
                                 className="inline-flex h-[52px] items-center justify-center gap-2 rounded-2xl bg-[var(--zm-brand)] px-6 text-[14px] font-bold text-white shadow-[0_12px_28px_rgba(110,58,255,0.28)] transition-opacity hover:opacity-90 active:scale-95"
                               >
                                 <MessageCircle className="h-[21px] w-[21px]" strokeWidth={1.9} />
-                                Conversar com a loja
+                                {isWaitingPayment && pixReceiptRequired ? 'Enviar comprovante no WhatsApp' : 'Conversar com a loja'}
                               </a>
                             )}
                             {storeSlug && (
@@ -1586,6 +1624,43 @@ function ZeloMenuCartPageContent() {
                         </button>
                       )}
                     </div>
+                    {revalidationIssues.length > 0 && !isConfirmed ? (
+                      <section
+                        role="alert"
+                        className="rounded-xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-3 text-[12px] text-[var(--color-alert)]"
+                      >
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" strokeWidth={1.9} />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold">Revise seu carrinho antes de confirmar</p>
+                            <ul className="mt-1.5 list-disc space-y-1 pl-4 leading-snug">
+                              {revalidationIssues.slice(0, 4).map((issue, index) => (
+                                <li key={`${issue.code}-${issue.productName ?? 'cart'}-${index}`}>
+                                  {issue.message}
+                                  {issue.code === 'price_changed' && issue.previousUnitPrice != null && issue.currentUnitPrice != null
+                                    ? ` ${toBRL(issue.previousUnitPrice)} → ${toBRL(issue.currentUnitPrice)}.`
+                                    : null}
+                                  {issue.code === 'stock_insufficient' && issue.availableQuantity != null
+                                    ? ` Disponível: ${issue.availableQuantity}.`
+                                    : null}
+                                </li>
+                              ))}
+                            </ul>
+                            {revalidationIssues.length > 4 ? (
+                              <p className="mt-1">Há mais {revalidationIssues.length - 4} ajuste(s) no carrinho.</p>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={applyRevalidationPreview}
+                              disabled={refreshing}
+                              className="mt-2.5 inline-flex min-h-9 items-center justify-center rounded-lg border border-current px-3 font-semibold transition-opacity disabled:opacity-50"
+                            >
+                              {refreshing ? 'Atualizando…' : payload?.revalidation.previewCart ? 'Atualizar itens e valores' : 'Tentar novamente'}
+                            </button>
+                          </div>
+                        </div>
+                      </section>
+                    ) : null}
                     {draft.items.length === 0 ? (
                       <div className="rounded-xl border border-dashed border-[var(--zm-line)] bg-[var(--zm-surface-muted)] px-4 py-7 text-center">
                         <p className="text-[14px] font-medium text-[var(--zm-ink-soft)]">Seu carrinho está vazio.</p>
@@ -1799,6 +1874,45 @@ function ZeloMenuCartPageContent() {
                       />
                       {fieldError(detailErrors.customerPhone)}
                     </label>
+
+                    {isPublicOrder ? (
+                      <div className="mt-3 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface-muted)] p-3">
+                        <label className="flex items-start gap-2.5 text-[12px] leading-snug text-[var(--zm-ink-soft)]">
+                          <input
+                            type="checkbox"
+                            checked={rememberCustomerData}
+                            onChange={(event) => {
+                              const granted = event.target.checked;
+                              setRememberCustomerData(granted);
+                              const customerSlug = payload?.session.metadata.slug;
+                              if (typeof customerSlug === 'string') {
+                                setZeloMenuCustomerCacheConsent(customerSlug, granted);
+                                if (!granted) clearZeloMenuCustomerCache(customerSlug);
+                              }
+                            }}
+                            className="mt-0.5 h-4 w-4 flex-none accent-[var(--zm-brand)]"
+                          />
+                          <span>
+                            Lembrar meus dados neste dispositivo por até 7 dias para agilizar o próximo pedido.
+                          </span>
+                        </label>
+                        {rememberCustomerData ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const customerSlug = payload?.session.metadata.slug;
+                              if (typeof customerSlug !== 'string') return;
+                              clearZeloMenuCustomerCache(customerSlug);
+                              setRememberCustomerData(false);
+                              toast.info('Dados salvos removidos deste dispositivo.');
+                            }}
+                            className="mt-2 pl-6 text-[11px] font-semibold text-[var(--color-alert)] underline underline-offset-2"
+                          >
+                            Apagar dados salvos
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     <div className={`grid transition-[grid-template-rows,opacity,margin-top] duration-[380ms] ease-[cubic-bezier(.22,.61,.36,1)] motion-reduce:transition-none ${isDelivery ? 'mt-4 grid-rows-[1fr] opacity-100' : 'mt-0 grid-rows-[0fr] opacity-0'}`}>
                       <div className="min-h-0 overflow-hidden">
@@ -2087,7 +2201,11 @@ function ZeloMenuCartPageContent() {
                     {payload.business.pixEnabled && /pix/i.test(draft.paymentMethod) ? (
                       <div className="flex items-start gap-2 rounded-xl border border-[var(--zm-brand-soft)] bg-[var(--zm-brand-soft)] p-3 text-[12px] leading-relaxed text-[var(--zm-brand-deep)]">
                         <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-none" strokeWidth={2} />
-                        <span>O comprovante do Pix será conferido pela loja antes de preparar.</span>
+                        <span>
+                          {pixReceiptRequired
+                            ? 'Depois de pagar, envie o comprovante pelo WhatsApp se a loja solicitar.'
+                            : 'Depois de pagar, aguarde a atualização do pedido nesta tela.'}
+                        </span>
                       </div>
                     ) : null}
 

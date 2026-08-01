@@ -13,10 +13,20 @@ import type {
   DeliverySettings,
 } from '../domain/deliverySettings';
 import type { WeeklyHours } from '../domain/businessHours';
+import type { ZeloMenuPublicationSummary } from '../domain/zelomenuPublication';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type { PixKeyType };
+
+export const ZELOMENU_PUBLIC_HOST = 'menu.zelopdv.com.br';
+
+export function buildZeloMenuPublicUrl(slug: string): string {
+  const base = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)
+    ? window.location.origin
+    : `https://${ZELOMENU_PUBLIC_HOST}`;
+  return `${base}/${encodeURIComponent(slug.trim())}`;
+}
 
 export type ZeloMenuStoreSettings = {
   logoUrl: string | null;
@@ -41,6 +51,7 @@ export type ZeloMenuStoreSettings = {
   timezone: string | null;
   schedulingEnabled: boolean;
   schedulingLeadTimeMinutes: number;
+  publicationSummary: ZeloMenuPublicationSummary;
 };
 
 export type ZeloMenuSettingsPatch = {
@@ -184,6 +195,21 @@ export async function updateZeloMenuSettings(
     body: JSON.stringify(patch),
   });
   return parseResponse<{ ok: true }>(response);
+}
+
+export type ZeloMenuOperationalMetrics = {
+  cartsStarted: number;
+  ordersCreated: number;
+  conversionRate: number;
+  revenue: number;
+};
+
+export async function getZeloMenuOperationalMetrics(): Promise<ZeloMenuOperationalMetrics> {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/metrics', {
+    headers: await authHeader(),
+    cache: 'no-store',
+  });
+  return parseResponse<ZeloMenuOperationalMetrics>(response);
 }
 
 // ─── Delivery settings ──────────────────────────────────────────────────────

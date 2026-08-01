@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ImageIcon, Minus, Plus, X } from 'lucide-react';
 import { resolveModifierSelections } from '../../domain/zelomenuModifiers';
 import { resolveCategorySuggestions } from '../../domain/zelomenuCategorySuggestions';
@@ -15,11 +15,13 @@ function MiniStepper({
   value,
   min,
   max,
+  label,
   onChange,
 }: {
   value: number;
   min: number;
   max: number | null;
+  label?: string;
   onChange: (v: number) => void;
 }) {
   const atMin = value <= min;
@@ -31,11 +33,11 @@ function MiniStepper({
         onClick={() => onChange(value - 1)}
         disabled={atMin}
         className="flex h-7 w-7 items-center justify-center rounded-l-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
-        aria-label="Diminuir"
+        aria-label={label ? `Diminuir quantidade de ${label}` : 'Diminuir quantidade'}
       >
         <Minus className="h-3 w-3" strokeWidth={2.5} />
       </button>
-      <span className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)]">
+      <span className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)]" aria-live="polite">
         {value}
       </span>
       <button
@@ -43,7 +45,7 @@ function MiniStepper({
         onClick={() => onChange(value + 1)}
         disabled={atMax}
         className="flex h-7 w-7 items-center justify-center rounded-r-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
-        aria-label="Aumentar"
+        aria-label={label ? `Aumentar quantidade de ${label}` : 'Aumentar quantidade'}
       >
         <Plus className="h-3 w-3" strokeWidth={2.5} />
       </button>
@@ -85,12 +87,44 @@ export function ProductAddModal({
   const [qtyDraft, setQtyDraft] = useState(String(Math.max(1, initialQuantity)));
   const [notes, setNotes] = useState(initialNotes);
   const isEditing = initialQuantity > 0;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    const previousActiveElement = document.activeElement as HTMLElement | null;
+    closeButtonRef.current?.focus();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      ));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', handler);
+      previousActiveElement?.focus();
+    };
+  }, []);
 
   function setOptionQuantity(groupId: string, optionId: string, quantity: number) {
     setSelections((prev) => {
@@ -159,10 +193,23 @@ export function ProductAddModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div
         className="flex w-full max-w-md flex-col rounded-t-3xl bg-[var(--color-surface)] shadow-2xl"
         style={{ maxHeight: '92vh' }}
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="product-add-title"
+        aria-describedby="product-add-description"
+        tabIndex={-1}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--color-line)] px-5 py-4">
@@ -172,6 +219,7 @@ export function ProductAddModal({
           <button
             type="button"
             onClick={onClose}
+            ref={closeButtonRef}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-canvas)]"
             aria-label="Fechar"
           >
@@ -191,12 +239,12 @@ export function ProductAddModal({
 
           <div className="space-y-5 px-5 py-4">
             <div>
-              <h3 className="text-[17px] font-bold leading-snug text-[var(--color-ink)]">{product.name}</h3>
+              <h3 id="product-add-title" className="text-[17px] font-bold leading-snug text-[var(--color-ink)]">{product.name}</h3>
               {product.description ? (
-                <p className="mt-1 text-[13px] leading-relaxed text-[var(--color-ink-muted)]">
+                <p id="product-add-description" className="mt-1 text-[13px] leading-relaxed text-[var(--color-ink-muted)]">
                   {product.description}
                 </p>
-              ) : null}
+              ) : <span id="product-add-description" className="sr-only">Escolha os complementos e a quantidade do produto.</span>}
               <p className="mt-2 text-[15px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
                 {resolution.ok ? toBRL(resolution.finalUnitPrice) : toBRL(product.basePrice)}
               </p>
@@ -260,6 +308,7 @@ export function ProductAddModal({
                               value={currentQty}
                               min={0}
                               max={group.maxPerOption ?? null}
+                              label={option.linkedProduct?.name ?? option.name}
                               onChange={(v) => setOptionQuantity(group.id, option.id, v)}
                             />
                           </div>

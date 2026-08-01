@@ -7,7 +7,7 @@ import {
   persistZeloMenuStoreCartCache,
   type ZeloMenuStoreCartItem,
 } from '../domain/zelomenuStoreCartCache';
-import { startPublicOrder, type TableOrderContext, type ZeloMenuCatalogProduct } from '../services/zelomenuApi';
+import { startPublicOrder, ZeloMenuApiError, type TableOrderContext, type ZeloMenuCatalogProduct } from '../services/zelomenuApi';
 import { useToast } from '../contexts/ToastContext';
 
 type SelectedItem = ZeloMenuStoreCartItem;
@@ -18,12 +18,24 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
 
   const restored = useMemo(() => loadZeloMenuStoreCartCache(slug), [slug]);
   const [items, setItems] = useState<Record<string, SelectedItem>>(restored.items);
+  const [hydratedSlug, setHydratedSlug] = useState(slug);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [sheetProduct, setSheetProduct] = useState<ZeloMenuCatalogProduct | null>(null);
 
   useEffect(() => {
+    // Avoid persisting the previous store's cart under the new slug while an
+    // SPA navigation is rehydrating the cart namespace.
+    setHydratedSlug(slug);
+    setItems(loadZeloMenuStoreCartCache(slug).items);
+    setSheetProduct(null);
+    setSubmitError(null);
+  }, [slug]);
+
+  useEffect(() => {
+    if (hydratedSlug !== slug) return;
     persistZeloMenuStoreCartCache(slug, { items });
-  }, [slug, items]);
+  }, [hydratedSlug, slug, items]);
 
   function changeQty(key: string, delta: number) {
     setItems((prev) => {
@@ -121,6 +133,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
   }
 
   async function continueToCart() {
+    setSubmitError(null);
     try {
       setSubmitting(true);
       const result = await startPublicOrder(slug, {
@@ -139,12 +152,23 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
       navigate(result.path);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
-      if (msg === 'TABLE_TAKEN_BY_OTHER_GROUP') {
-        toast.error('Esta mesa já tem um pedido em aberto por outro grupo. Peça ao garçom para liberar a comanda.');
-      } else if (msg === 'COMANDA_CLOSED') {
-        toast.error('Esta comanda já foi encerrada. Peça ao garçom para abrir uma nova comanda.');
+      const errorCode = err instanceof ZeloMenuApiError ? err.code : msg;
+      const friendlyMessage = errorCode === 'TABLE_TAKEN_BY_OTHER_GROUP'
+        ? 'Esta mesa já tem um pedido em aberto por outro grupo. Peça ao garçom para liberar a comanda.'
+        : errorCode === 'COMANDA_CLOSED'
+          ? 'Esta comanda já foi encerrada. Peça ao garçom para abrir uma nova comanda.'
+          : errorCode === 'REQUEST_TIMEOUT'
+            ? 'A conexão demorou demais. Verifique a internet e tente novamente.'
+            : msg || 'Não consegui iniciar o pedido. Tente novamente.';
+      setSubmitError(friendlyMessage);
+      if (errorCode === 'TABLE_TAKEN_BY_OTHER_GROUP') {
+        toast.error(friendlyMessage);
+      } else if (errorCode === 'COMANDA_CLOSED') {
+        toast.error(friendlyMessage);
+      } else if (errorCode === 'REQUEST_TIMEOUT') {
+        toast.error(friendlyMessage);
       } else {
-        toast.error(msg || 'Não consegui iniciar o pedido. Tente de novo.');
+        toast.error(friendlyMessage);
       }
     } finally {
       setSubmitting(false);
@@ -158,6 +182,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
   return {
     items,
     submitting,
+    submitError,
     sheetProduct,
     setSheetProduct,
     changeQty,

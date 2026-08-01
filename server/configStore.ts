@@ -2,10 +2,11 @@ import { getServiceSupabase } from './supabaseServer.js';
 import {
   resolveZeloMenuPublicationCatalogProduct,
   resolveZeloMenuLinkedOptionAvailability,
+  summarizeZeloMenuPublication,
 } from '../src/domain/zelomenuPublication.js';
 import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
-import type { ZeloMenuProductPublication } from '../src/domain/zelomenuPublication.js';
+import type { ZeloMenuProductPublication, ZeloMenuPublicationProduct, ZeloMenuPublicationSummary } from '../src/domain/zelomenuPublication.js';
 import { deriveWeeklyFromLegacy, normalizeWeeklyHours, type WeeklyHours } from '../src/domain/businessHours.js';
 import { isPixKeyType, type PixKeyType } from '../src/domain/pixBrCode.js';
 
@@ -70,6 +71,7 @@ export type BusinessConfig = {
    * — sem o tipo, não geramos nada).
    */
   pixPayment: { key: string; keyType: PixKeyType } | null;
+  publicationSummary: ZeloMenuPublicationSummary;
   catalogHierarchy: CatalogCategoriaGroup[];
   products: CatalogProduct[];
 };
@@ -85,6 +87,16 @@ const DEFAULT_CONFIG: BusinessConfig = {
   deliveryConfig: null,
   pixReceiptConfig: null,
   pixPayment: null,
+  publicationSummary: {
+    total: 0,
+    published: 0,
+    unpublished: 0,
+    paused: 0,
+    hidden: 0,
+    outOfStock: 0,
+    missingCategory: 0,
+    attention: 0,
+  },
   catalogHierarchy: [],
   products: [],
 };
@@ -461,10 +473,20 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
 
   // Build a product lookup map for linked product resolution (name, price, photo, availability)
   const rawProductMap = new Map<number, CatalogProductWithPlacement>();
+  const publicationProducts: ZeloMenuPublicationProduct[] = [];
   for (const rawRow of produtosRes.data ?? []) {
     const product = normalizeProductRow(rawRow);
     if (!product) continue;
     const publication = publicationsByProductId.get(product.id) ?? null;
+    publicationProducts.push({
+      id: product.id,
+      nome: product.name,
+      id_categoria: product.idCategoria,
+      controlar_estoque: product.stockControlled === true,
+      estoque_atual: product.stockQuantity ?? 0,
+      ocultar_no_pdv: product.ocultarNoPdv,
+      publication,
+    });
     const resolved = resolveZeloMenuPublicationCatalogProduct({
       id: product.id,
       nome: product.name,
@@ -555,6 +577,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     subcategoriasRes.data ?? [],
     productsWithPlacement,
   );
+  const publicationSummary = summarizeZeloMenuPublication(publicationProducts);
 
   const closedDays = Array.isArray(row.dias_fechamento) ? (row.dias_fechamento as string[]) : [];
   const openTime = normalizeText(row.horario_abertura) || undefined;
@@ -580,6 +603,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     deliveryConfig: normalizeDeliveryConfig(row.delivery_config),
     pixReceiptConfig: normalizePixReceiptConfig(row.pix_receipt_config),
     pixPayment: normalizePixPayment(row.chave_pix, row.zelomenu_pix_key_type),
+    publicationSummary,
     catalogHierarchy,
     products,
   });

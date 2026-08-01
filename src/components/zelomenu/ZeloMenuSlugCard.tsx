@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Check, Copy, Link2, Loader2 } from 'lucide-react';
-import { getZeloMenuSlug, setZeloMenuSlug } from '../../services/zelomenuAdminApi';
-
-const PUBLIC_HOST = 'menu.zelopdv.com.br';
+import { buildZeloMenuPublicUrl, getZeloMenuSlug, setZeloMenuSlug, ZELOMENU_PUBLIC_HOST } from '../../services/zelomenuAdminApi';
 
 // "Link público do cardápio" card. Self-contained drop-in `<ZeloMenuSlugCard />`
 // — the API client reads the Supabase session itself, so no props are required.
@@ -55,7 +53,7 @@ export function ZeloMenuSlugCard() {
   async function copyLink() {
     if (!savedSlug) return;
     try {
-      await navigator.clipboard.writeText(`https://${PUBLIC_HOST}/${savedSlug}`);
+      await navigator.clipboard.writeText(buildZeloMenuPublicUrl(savedSlug));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -76,7 +74,7 @@ export function ZeloMenuSlugCard() {
           {/* Prefixed slug input */}
           <div className="flex items-stretch overflow-hidden rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-canvas)] focus-within:border-[var(--color-brand)]">
             <span className="flex shrink-0 items-center border-r border-[var(--color-line)] bg-[var(--color-surface-muted)] px-3 text-[13px] text-[var(--color-ink-muted)]">
-              {PUBLIC_HOST}/
+              {ZELOMENU_PUBLIC_HOST}/
             </span>
             <input
               value={slug}

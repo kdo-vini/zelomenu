@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { AlertTriangle, Loader2, Minus, Plus, Search, ShoppingBag, X } from 'lucide-react';
+import { AlertTriangle, Loader2, Minus, Plus, RefreshCw, Search, ShoppingBag, X } from 'lucide-react';
 import {
   getPublicStore,
   type TableOrderContext,
@@ -84,6 +84,7 @@ function ZeloMenuStorePageContent({
   const [store, setStore] = useState<ZeloMenuPublicStoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
 
@@ -100,6 +101,8 @@ function ZeloMenuStorePageContent({
       try {
         setLoading(true);
         setError(null);
+        setStore(null);
+        setActiveCategory('');
         const data = await getPublicStore(slug);
         if (!active) return;
         setStore(data);
@@ -116,7 +119,7 @@ function ZeloMenuStorePageContent({
       active = false;
       document.title = 'ZeloMenu';
     };
-  }, [slug]);
+  }, [slug, loadAttempt]);
 
   // Highlights on the public home carry the product id in the URL. Once the
   // store is ready, reuse the same cart cache and add the product immediately.
@@ -223,12 +226,28 @@ function ZeloMenuStorePageContent({
   if (error && !store) {
     return (
       <div className="zelomenu-theme flex min-h-screen items-center justify-center bg-[var(--zm-canvas)] px-6">
-        <div className="max-w-sm rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-6 text-center">
+        <div className="max-w-sm rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-6 text-center" role="alert">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-alert-soft)]">
             <AlertTriangle className="h-6 w-6 text-[var(--color-alert)]" strokeWidth={1.8} />
           </div>
           <h2 className="text-[16px] font-semibold text-[var(--zm-ink)]">Cardápio indisponível</h2>
           <p className="mt-1 text-[14px] text-[var(--zm-ink-soft)]">{error}</p>
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <button
+              type="button"
+              onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--zm-brand)] px-4 py-2.5 text-[13px] font-semibold text-white"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Tentar novamente
+            </button>
+            <a
+              href="/"
+              className="inline-flex items-center justify-center rounded-xl border border-[var(--zm-line)] px-4 py-2.5 text-[13px] font-semibold text-[var(--zm-ink)]"
+            >
+              Ir para o início
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -251,6 +270,16 @@ function ZeloMenuStorePageContent({
       ) : null}
 
       {/* ── Sticky header ──────────────────────────────────────────────────── */}
+      {store.business.coverUrl ? (
+        <div className="mx-auto max-w-5xl overflow-hidden bg-[var(--zm-surface)]">
+          <img
+            src={store.business.coverUrl}
+            alt=""
+            className="h-36 w-full object-cover sm:h-48"
+          />
+        </div>
+      ) : null}
+
       <header className="sticky top-0 z-20 border-b border-[var(--zm-line)] bg-[var(--zm-surface)]">
         <div className="mx-auto max-w-5xl">
 
@@ -292,6 +321,11 @@ function ZeloMenuStorePageContent({
               </div>
             </div>
           </div>
+          {store.business.description ? (
+            <p className="px-4 pb-3 text-[13px] leading-relaxed text-[var(--zm-ink-soft)]">
+              {store.business.description}
+            </p>
+          ) : null}
 
           {/* Search bar */}
           <div className="px-4 pb-2.5">
@@ -305,7 +339,7 @@ function ZeloMenuStorePageContent({
                 className="flex-1 bg-transparent text-[13px] text-[var(--zm-ink)] placeholder:text-[var(--zm-ink-soft)] outline-none"
               />
               {searchQuery ? (
-                <button type="button" onClick={() => setSearchQuery('')} className="shrink-0 rounded p-0.5">
+                <button type="button" onClick={() => setSearchQuery('')} className="shrink-0 rounded p-0.5" aria-label="Limpar busca">
                   <X className="h-3.5 w-3.5 text-[var(--zm-ink-soft)]" strokeWidth={2} />
                 </button>
               ) : null}
@@ -464,6 +498,11 @@ function ZeloMenuStorePageContent({
           style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
         >
           <div className="mx-auto max-w-md">
+            {cart.submitError ? (
+              <div className="mb-2 rounded-xl border border-[var(--color-alert)] bg-[var(--color-alert-soft)] px-3 py-2 text-[12px] font-medium text-[var(--color-alert)]" role="alert">
+                {cart.submitError}
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={() => void cart.continueToCart()}
@@ -691,10 +730,12 @@ function PhotoRow({
   return (
     <div
       className="flex gap-3 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3 cursor-pointer active:scale-[0.99] transition-transform"
-      onClick={onAdd}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAdd(); }}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, input, textarea, select')) return;
+        onAdd();
+      }}
+      role="group"
+      aria-label={`Abrir ${product.name}`}
     >
       <div className="flex min-w-0 flex-1 flex-col">
         <p className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[var(--zm-ink)]">
@@ -772,10 +813,12 @@ function FeaturedCard({
   return (
     <div
       className="flex h-full w-[148px] flex-col overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] cursor-pointer"
-      onClick={onAdd}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAdd(); }}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, input, textarea, select')) return;
+        onAdd();
+      }}
+      role="group"
+      aria-label={`Abrir ${product.name}`}
     >
       <div className="relative h-[110px] w-full overflow-hidden bg-[var(--zm-canvas)]">
         {product.photoUrl ? (
@@ -847,10 +890,12 @@ function ListRow({
   return (
     <div
       className={`flex items-center gap-3 px-4 py-3 cursor-pointer ${divider ? 'border-b border-[var(--zm-line)]' : ''}`}
-      onClick={onAdd}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAdd(); }}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, input, textarea, select')) return;
+        onAdd();
+      }}
+      role="group"
+      aria-label={`Abrir ${product.name}`}
     >
       {product.photoUrl ? (
         <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--zm-canvas)] p-1.5">

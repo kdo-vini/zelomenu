@@ -408,6 +408,25 @@ export function ProductModal({
                   setGroupsDirty(true);
                   setGroupsDraft((prev) => [...prev, createEmptyModifierGroup(prev.length)]);
                 }}
+                onDuplicate={(index) => {
+                  setGroupsDirty(true);
+                  setGroupsDraft((prev) => {
+                    const source = prev[index];
+                    if (!source) return prev;
+                    const duplicate: ZeloMenuModifierGroupDraft = {
+                      ...source,
+                      id: undefined,
+                      name: source.name.trim() ? `${source.name.trim()} (cópia)` : '',
+                      order: prev.length,
+                      options: source.options.map((option, optionIndex) => ({
+                        ...option,
+                        id: undefined,
+                        order: optionIndex,
+                      })),
+                    };
+                    return [...prev, duplicate];
+                  });
+                }}
                 onDelete={(index) => {
                   setGroupsDirty(true);
                   setGroupsDraft((prev) => prev.filter((_, i) => i !== index));

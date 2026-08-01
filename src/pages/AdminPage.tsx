@@ -6,6 +6,7 @@ import { useCatalog } from '../hooks/useCatalog';
 import { LoginForm } from '../components/LoginForm';
 import { NeutralState } from '../components/NeutralState';
 import { ZeloMenuSettingsCard } from '../components/zelomenu/ZeloMenuSettingsCard';
+import { ZeloMenuReadinessCard } from '../components/zelomenu/ZeloMenuReadinessCard';
 import { AdminLayout, type NavSection } from '../components/AdminLayout';
 import { OnboardingWizard, ONBOARDING_KEY } from '../components/OnboardingWizard';
 import { getZeloMenuSlug } from '../services/zelomenuAdminApi';
@@ -15,6 +16,7 @@ import type { ZeloMenuSettingsTab } from '../components/zelomenu/ZeloMenuSetting
 
 const CatalogView = lazy(() => import('../components/views/CatalogView').then((module) => ({ default: module.CatalogView })));
 const SettingsPage = lazy(() => import('./SettingsPage').then((module) => ({ default: module.SettingsPage })));
+const ZeloMenuMetricsPage = lazy(() => import('./ZeloMenuMetricsPage').then((module) => ({ default: module.ZeloMenuMetricsPage })));
 const MesasAdminSection = lazy(() => import('../components/zelomenu/MesasAdminSection').then((module) => ({ default: module.MesasAdminSection })));
 
 // ─── Upsell ────────────────────────────────────────────────────────────────
@@ -65,6 +67,8 @@ function PublicationPage() {
           />
         </div>
       </nav>
+
+      <ZeloMenuReadinessCard />
 
       <ZeloMenuSettingsCard activeTab={activeTab} />
     </div>
@@ -122,7 +126,12 @@ function AdminPageContent() {
   }, []);
 
   const handleNavigate = (section: NavSection) => {
-    window.location.hash = section;
+    const nextHash = section === 'metrics' ? 'indicadores' : section;
+    setActiveSection(section);
+    setSettingsPath('overview');
+    if (window.location.hash !== `#${nextHash}`) {
+      window.location.hash = nextHash;
+    }
   };
 
   const openDeliverySettings = () => {
@@ -242,6 +251,7 @@ function AdminPageContent() {
             onBackToOverview={returnToSettingsOverview}
           />
         }
+        metricsContent={<ZeloMenuMetricsPage />}
         mesasContent={mesasContent}
       />
     </Suspense>
@@ -265,6 +275,7 @@ function parseAdminHash(rawHash: string): { section: NavSection; settingsPath: S
   if (hash === 'settings/entrega/configurar') return { section: 'settings', settingsPath: 'delivery' };
   if (hash === 'settings/horarios') return { section: 'settings', settingsPath: 'hours' };
   if (hash === 'settings/acoes-administrativas' || hash === 'settings/admin') return { section: 'settings', settingsPath: 'admin' };
+  if (hash === 'indicadores' || hash === 'metrics' || hash === 'settings/indicadores') return { section: 'metrics', settingsPath: 'overview' };
   if (hash.startsWith('settings')) return { section: 'settings', settingsPath: 'overview' };
   return { section: 'catalog', settingsPath: 'overview' };
 }
