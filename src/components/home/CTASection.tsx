@@ -19,7 +19,7 @@ export function CTASection() {
 
       <div className="home-cta__primary">
         <div className="home-cta__icon home-cta__icon--primary">
-          <img src="/assets/brand/logofundobrancozelomenu-64.webp" alt="" width="36" height="36" className="h-9 w-9 object-contain" />
+          <img src="/assets/brand/logofundobrancozelomenu-optimized.png" alt="" width="36" height="36" className="h-9 w-9 object-contain" />
         </div>
         <div>
           <span className="home-cta__kicker">Para empresas</span>

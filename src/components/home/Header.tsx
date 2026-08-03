@@ -17,7 +17,7 @@ export function Header() {
     <header className="home-header">
       <div className="home-container home-header__inner">
         <a className="home-header__brand" href="/" aria-label="Página inicial do ZeloMenu">
-          <img src="/assets/brand/zelomenu-mark.svg" alt="" width="52" height="52" />
+          <img src="/assets/brand/logozelomenu-optimized.png" alt="" />
           <span className="home-header__brand-name">ZeloMenu</span>
         </a>
 
