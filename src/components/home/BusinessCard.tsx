@@ -2,6 +2,7 @@ import { useBusinessFavorite } from '../../hooks/useHomePersonalization.ts';
 import { rememberBusinessVisit } from '../../services/homePersonalization.ts';
 import type { Business } from '../../data/types.ts';
 import { Heart, MapPin, ArrowRight, Star } from 'lucide-react';
+import { optimizedImageUrl } from '../../utils/optimizedImageUrl.ts';
 
 interface BusinessCardProps {
   business: Business;
@@ -11,6 +12,8 @@ interface BusinessCardProps {
 export function BusinessCard({ business, priority = false }: BusinessCardProps) {
   const location = `${business.city}, ${business.state}`;
   const { favorite, toggle } = useBusinessFavorite(business.id);
+  const coverUrl = optimizedImageUrl(business.coverUrl, { width: 640, height: 426 });
+  const logoUrl = optimizedImageUrl(business.logoUrl, { width: 96, height: 96 });
 
   function handleVisit() {
     rememberBusinessVisit(business.id);
@@ -21,13 +24,21 @@ export function BusinessCard({ business, priority = false }: BusinessCardProps) 
       <a className="home-business-card__cover" href={business.menuUrl} onClick={handleVisit} aria-label={`Abrir cardápio de ${business.name}`}>
         {business.coverUrl ? (
           <img
-            src={business.coverUrl}
+            src={coverUrl ?? business.coverUrl ?? undefined}
             alt={`Foto de capa de ${business.name}`}
             loading={priority ? 'eager' : 'lazy'}
             fetchPriority={priority ? 'high' : 'auto'}
             width="900"
             height="600"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            onError={(e) => {
+              const image = e.currentTarget;
+              if (business.coverUrl && image.dataset.fallback !== 'true' && image.currentSrc !== business.coverUrl) {
+                image.dataset.fallback = 'true';
+                image.src = business.coverUrl;
+                return;
+              }
+              image.style.display = 'none';
+            }}
           />
         ) : <div className="home-business-card__cover-fallback" />}
         {business.sponsored ? <span className="home-business-card__badge">Patrocinado</span> : null}
@@ -45,7 +56,23 @@ export function BusinessCard({ business, priority = false }: BusinessCardProps) 
 
       <div className="home-business-card__body">
         <div className="home-business-card__identity">
-          <img src={business.logoUrl} alt="" width="44" height="44" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).src = '/assets/brand/logozelomenu-optimized.png'; }} />
+          <img
+            src={logoUrl ?? business.logoUrl ?? '/assets/brand/logozelomenu-optimized.png'}
+            alt=""
+            width="44"
+            height="44"
+            loading="lazy"
+            decoding="async"
+            onError={(e) => {
+              const image = e.currentTarget;
+              if (image.dataset.fallback !== 'true') {
+                image.dataset.fallback = 'true';
+                image.src = business.logoUrl ?? '/assets/brand/logozelomenu-optimized.png';
+              } else {
+                image.src = '/assets/brand/logozelomenu-optimized.png';
+              }
+            }}
+          />
           <div>
             <h3>{business.name}</h3>
             <p>{business.description || 'Cardápio digital'}</p>

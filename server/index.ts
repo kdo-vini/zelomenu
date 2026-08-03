@@ -771,7 +771,13 @@ app.post('/api/public/zelomenu/delivery/cep', cepLookupLimiter, async (req, res)
 // ─── Serve built frontend in production ──────────────────────────────────────
 
 const distPath = path.resolve(__dirname, '..', 'dist');
-app.use(express.static(distPath));
+app.use('/assets', express.static(path.join(distPath, 'assets'), {
+  maxAge: '1y',
+  immutable: true,
+}));
+app.use(express.static(distPath, {
+  maxAge: '1h',
+}));
 
 // Inject runtime env vars into the HTML so the frontend doesn't depend on
 // build-time --build-arg. The server reads them from process.env (set via
@@ -795,7 +801,8 @@ let cachedAdminHtml: string | null = null;
 function withHeadTags(html: string, title: string, description: string): string {
   return html
     .replace(/<title>.*?<\/title>/s, `<title>${title}</title>`)
-    .replace(/<meta name="description" content=".*?"\s*\/?>/s, `<meta name="description" content="${description}" />`);
+    .replace(/<meta name="description" content=".*?"\s*\/?>/s, `<meta name="description" content="${description}" />`)
+    .replace(/<meta name="robots" content=".*?"\s*\/?>/s, '<meta name="robots" content="noindex, nofollow" />');
 }
 
 function getIndexHtml(isAdmin: boolean): string {

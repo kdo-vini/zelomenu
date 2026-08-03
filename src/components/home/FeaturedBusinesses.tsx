@@ -16,7 +16,7 @@ export function FeaturedBusinesses({ businesses }: FeaturedBusinessesProps) {
         actionHref="#empresas"
       />
       <div id="featured-businesses-title" className="sr-only">Empresas em destaque</div>
-      <BusinessGrid businesses={businesses} priorityCount={4} />
+      <BusinessGrid businesses={businesses} />
     </section>
   );
 }

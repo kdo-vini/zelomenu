@@ -47,7 +47,7 @@ export const businessesService = {
         categoryLabel: b.categoryLabel ?? 'Cardápio digital',
         city: b.city ?? '',
         state: b.state ?? '',
-        coverUrl: b.coverUrl ?? '/assets/businesses/covers/default.jpg',
+        coverUrl: b.coverUrl ?? '',
         logoUrl: b.logoUrl ?? '/assets/brand/logozelomenu-optimized.png',
         description: b.description ?? '',
         latitude: b.latitude ?? null,

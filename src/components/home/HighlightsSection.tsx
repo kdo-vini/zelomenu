@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Sparkles, ShoppingBag } from 'lucide-react';
 import type { Business } from '../../data/types.ts';
+import { optimizedImageUrl } from '../../utils/optimizedImageUrl.ts';
 
 type HighlightsSectionProps = {
   businesses: Business[];
@@ -12,7 +13,7 @@ function formatPrice(value: number): string {
 
 export function HighlightsSection({ businesses }: HighlightsSectionProps) {
   const highlights = businesses.flatMap((business) =>
-    business.highlights.map((highlight) => ({ business, highlight })),
+    business.highlights.map((highlight) => ({ business, highlight, photoUrl: highlight.photoUrl })),
   );
 
   const highlightsRef = useRef<HTMLDivElement>(null);
@@ -78,7 +79,7 @@ export function HighlightsSection({ businesses }: HighlightsSectionProps) {
       <h2 id="highlights-title" className="sr-only">Destaques das empresas</h2>
 
       <div ref={highlightsRef} className="home-highlights" aria-label="Produtos em destaque">
-        {highlights.map(({ business, highlight }) => (
+        {highlights.map(({ business, highlight, photoUrl }) => (
           <a
             key={`${business.id}-${highlight.id}`}
             className="home-highlight-card"
@@ -86,8 +87,18 @@ export function HighlightsSection({ businesses }: HighlightsSectionProps) {
             aria-label={`Adicionar ${highlight.name} ao carrinho de ${business.name}`}
           >
             <div className="home-highlight-card__image">
-              {highlight.photoUrl ? (
-                <img src={highlight.photoUrl} alt="" width="320" height="220" loading="lazy" />
+              {photoUrl ? (
+                <img
+                  src={optimizedImageUrl(photoUrl, { width: 400, height: 286 }) ?? photoUrl}
+                  alt=""
+                  width="320"
+                  height="220"
+                  loading="lazy"
+                  decoding="async"
+                  onError={(e) => {
+                    if (e.currentTarget.src !== photoUrl) e.currentTarget.src = photoUrl;
+                  }}
+                />
               ) : (
                 <ShoppingBag size={30} strokeWidth={1.5} aria-hidden="true" />
               )}
