@@ -28,12 +28,18 @@ export function Hero({ query, onQueryChange, onClearQuery, onSearch }: HeroProps
         <div className="home-hero__art" aria-hidden="true">
           <div className="home-hero__glow" />
           <picture>
-            <source srcSet="/assets/hero/zelomenu-hero.webp" type="image/webp" />
+            <source
+              srcSet="/assets/hero/zelomenu-hero-640.webp 640w, /assets/hero/zelomenu-hero.webp 940w"
+              sizes="(max-width: 759px) 88vw, min(54vw, 650px)"
+              type="image/webp"
+            />
             <img
-              src="/assets/hero/zelomenu-hero.webp"
+              src="/assets/hero/zelomenu-hero-640.webp"
+              srcSet="/assets/hero/zelomenu-hero-640.webp 640w, /assets/hero/zelomenu-hero.webp 940w"
+              sizes="(max-width: 759px) 88vw, min(54vw, 650px)"
               alt=""
-              width="940"
-              height="1120"
+              width="640"
+              height="763"
               className="home-hero__img"
               fetchPriority="high"
             />

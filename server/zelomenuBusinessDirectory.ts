@@ -95,13 +95,41 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
   const companyIds = profiles
     .map((row: Record<string, unknown>) => String(row.id ?? '').trim())
     .filter(Boolean);
-  const deliveryRangesResult = companyIds.length > 0
-    ? await supabase
-        .from('zelomenu_delivery_ranges')
-        .select('company_id, max_distance_m')
-        .in('company_id', companyIds)
-        .order('max_distance_m', { ascending: true })
-    : { data: [], error: null };
+  const [deliveryRangesResult, productsAndPublicationsResult, categoriesResult] = await Promise.all([
+    companyIds.length > 0
+      ? supabase
+          .from('zelomenu_delivery_ranges')
+          .select('company_id, max_distance_m')
+          .in('company_id', companyIds)
+          .order('max_distance_m', { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+    userIds.length > 0
+      ? Promise.all([
+          supabase
+            .from('produtos')
+            .select('id, id_usuario, nome, preco, ocultar_no_pdv, controlar_estoque, estoque_atual')
+            .in('id_usuario', userIds)
+            .limit(5000),
+          supabase
+            .from('zelomenu_product_publications')
+            .select('id_usuario, id_produto, nome_publico, foto_url, visivel_online, pausado_manualmente, ordem')
+            .in('id_usuario', userIds)
+            .order('ordem')
+            .limit(5000),
+        ])
+      : Promise.resolve([{ data: [], error: null }, { data: [], error: null }]),
+    userIds.length > 0
+      ? supabase
+          .from('categorias')
+          .select('id_usuario, nome, ordem')
+          .in('id_usuario', userIds)
+          .order('ordem')
+          .order('nome')
+          .limit(1000)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  const [productsResult, publicationsResult] = productsAndPublicationsResult;
+
   if (deliveryRangesResult.error) {
     console.warn('[ZeloMenu] Could not load directory delivery ranges:', deliveryRangesResult.error);
   }
@@ -112,32 +140,6 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
     if (!companyId || !Number.isFinite(maxDistanceM) || maxDistanceM <= 0) continue;
     maxDeliveryDistanceByCompany.set(companyId, Math.max(maxDistanceM, maxDeliveryDistanceByCompany.get(companyId) ?? 0));
   }
-  const [productsResult, publicationsResult] = userIds.length > 0
-    ? await Promise.all([
-        supabase
-          .from('produtos')
-          .select('id, id_usuario, nome, preco, ocultar_no_pdv, controlar_estoque, estoque_atual')
-          .in('id_usuario', userIds)
-          .limit(5000),
-        supabase
-          .from('zelomenu_product_publications')
-          .select('id_usuario, id_produto, nome_publico, foto_url, visivel_online, pausado_manualmente, ordem')
-          .in('id_usuario', userIds)
-          .order('ordem')
-          .limit(5000),
-      ])
-    : [{ data: [], error: null }, { data: [], error: null }];
-
-  const categoriesResult = userIds.length > 0
-    ? await supabase
-        .from('categorias')
-        .select('id_usuario, nome, ordem')
-        .in('id_usuario', userIds)
-        .order('ordem')
-        .order('nome')
-        .limit(1000)
-    : { data: [], error: null };
-
   if (productsResult.error || publicationsResult.error) {
     console.warn('[ZeloMenu] Could not load directory highlights:', productsResult.error ?? publicationsResult.error);
   }

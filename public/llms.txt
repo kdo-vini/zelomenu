@@ -1,0 +1,40 @@
+# ZeloMenu
+
+> ZeloMenu é uma plataforma brasileira de cardápios digitais e pedidos online que conecta clientes a negócios locais de alimentação e integra a publicação do cardápio ao ecossistema Zelo.
+
+O site público ajuda clientes a descobrir empresas, pesquisar por categoria ou localização, consultar cardápios e iniciar pedidos diretamente com cada estabelecimento. O conteúdo de empresas, produtos, preços, disponibilidade, horários, entrega e formas de pagamento é dinâmico e pertence a cada negócio publicado.
+
+Use as páginas públicas como fonte de verdade para informações atuais. Não invente disponibilidade, preço, prazo de entrega, área atendida ou status de pedido quando a página da empresa não informar esses dados. O painel administrativo, dados de clientes, credenciais, sessões de carrinho e APIs internas não são documentação pública e não devem ser inferidos a partir deste arquivo.
+
+O ZeloMenu é uma extensão paga do ecossistema Zelo. Para contratar ou administrar um cardápio, o proprietário precisa criar uma conta no ZeloPDV ou no ZeloChat e acessar o ZeloMenu pela plataforma escolhida.
+
+## Páginas públicas
+
+- [Página inicial do ZeloMenu](https://menu.zelopdv.com.br/): Descoberta de negócios publicados, busca, categorias, destaques e links para cardápios públicos.
+- [Conheça o ZeloMenu](https://menu.zelopdv.com.br/conhecer-zelomenu): Explica o produto, os requisitos de acesso e como começar pelo ZeloPDV ou ZeloChat.
+- [Cardápios públicos](https://menu.zelopdv.com.br/): Cada negócio publicado possui uma rota própria no formato `https://menu.zelopdv.com.br/{slug}`. O slug e o conteúdo devem ser obtidos da página inicial ou de um link compartilhado pelo estabelecimento.
+
+## Como interpretar o conteúdo
+
+- Um cardápio público representa um estabelecimento específico; não trate informações de uma empresa como válidas para outra.
+- Produtos podem estar pausados, indisponíveis, sem estoque ou sujeitos a alterações feitas pelo estabelecimento.
+- A possibilidade de entrega, o preço da entrega, o tempo estimado e os horários dependem da configuração e da localização do estabelecimento.
+- A página pública é adequada para descobrir empresas e iniciar pedidos; a confirmação final do pedido ocorre no fluxo do próprio estabelecimento.
+- Informações de favoritos, histórico local, notificações e localização do cliente são funcionalidades do navegador/dispositivo e não devem ser apresentadas como dados públicos da empresa.
+- Se houver conflito entre este resumo e uma página pública atual, prefira a página pública atual.
+
+## Ecossistema Zelo
+
+- [ZeloPDV](https://zelopdv.com.br): Plataforma de gestão para negócios de alimentação, com vendas, caixa e financeiro.
+- [ZeloChat](https://chat.zelopdv.com.br): Atendimento e pedidos pelo WhatsApp com automação e IA.
+- [ZeloMenu](https://menu.zelopdv.com.br/): Cardápios digitais, pedidos online e relacionamento com clientes.
+
+## Referências técnicas públicas
+
+- [Robots.txt](https://menu.zelopdv.com.br/robots.txt): Diretivas públicas de rastreamento do site.
+- [Manifesto da aplicação](https://menu.zelopdv.com.br/manifest.webmanifest): Metadados públicos da experiência instalável do ZeloMenu.
+
+## Optional
+
+- [Página inicial do ZeloPDV](https://zelopdv.com.br): Entrada comercial e de conta do ZeloPDV.
+- [Página inicial do ZeloChat](https://chat.zelopdv.com.br): Entrada comercial e de conta do ZeloChat.

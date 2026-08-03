@@ -72,14 +72,12 @@ export default function HomePage() {
         />
 
         <div className="home-container">
-          {businessesState.status === 'success' ? (
-            <NearbyBusinessesSection
-              businesses={locationFilteredBusinesses}
-              status={locationStatus}
-              coordinates={userCoordinates}
-              onRequestLocation={requestLocation}
-            />
-          ) : null}
+          <NearbyBusinessesSection
+            businesses={businessesState.status === 'success' ? locationFilteredBusinesses : []}
+            status={locationStatus}
+            coordinates={userCoordinates}
+            onRequestLocation={requestLocation}
+          />
 
           <QuickActions />
 

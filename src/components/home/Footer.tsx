@@ -3,7 +3,7 @@ export function Footer() {
     <footer className="home-footer">
       <div className="home-container home-footer__inner">
         <div className="home-footer__brand">
-          <img src="/assets/brand/logozelomenu-optimized.png" alt="" width="44" height="44" />
+          <img src="/assets/brand/zelomenu-mark.svg" alt="" width="44" height="44" />
           <span>ZeloMenu</span>
         </div>
 

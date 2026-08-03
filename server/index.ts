@@ -479,6 +479,7 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/public/businesses', generalPublicLimiter, async (_req, res) => {
   try {
     const businesses = await listBusinesses();
+    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     res.json({ data: businesses, meta: { total: businesses.length } });
   } catch (error) {
     console.error('[ZeloMenu] businesses listing error:', error);
