@@ -285,16 +285,6 @@ function ZeloMenuStorePageContent({
       ) : null}
 
       {/* ── Sticky header ──────────────────────────────────────────────────── */}
-      {store.business.coverUrl ? (
-        <div className="mx-auto max-w-5xl overflow-hidden bg-[var(--zm-surface)]">
-          <img
-            src={store.business.coverUrl}
-            alt=""
-            className="h-36 w-full object-cover sm:h-48"
-          />
-        </div>
-      ) : null}
-
       <header className="sticky top-0 z-20 border-b border-[var(--zm-line)] bg-[var(--zm-surface)]">
         <div className="mx-auto max-w-5xl">
 

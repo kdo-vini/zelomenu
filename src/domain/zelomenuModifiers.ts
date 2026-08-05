@@ -241,6 +241,74 @@ export function resolveModifierSelections(
   };
 }
 
+export function previewModifierPrice(
+  groups: ZeloMenuModifierGroup[] | null | undefined,
+  selections: ZeloMenuModifierSelectionInput[] | null | undefined,
+  basePrice: number,
+): {
+  unitPrice: number;
+  hasRequiredGroup: boolean;
+  hasSelectedRequiredOption: boolean;
+} {
+  const activeGroups = sortModifierGroups((groups ?? []).filter((group) => group.active));
+  let baseOverride: number | null = null;
+  let lowestSubstitutionPrice: number | null = null;
+  let additionsTotal = 0;
+  let requiredAdditionsMinimum = 0;
+  let hasRequiredGroup = false;
+  let hasSelectedRequiredOption = false;
+
+  for (const group of activeGroups) {
+    const activeOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false);
+    const input = (selections ?? []).find((selection) => selection.groupId === group.id);
+    const selectedOptions = (input?.optionSelections ?? [])
+      .map((selection) => ({
+        option: activeOptions.find((candidate) => candidate.id === selection.optionId),
+        quantity: Math.floor(Number(selection.quantity)),
+      }))
+      .filter((selection) => selection.option && Number.isFinite(selection.quantity) && selection.quantity > 0);
+
+    if (group.minSelections > 0) {
+      hasRequiredGroup = true;
+      if (selectedOptions.length > 0) hasSelectedRequiredOption = true;
+    }
+
+    if (group.pricingMode === 'substituir') {
+      const selectedOption = selectedOptions[0]?.option;
+      if (selectedOption) {
+        baseOverride = resolveOptionPrice(selectedOption);
+      } else if (group.minSelections > 0) {
+        const lowestPrice = activeOptions
+          .map(resolveOptionPrice)
+          .sort((a, b) => a - b)[0];
+        if (lowestPrice != null) lowestSubstitutionPrice = lowestPrice;
+      }
+      continue;
+    }
+
+    for (const selection of selectedOptions) {
+      additionsTotal += resolveOptionPrice(selection.option!) * selection.quantity;
+    }
+    if (group.minSelections > 0) {
+      requiredAdditionsMinimum += activeOptions
+        .map(resolveOptionPrice)
+        .sort((a, b) => a - b)
+        .slice(0, group.minSelections)
+        .reduce((total, price) => total + price, 0);
+    }
+  }
+
+  const selectedUnitPrice = (baseOverride ?? basePrice) + additionsTotal;
+  const startingUnitPrice = (lowestSubstitutionPrice ?? baseOverride ?? basePrice)
+    + (hasSelectedRequiredOption ? additionsTotal : requiredAdditionsMinimum + additionsTotal);
+
+  return {
+    unitPrice: roundCurrency(hasSelectedRequiredOption ? selectedUnitPrice : startingUnitPrice),
+    hasRequiredGroup,
+    hasSelectedRequiredOption,
+  };
+}
+
 export function formatSelectedModifierGroups(
   selectedGroups: ZeloMenuSelectedModifierGroup[] | null | undefined,
 ): string {

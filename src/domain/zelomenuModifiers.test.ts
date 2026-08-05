@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  previewModifierPrice,
   resolveModifierSelections,
   validateModifierGroupDrafts,
   formatSelectedModifierGroups,
@@ -306,6 +307,46 @@ describe('resolveModifierSelections', () => {
     );
     expect(r2.ok).toBe(true);
     if (r2.ok) expect(r2.deltaTotal).toBe(10); // 2*2 + 3*2
+  });
+});
+
+describe('previewModifierPrice', () => {
+  it('calcula o menor preço de grupo obrigatório somar sem seleção', () => {
+    const group = classicSomarGroup({
+      name: 'Escolha sua massa',
+      minSelections: 1,
+      maxSelections: 1,
+      options: [
+        { ...additions()[0], priceDelta: 18 },
+        { ...additions()[1], priceDelta: 22 },
+        { ...additions()[2], priceDelta: 25 },
+      ],
+    });
+
+    expect(previewModifierPrice([group], [], 0)).toEqual({
+      unitPrice: 18,
+      hasRequiredGroup: true,
+      hasSelectedRequiredOption: false,
+    });
+  });
+
+  it('mostra a escolha atual mesmo se outro grupo obrigatório ainda faltar', () => {
+    const sizeGroup = substituirGroup([
+      { ...additions()[0], name: 'Tamanho P', priceDelta: 0, linkedProduct: linkedProduct(18) },
+      { ...additions()[1], name: 'Tamanho M', priceDelta: 0, linkedProduct: linkedProduct(22) },
+    ]);
+    const mixGroup = classicSomarGroup({
+      id: 'g-mix',
+      name: 'Escolha a mistura',
+      minSelections: 1,
+      maxSelections: 1,
+    });
+
+    expect(previewModifierPrice([sizeGroup, mixGroup], [one('g-sub', ['add-2'])], 0)).toEqual({
+      unitPrice: 22,
+      hasRequiredGroup: true,
+      hasSelectedRequiredOption: true,
+    });
   });
 });
 

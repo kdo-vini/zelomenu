@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ImageIcon, Minus, Plus, X } from 'lucide-react';
-import { resolveModifierSelections } from '../../domain/zelomenuModifiers';
+import { ArrowDown, Check, ImageIcon, Minus, Plus, X } from 'lucide-react';
+import { previewModifierPrice, resolveModifierSelections, sortModifierGroups } from '../../domain/zelomenuModifiers';
 import { resolveCategorySuggestions } from '../../domain/zelomenuCategorySuggestions';
 import type { ZeloMenuCatalogGroup, ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
 
@@ -89,6 +89,7 @@ export function ProductAddModal({
   const isEditing = initialQuantity > 0;
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const groupRefs = useRef<Record<string, HTMLElement | null>>({});
   const onCloseRef = useRef(onClose);
 
   useEffect(() => {
@@ -175,10 +176,26 @@ export function ProductAddModal({
     }))
     .filter((sel) => sel.optionSelections.length > 0);
   const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
-  const hasActiveModifiers = product.modifierGroups.some((group) => group.active);
+  const activeGroups = sortModifierGroups(product.modifierGroups.filter((group) => group.active));
+  const nextRequiredGroup = activeGroups.find((group) => (
+    group.minSelections > 0
+    && Object.keys(selections[group.id] ?? {}).length < group.minSelections
+  ));
+  const pricePreview = previewModifierPrice(product.modifierGroups, selectedOptions, product.basePrice);
+  const displayedUnitPrice = resolution.ok ? resolution.finalUnitPrice : pricePreview.unitPrice;
+  const displayedPriceLabel = !resolution.ok && pricePreview.hasRequiredGroup && !pricePreview.hasSelectedRequiredOption
+    ? `A partir de ${toBRL(displayedUnitPrice)}`
+    : toBRL(displayedUnitPrice);
+  const hasActiveModifiers = activeGroups.length > 0;
   const quantity = parseInt(qtyDraft, 10);
   const validQuantity = !isNaN(quantity) && quantity > 0;
   const canConfirm = resolution.ok && validQuantity;
+  const canScrollToRequiredGroup = Boolean(nextRequiredGroup && validQuantity);
+  const primaryActionLabel = nextRequiredGroup
+    ? `${nextRequiredGroup.name} é obrigatório`
+    : canConfirm
+      ? (isEditing ? 'Atualizar' : 'Adicionar')
+      : 'Corrija a seleção';
 
   function confirm() {
     if (!canConfirm) return;
@@ -190,6 +207,19 @@ export function ProductAddModal({
       return acc;
     }, {});
     onConfirm(quantity, notes.trim(), selectionsArray);
+  }
+
+  function handlePrimaryAction() {
+    if (canConfirm) {
+      confirm();
+      return;
+    }
+    if (!nextRequiredGroup) return;
+    const groupElement = groupRefs.current[nextRequiredGroup.id];
+    groupElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      groupElement?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true });
+    }, 250);
   }
 
   return (
@@ -246,7 +276,7 @@ export function ProductAddModal({
                 </p>
               ) : <span id="product-add-description" className="sr-only">Escolha os complementos e a quantidade do produto.</span>}
               <p className="mt-2 text-[15px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
-                {resolution.ok ? toBRL(resolution.finalUnitPrice) : toBRL(product.basePrice)}
+                {displayedPriceLabel}
               </p>
               {existingLineCount > 0 && product.modifierGroups.some((group) => group.active) ? (
                 <p className="mt-2 rounded-lg bg-[var(--color-brand-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--color-brand-deep)]">
@@ -255,8 +285,13 @@ export function ProductAddModal({
               ) : null}
             </div>
 
-            {product.modifierGroups.filter((g) => g.active).map((group) => (
-              <section key={group.id}>
+            {activeGroups.map((group) => (
+              <section
+                key={group.id}
+                ref={(element) => {
+                  groupRefs.current[group.id] = element;
+                }}
+              >
                 <div className="mb-2.5">
                   <p className="text-[14px] font-bold text-[var(--color-ink)]">{group.name}</p>
                   <p className="text-[12px] text-[var(--color-ink-muted)]">
@@ -506,14 +541,18 @@ export function ProductAddModal({
           </div>
           <button
             type="button"
-            onClick={confirm}
-            disabled={!canConfirm}
-            aria-label="Adicionar ao pedido"
+            onClick={handlePrimaryAction}
+            disabled={!canConfirm && !canScrollToRequiredGroup}
+            aria-label={primaryActionLabel}
             className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-[14px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
             style={{ background: 'var(--color-brand)' }}
           >
-            <Plus className="h-4 w-4" strokeWidth={2.5} />
-            {isEditing ? 'Atualizar' : 'Adicionar'}
+            {nextRequiredGroup ? (
+              <ArrowDown className="h-4 w-4" strokeWidth={2.5} />
+            ) : (
+              <Plus className="h-4 w-4" strokeWidth={2.5} />
+            )}
+            {primaryActionLabel}
             {validQuantity && resolution.ok ? ` · ${toBRL(resolution.finalUnitPrice * quantity)}` : ''}
           </button>
         </div>
