@@ -28,6 +28,21 @@ function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function getProductPriceLabel(product: ZeloMenuCatalogProduct): string {
+  if (product.basePrice > 0) return toBRL(product.basePrice);
+
+  const substituteGroup = product.modifierGroups
+    .filter((group) => group.active && group.pricingMode === 'substituir')
+    .sort((a, b) => a.order - b.order)[0];
+  const optionPrices = substituteGroup?.options
+    .filter((option) => option.active && option.linkedProduct?.available !== false)
+    .map((option) => option.linkedProduct?.price ?? option.priceDelta)
+    .filter((price) => Number.isFinite(price) && price >= 0) ?? [];
+
+  if (optionPrices.length === 0) return toBRL(product.basePrice);
+  return `A partir de ${toBRL(Math.min(...optionPrices))}`;
+}
+
 
 function allGroupProducts(group: ZeloMenuCatalogGroup): ZeloMenuCatalogProduct[] {
   return [...group.produtosDireto, ...group.subcategorias.flatMap((s) => s.produtos)];
@@ -748,7 +763,7 @@ function PhotoRow({
         ) : null}
         <div className="mt-auto flex items-center justify-between gap-2 pt-2">
           <p className="text-[13px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
-            {toBRL(product.basePrice)}
+            {getProductPriceLabel(product)}
           </p>
           <QtyControl
             product={product}
@@ -848,7 +863,7 @@ function FeaturedCard({
         </p>
         <div className="mt-auto flex items-center justify-between gap-1 pt-1.5">
           <p className="text-[12.5px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
-            {toBRL(product.basePrice)}
+            {getProductPriceLabel(product)}
           </p>
           <QtyControl
             product={product}
@@ -915,7 +930,7 @@ function ListRow({
           </p>
         ) : null}
         <p className="mt-1 text-[13px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
-          {toBRL(product.basePrice)}
+          {getProductPriceLabel(product)}
         </p>
       </div>
       <div className="shrink-0">

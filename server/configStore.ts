@@ -299,7 +299,20 @@ function toPublicCatalogProduct(product: CatalogProductWithPlacement): CatalogPr
     unitBased: product.unitBased,
     stockControlled: product.stockControlled,
     stockQuantity: product.stockQuantity,
-    modifierGroups: product.modifierGroups ?? [],
+    modifierGroups: (product.modifierGroups ?? []).map((group) => ({
+      id: group.id,
+      productId: group.productId,
+      name: group.name,
+      kind: group.kind,
+      pricingMode: group.pricingMode,
+      minSelections: group.minSelections,
+      maxSelections: group.maxSelections,
+      allowsQuantity: group.allowsQuantity,
+      maxPerOption: group.maxPerOption,
+      active: group.active,
+      order: group.order,
+      options: group.options,
+    })),
   };
 }
 
