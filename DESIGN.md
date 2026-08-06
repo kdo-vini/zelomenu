@@ -82,3 +82,8 @@ Controles nativos (checkbox, radio, range) herdam a marca via
 - **Tap targets** mínimos de 44px; campos de 16px no mobile (evita zoom iOS).
 - Novos componentes referenciam **tokens**, nunca hexes crus nem classes
   `*-green-*` do Tailwind.
+- **Ações em listas no mobile:** quando uma linha tiver mais de uma ação
+  secundária, usar um botão de três pontos que abre uma folha de ações. O nome,
+  preço e estado do item permanecem visíveis; editar, configurar e excluir não
+  competem com o conteúdo da linha. Ações destrutivas ficam por último e usam a
+  cor semântica de alerta.
