@@ -305,6 +305,22 @@ export function deriveLegacyFromWeekly(weekly: WeeklyHours): {
   };
 }
 
+const FULL_DAY_DISPLAY: Record<DayKey, string> = {
+  sun: 'domingo', mon: 'segunda', tue: 'terça', wed: 'quarta', thu: 'quinta', fri: 'sexta', sat: 'sábado',
+};
+
+/** Usa "hoje"/"amanhã" para a próxima abertura quando possível. */
+export function formatNextOpenDay(day: string, timezone = 'America/Sao_Paulo', date = new Date()): string {
+  const dayKey = DAY_KEYS.find((key) => key === day || FULL_DAY_DISPLAY[key] === day);
+  if (!dayKey) return day;
+
+  const todayKey = weekdayKeyInTz(date, timezone);
+  const tomorrowKey = DAY_KEYS[(DAY_KEYS.indexOf(todayKey) + 1) % DAY_KEYS.length];
+  if (dayKey === todayKey) return 'hoje';
+  if (dayKey === tomorrowKey) return 'amanhã';
+  return FULL_DAY_DISPLAY[dayKey];
+}
+
 const DAY_DISPLAY: Record<DayKey, string> = {
   sun: 'Dom', mon: 'Seg', tue: 'Ter', wed: 'Qua', thu: 'Qui', fri: 'Sex', sat: 'Sáb',
 };

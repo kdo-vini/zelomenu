@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLOSED_DAY_LABELS,
   deriveWeeklyFromLegacy,
+  formatNextOpenDay,
   hasAnyOpenWindow,
   isValidWeeklyWindow,
   isMinuteWithinDay,
@@ -110,6 +111,17 @@ describe('businessHours — isOpenAt (ASAP)', () => {
   it('closed on an empty day', () => {
     // Sunday 2026-07-19 12:00 local → 15:00Z
     expect(isOpenAt(LUNCH_DINNER, new Date('2026-07-19T15:00:00Z'), tz).open).toBe(false);
+  });
+});
+
+describe('businessHours — next opening label', () => {
+  const tz = 'America/Sao_Paulo';
+  const friday = new Date('2026-07-24T15:00:00Z');
+
+  it('uses relative labels for today and tomorrow, otherwise the weekday name', () => {
+    expect(formatNextOpenDay('sexta', tz, friday)).toBe('hoje');
+    expect(formatNextOpenDay('sábado', tz, friday)).toBe('amanhã');
+    expect(formatNextOpenDay('domingo', tz, friday)).toBe('domingo');
   });
 });
 

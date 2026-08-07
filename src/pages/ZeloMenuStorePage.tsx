@@ -10,6 +10,7 @@ import {
 } from '../services/zelomenuApi';
 
 import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
+import { formatNextOpenDay } from '../domain/businessHours';
 import { useStoreCart } from '../hooks/useStoreCart';
 import { ToastProvider } from '../contexts/ToastContext';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
@@ -404,7 +405,7 @@ function ZeloMenuStorePageContent({
                 </p>
                 <p className="mt-0.5 text-[12px] leading-5 text-[var(--zm-ink-soft)]">
                   {businessHours?.nextOpen
-                    ? `Abre ${businessHours.nextOpen.day} às ${businessHours.nextOpen.start}. Você pode montar e agendar seu pedido.`
+                    ? `Abre ${formatNextOpenDay(businessHours.nextOpen.day, businessHours.timezone)} às ${businessHours.nextOpen.start}. Você pode montar e agendar seu pedido.`
                     : `Você pode montar seu pedido agora e agendar para um horário disponível${businessHours?.label ? ` (${businessHours.label}).` : '.'}`}
                 </p>
               </div>
