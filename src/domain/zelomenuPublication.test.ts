@@ -6,33 +6,30 @@ import {
 } from './zelomenuPublication';
 
 describe('resolveZeloMenuLinkedOptionAvailability', () => {
-  it('stock-controlled product with stock → available', () => {
+  it('stock-controlled product with stock is available', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({ controlar_estoque: true, estoque_atual: 5 })).toBe(true);
   });
 
-  it('stock-controlled product with zero stock → unavailable', () => {
+  it('stock-controlled product with zero stock is unavailable', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({ controlar_estoque: true, estoque_atual: 0 })).toBe(false);
   });
 
-  it('stock-controlled product with negative stock → unavailable', () => {
+  it('stock-controlled product with negative stock is unavailable', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({ controlar_estoque: true, estoque_atual: -1 })).toBe(false);
   });
 
-  it('stock not controlled → always available regardless of estoque_atual', () => {
+  it('does not require stock when stock control is disabled', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({ controlar_estoque: false, estoque_atual: 0 })).toBe(true);
   });
 
-  it('ignores publication/visibility fields entirely — only accepts stock fields, so an unpublished product cannot influence this check by construction', () => {
-    // A product with visivel_online=false / pausado_manualmente=true / ocultar_no_pdv=true
-    // would report status 'unpublished'/'paused'/'hidden' via getZeloMenuPublicationStatus,
-    // but must still be usable as a linked combo ingredient as long as it has stock.
+  it('keeps an unpublished product available as a component when it is not hidden in the PDV', () => {
     const unpublished: ZeloMenuPublicationProduct = {
       id: 196,
       nome: 'Penne',
       id_categoria: 52,
       controlar_estoque: false,
       estoque_atual: 0,
-      ocultar_no_pdv: true,
+      ocultar_no_pdv: false,
       publication: {
         id_produto: 196,
         nome_publico: null,
@@ -44,11 +41,26 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
       },
     };
     expect(getZeloMenuPublicationStatus(unpublished).status).not.toBe('published');
-    expect(
-      resolveZeloMenuLinkedOptionAvailability({
-        controlar_estoque: unpublished.controlar_estoque,
-        estoque_atual: unpublished.estoque_atual,
-      }),
-    ).toBe(true);
+    expect(resolveZeloMenuLinkedOptionAvailability(unpublished)).toBe(true);
+  });
+
+  it('disables every linked component when the catalog product is hidden in the PDV', () => {
+    expect(resolveZeloMenuLinkedOptionAvailability({
+      controlar_estoque: false,
+      estoque_atual: 0,
+      ocultar_no_pdv: true,
+    })).toBe(false);
+  });
+
+  it('reports global PDV hiding as a single paused state', () => {
+    expect(getZeloMenuPublicationStatus({
+      id: 850,
+      nome: 'Bife a rolê',
+      id_categoria: 106,
+      controlar_estoque: false,
+      estoque_atual: 0,
+      ocultar_no_pdv: true,
+      publication: null,
+    })).toMatchObject({ status: 'paused', label: 'Pausado' });
   });
 });

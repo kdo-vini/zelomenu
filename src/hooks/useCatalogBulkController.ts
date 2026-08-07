@@ -6,7 +6,7 @@ import type {
 } from './useCatalog';
 import { getFriendlyErrorMessage } from '../services/errorMessages';
 
-export type BulkPublicationState = 'published' | 'unpublished' | 'paused' | 'resumed';
+export type BulkPublicationState = 'published' | 'unpublished';
 
 export type CatalogBulkAction =
   | { type: 'delete' }
@@ -140,19 +140,12 @@ export function useCatalogBulkController({
           }
 
           const current = productPublications[productId];
-          if (
-            !current?.visivel_online
-            || (action.state === 'paused' && current.pausado_manualmente)
-            || (action.state === 'resumed' && !current.pausado_manualmente)
-          ) {
+          const nextVisible = action.state === 'published';
+          if ((current?.visivel_online ?? false) === nextVisible) {
             return { skipped: true };
           }
 
-          const patch: ZeloMenuProductPublicationInput = action.state === 'published'
-            ? { visivel_online: true, pausado_manualmente: false }
-            : action.state === 'unpublished'
-              ? { visivel_online: false, pausado_manualmente: false }
-              : { visivel_online: true, pausado_manualmente: action.state === 'paused' };
+          const patch: ZeloMenuProductPublicationInput = { visivel_online: nextVisible };
           await upsertProductPublication(productId, patch);
           return { skipped: false };
         }),

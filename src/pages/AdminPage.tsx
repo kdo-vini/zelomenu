@@ -18,6 +18,7 @@ const CatalogView = lazy(() => import('../components/views/CatalogView').then((m
 const SettingsPage = lazy(() => import('./SettingsPage').then((module) => ({ default: module.SettingsPage })));
 const ZeloMenuMetricsPage = lazy(() => import('./ZeloMenuMetricsPage').then((module) => ({ default: module.ZeloMenuMetricsPage })));
 const MesasAdminSection = lazy(() => import('../components/zelomenu/MesasAdminSection').then((module) => ({ default: module.MesasAdminSection })));
+const SupportPage = lazy(() => import('./SupportPage').then((module) => ({ default: module.SupportPage })));
 
 // ─── Upsell ────────────────────────────────────────────────────────────────
 
@@ -253,6 +254,7 @@ function AdminPageContent() {
         }
         metricsContent={<ZeloMenuMetricsPage />}
         mesasContent={mesasContent}
+        supportContent={<SupportPage />}
       />
     </Suspense>
   );
@@ -276,6 +278,7 @@ function parseAdminHash(rawHash: string): { section: NavSection; settingsPath: S
   if (hash === 'settings/horarios') return { section: 'settings', settingsPath: 'hours' };
   if (hash === 'settings/acoes-administrativas' || hash === 'settings/admin') return { section: 'settings', settingsPath: 'admin' };
   if (hash === 'indicadores' || hash === 'metrics' || hash === 'settings/indicadores') return { section: 'metrics', settingsPath: 'overview' };
+  if (hash === 'support' || hash === 'ajuda') return { section: 'support', settingsPath: 'overview' };
   if (hash.startsWith('settings')) return { section: 'settings', settingsPath: 'overview' };
   return { section: 'catalog', settingsPath: 'overview' };
 }

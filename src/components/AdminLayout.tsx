@@ -1,10 +1,10 @@
 import { type ReactNode, useState } from 'react';
-import { Menu, ShoppingBag, Globe2, LayoutGrid, LogOut, Settings, BarChart3, X } from 'lucide-react';
+import { Menu, ShoppingBag, Globe2, LayoutGrid, LogOut, Settings, BarChart3, X, CircleHelp, MoreHorizontal } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 
 // ─── Navigation definition ─────────────────────────────────────────────────
 
-export type NavSection = 'catalog' | 'publication' | 'settings' | 'mesas' | 'metrics';
+export type NavSection = 'catalog' | 'publication' | 'settings' | 'mesas' | 'metrics' | 'support';
 
 interface NavItem {
   id: NavSection;
@@ -18,6 +18,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'settings', label: 'Configurações', icon: Settings },
   { id: 'metrics', label: 'Indicadores', icon: BarChart3 },
   { id: 'mesas', label: 'Mesas', icon: LayoutGrid },
+  { id: 'support', label: 'Ajuda e suporte', icon: CircleHelp },
 ];
 
 // ─── Props ─────────────────────────────────────────────────────────────────
@@ -30,12 +31,14 @@ interface AdminLayoutProps {
   settingsContent: ReactNode;
   metricsContent: ReactNode;
   mesasContent?: ReactNode;
+  supportContent: ReactNode;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent, settingsContent, metricsContent, mesasContent }: AdminLayoutProps) {
+export function AdminLayout({ activeSection, onNavigate, catalogContent, publicationContent, settingsContent, metricsContent, mesasContent, supportContent }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const visibleNavItems = NAV_ITEMS.filter(
     (item) => item.id !== 'mesas' || mesasContent !== undefined,
@@ -176,20 +179,56 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
           {activeSection === 'settings' && settingsContent}
           {activeSection === 'metrics' && metricsContent}
           {activeSection === 'mesas' && mesasContent}
+          {activeSection === 'support' && supportContent}
         </main>
 
         {/* ── Mobile bottom nav ── */}
         <nav
-          className="flex h-16 shrink-0 items-center border-t border-[var(--color-line)] bg-[var(--color-surface)] px-2 md:hidden"
+          className="relative flex h-16 shrink-0 items-center border-t border-[var(--color-line)] bg-[var(--color-surface)] px-2 md:hidden"
           aria-label="Navegação principal"
         >
-          {visibleNavItems.map((item) => {
+          {moreOpen && (
+            <>
+              <div className="fixed inset-0 z-40 md:hidden" onClick={() => setMoreOpen(false)} aria-hidden="true" />
+              <div className="absolute bottom-[calc(100%+0.5rem)] right-2 z-50 w-64 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-2 shadow-[0_4px_8px_rgba(11,29,58,0.14)]" role="menu" aria-label="Mais opções">
+                {visibleNavItems.filter((item) => !['catalog', 'publication', 'settings'].includes(item.id)).map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { onNavigate(item.id); setMoreOpen(false); }}
+                      className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40 ${
+                        activeSection === item.id
+                          ? 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+                          : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]'
+                      }`}
+                    >
+                      <Icon className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setMoreOpen(false); void handleSignOut(); }}
+                  className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-alert)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40"
+                >
+                  <LogOut className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
+                  <span>Sair</span>
+                </button>
+              </div>
+            </>
+          )}
+          {visibleNavItems.filter((item) => ['catalog', 'publication', 'settings'].includes(item.id)).map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => onNavigate(item.id)}
+                onClick={() => { onNavigate(item.id); setMoreOpen(false); }}
                 className={`flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-[11px] font-medium transition-colors ${
                   isActive
                     ? 'text-[var(--color-brand-deep)]'
@@ -201,6 +240,20 @@ export function AdminLayout({ activeSection, onNavigate, catalogContent, publica
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => setMoreOpen((current) => !current)}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            className={`flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40 ${
+              moreOpen || !['catalog', 'publication', 'settings'].includes(activeSection)
+                ? 'text-[var(--color-brand-deep)]'
+                : 'text-[var(--color-ink-muted)]'
+            }`}
+          >
+            <MoreHorizontal className="h-5 w-5" strokeWidth={2} aria-hidden="true" />
+            <span>Mais</span>
+          </button>
         </nav>
       </div>
     </div>

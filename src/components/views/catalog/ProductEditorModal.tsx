@@ -36,8 +36,10 @@ type ProductEditorModalProps = {
   categorias: Categoria[];
   subcategorias: Subcategoria[];
   products: ProdutoRow[];
+  productUsageCounts?: Record<number, number>;
   modifierGroups: ZeloMenuModifierGroupRow[];
   modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
+  onCreateComponentProduct?: (input: { nome: string; preco: number }) => Promise<ProdutoRow>;
   uploadImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
   deleteImage: (url: string | null | undefined) => Promise<void>;
   onClose: () => void;
@@ -63,8 +65,10 @@ export function ProductModal({
   categorias,
   subcategorias,
   products,
+  productUsageCounts,
   modifierGroups,
   modifierOptionProducts,
+  onCreateComponentProduct,
   uploadImage,
   deleteImage,
   onClose,
@@ -81,7 +85,6 @@ export function ProductModal({
   const [ocultar, setOcultar] = useState(false);
   const [groupsDraft, setGroupsDraft] = useState<ZeloMenuModifierGroupDraft[]>([]);
   const [visivelOnline, setVisivelOnline] = useState(false);
-  const [pausado, setPausado] = useState(false);
   const [nomePublico, setNomePublico] = useState('');
   const [descricaoPublica, setDescricaoPublica] = useState('');
   const [fotoUrl, setFotoUrl] = useState('');
@@ -118,7 +121,6 @@ export function ProductModal({
     setOcultar(initial?.ocultar_no_pdv ?? false);
     setGroupsDraft(toModifierDrafts(modifierGroups, modifierOptionProducts));
     setVisivelOnline(initialPublication?.visivel_online ?? false);
-    setPausado(initialPublication?.pausado_manualmente ?? false);
     setNomePublico(initialPublication?.nome_publico ?? '');
     setDescricaoPublica(initialPublication?.descricao_publica ?? '');
     setFotoUrl(initialPublication?.foto_url ?? '');
@@ -196,6 +198,12 @@ export function ProductModal({
       return false;
     }
 
+    if (visivelOnline && !idCategoria) {
+      setErr('Escolha uma categoria antes de vender este produto separadamente.');
+      setTab('produto');
+      return false;
+    }
+
     const groupsError = validateModifierGroupDrafts(groupsDraft);
     if (groupsError) {
       setErr(groupsError);
@@ -246,7 +254,6 @@ export function ProductModal({
       if (publicationDirty) {
         await onSavePublication(productId, {
           visivel_online: visivelOnline,
-          pausado_manualmente: visivelOnline ? pausado : false,
           nome_publico: nomePublico.trim(),
           descricao_publica: descricaoPublica.trim(),
           foto_url: trimmedPhoto || null,
@@ -379,18 +386,15 @@ export function ProductModal({
                 </label>
               </div>
 
-              <label className="flex min-h-[44px] items-center gap-2 text-sm text-[var(--color-ink-soft)]">
-                <input
-                  type="checkbox"
-                  checked={ocultar}
-                  onChange={(event) => {
-                    setOcultar(event.target.checked);
-                    setProductDirty(true);
-                  }}
-                  className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
-                />
-                Ocultar nos cardápios e deixar o produto inativo
-              </label>
+              <ToggleCard
+                checked={!ocultar}
+                title="Disponível para venda"
+                description="Desligue para pausar este produto em todos os usos e cardápios."
+                onChange={(checked) => {
+                  setOcultar(!checked);
+                  setProductDirty(true);
+                }}
+              />
             </section>
 
             <section className="space-y-4 border-t border-[var(--color-line)] pt-6">
@@ -399,6 +403,9 @@ export function ProductModal({
                 key={initial?.id ?? 'novo-produto'}
                 groups={groupsDraft}
                 products={products}
+                productUsageCounts={productUsageCounts}
+                onCreateProduct={onCreateComponentProduct}
+                excludeProductId={initial?.id}
                 productName={nome.trim() || initial?.nome || 'seu produto'}
                 onChange={(index, group) => {
                   setGroupsDirty(true);
@@ -449,21 +456,10 @@ export function ProductModal({
               <div className="grid gap-3 sm:grid-cols-2">
                 <ToggleCard
                   checked={visivelOnline}
-                  title="Publicado no cardápio"
-                  description="Aparece no link quando estiver disponível."
+                  title="Vender separadamente no cardápio"
+                  description="Desligue quando este produto existir apenas como complemento."
                   onChange={(checked) => {
                     setVisivelOnline(checked);
-                    if (!checked) setPausado(false);
-                    setPublicationDirty(true);
-                  }}
-                />
-                <ToggleCard
-                  checked={pausado}
-                  disabled={!visivelOnline}
-                  title="Pausar temporariamente"
-                  description="Mantém configurado, mas esconde por enquanto."
-                  onChange={(checked) => {
-                    setPausado(checked);
                     setPublicationDirty(true);
                   }}
                 />
@@ -639,12 +635,12 @@ function SectionHeading({ title, description }: { title: string; description: st
   );
 }
 
-function formatPrecoInput(preco: number): string {
+export function formatPrecoInput(preco: number): string {
   if (!Number.isFinite(preco)) return '';
   return preco.toFixed(2).replace('.', ',');
 }
 
-function parsePrecoInput(value: string): number {
+export function parsePrecoInput(value: string): number {
   const cleaned = value.replace(/\./g, '').replace(',', '.').trim();
   if (!cleaned) return 0;
   return Number(cleaned);

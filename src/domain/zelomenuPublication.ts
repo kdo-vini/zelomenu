@@ -1,4 +1,5 @@
 import type { ZeloMenuModifierGroup } from './zelomenuModifiers';
+import { resolveCatalogProductAvailability } from './zelomenuCatalog';
 
 export type ZeloMenuPublicationProduct = {
   id: number;
@@ -76,30 +77,12 @@ export type ZeloMenuResolvedCatalogProduct = {
 export function getZeloMenuPublicationStatus(
   product: ZeloMenuPublicationProduct,
 ): ZeloMenuPublicationStatusDetails {
-  if (!product.publication?.visivel_online) {
-    return {
-      status: 'unpublished',
-      label: 'Não publicado',
-      description: 'Ative a publicação para este produto aparecer no ZeloMenu.',
-      issue: 'unpublished',
-    };
-  }
-
-  if (product.publication.pausado_manualmente) {
+  if (product.ocultar_no_pdv) {
     return {
       status: 'paused',
       label: 'Pausado',
-      description: 'Produto pausado manualmente no ZeloMenu.',
+      description: 'Produto pausado globalmente em todos os usos.',
       issue: 'paused',
-    };
-  }
-
-  if (product.ocultar_no_pdv) {
-    return {
-      status: 'hidden',
-      label: 'Inativo',
-      description: 'Produto marcado como oculto no cardápio atual.',
-      issue: 'hidden',
     };
   }
 
@@ -109,6 +92,25 @@ export function getZeloMenuPublicationStatus(
       label: 'Sem estoque',
       description: 'Produto com estoque controlado zerado.',
       issue: 'out_of_stock',
+    };
+  }
+
+  const availability = resolveCatalogProductAvailability(product, product.modifierGroups);
+  if (availability.state === 'blocked_by_required_options') {
+    return {
+      status: 'hidden',
+      label: 'Ocultado automaticamente',
+      description: `Grupo obrigatório sem opções suficientes: ${availability.reason ?? 'revise as opções disponíveis.'}`,
+      issue: 'hidden',
+    };
+  }
+
+  if (!product.publication?.visivel_online) {
+    return {
+      status: 'unpublished',
+      label: 'Somente complemento',
+      description: 'Produto salvo para uso como complemento; não é vendido separadamente.',
+      issue: 'unpublished',
     };
   }
 
@@ -163,30 +165,30 @@ export function summarizeZeloMenuPublication(
 
 /**
  * Whether a product can be used as a modifier-option ingredient inside a
- * combo (e.g. "Penne" inside "Monte sua Massa"), as opposed to whether it's
- * listed on its own in the storefront. Deliberately narrower than
- * `getZeloMenuPublicationStatus`: only real stock-out disables an
- * ingredient. `visivel_online`/`pausado_manualmente`/`ocultar_no_pdv` are
- * choices about the product's OWN storefront/PDV listing and must not leak
- * into whether it still works as someone else's combo ingredient.
+ * combo (e.g. "Penne" inside "Monte sua Massa"). A product intentionally
+ * unpublished from its own online listing may still be a component, but an
+ * item explicitly hidden/inactivated in the PDV must stop propagating into
+ * every linked group. Stock-out is also a hard availability boundary.
  */
 export function resolveZeloMenuLinkedOptionAvailability(
-  product: Pick<ZeloMenuPublicationCatalogProduct, 'controlar_estoque' | 'estoque_atual'>,
+  product: Pick<ZeloMenuPublicationCatalogProduct, 'controlar_estoque' | 'estoque_atual'>
+    & Partial<Pick<ZeloMenuPublicationCatalogProduct, 'ocultar_no_pdv'>>,
 ): boolean {
-  return !(product.controlar_estoque && product.estoque_atual <= 0);
+  return resolveCatalogProductAvailability(product, []).available;
 }
 
 export function resolveZeloMenuPublicationCatalogProduct(
   product: ZeloMenuPublicationCatalogProduct,
 ): ZeloMenuResolvedCatalogProduct {
   const details = getZeloMenuPublicationStatus(product);
+  const availability = resolveCatalogProductAvailability(product, product.modifierGroups);
 
   return {
     id: product.id,
     name: product.publication?.nome_publico || product.name,
     price: product.price,
     basePrice: product.price,
-    available: details.status === 'published',
+    available: details.status === 'published' && availability.available,
     description: product.publication?.descricao_publica ?? null,
     photoUrl: product.publication?.foto_url ?? null,
     sortOrder: product.publication?.ordem ?? 0,

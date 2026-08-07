@@ -87,3 +87,36 @@ Controles nativos (checkbox, radio, range) herdam a marca via
   preço e estado do item permanecem visíveis; editar, configurar e excluir não
   competem com o conteúdo da linha. Ações destrutivas ficam por último e usam a
   cor semântica de alerta.
+- **Navegação mobile:** manter no máximo quatro destinos na barra inferior. Os
+  três destinos de uso diário ficam visíveis; os demais entram em **Mais** com
+  rótulo e ícone, em um menu de fácil alcance. Nunca esconder um destino apenas
+  atrás de um ícone sem nome.
+- **Ajuda e suporte:** a Central de Ajuda começa pelo FAQ pesquisável e por
+  categorias de tarefa. Cada resposta deve oferecer um próximo passo claro; se
+  não resolver, abrir uma triagem curta e uma mensagem contextual pronta para o
+  WhatsApp. O usuário revisa e envia a mensagem explicitamente.
+
+## Catálogo: controles e estados
+
+O catálogo usa uma entidade de produto canônico. Categoria é apenas uma
+organização de produtos vendidos separadamente; um componente pode ficar sem
+categoria e continuar pesquisável e vinculado a vários produtos-pai.
+
+| Controle | Usar para | Não usar para |
+| --- | --- | --- |
+| `SwitchField` / `ToggleCard` | Estado binário persistente: **Disponível para venda** e **Vender separadamente no cardápio** | Comandos destrutivos ou seleção em lote |
+| `Checkbox` | Seleção múltipla, seleção em lote e inclusão estrutural em um grupo | Disponibilidade efetiva herdada do produto canônico |
+| `Button` | Ação primária ou comando explícito | Estado que precisa permanecer visível |
+| `ActionMenu` | Editar, configurar, pausar/reativar e excluir em linhas compactas | A ação primária da tela |
+| `SelectField` | Lista finita de categorias, tipos e modos de preço | Busca de produtos |
+| `Combobox` | Pesquisar e vincular produto existente; criar novo quando não houver correspondência | Alternar disponibilidade |
+| `StatusBadge` | Disponível, Pausado, Sem estoque, Somente complemento e Ocultado automaticamente | Substituir o nome ou esconder o motivo |
+
+Regras de interação:
+
+- Todas as linhas com múltiplas ações secundárias usam três pontos; os nomes das ações aparecem no menu.
+- O rótulo de um switch nunca muda quando seu valor muda. A descrição explica o efeito global.
+- A disponibilidade global é herdada por todos os usos. A inclusão estrutural de uma opção permanece separada e visível.
+- Produtos usados somente como complemento não recebem o estado ambíguo “Não publicado”; mostram “Somente complemento”.
+- Menus e folhas de ação têm alvo mínimo de 44px, foco visível, `aria-haspopup`, `aria-expanded`, teclado e estados loading/disabled/erro.
+- Toasts confirmam a ação e oferecem **Desfazer** quando a alteração é reversível.

@@ -11,7 +11,6 @@ import {
   MoreVertical,
   Pencil,
   PauseCircle,
-  PlayCircle,
   Plus,
   RefreshCw,
   Search,
@@ -35,6 +34,7 @@ import { useCatalogBulkController } from '../../hooks/useCatalogBulkController';
 import type { ZeloMenuModifierGroupDraft } from '../../domain/zelomenuModifiers';
 import {
   getZeloMenuPublicationStatus,
+  resolveZeloMenuLinkedOptionAvailability,
   summarizeZeloMenuPublication,
   type ZeloMenuPublicationProduct,
   type ZeloMenuPublicationStatus,
@@ -44,7 +44,8 @@ import {
   ConfirmDelete,
   SubcategoriaModal,
 } from './catalog/CatalogModals';
-import { ProductModal, type ProductModalTab } from './catalog/ProductEditorModal';
+import { ProductModal, formatPrecoInput, parsePrecoInput, type ProductModalTab } from './catalog/ProductEditorModal';
+import { getCatalogProductRole, isExactCatalogProductNameDuplicate, normalizeCatalogSearchText } from '../../domain/zelomenuCatalog';
 
 interface Props {
   isAuthenticated: boolean;
@@ -110,7 +111,9 @@ type DeleteState =
   | null;
 
 type ProdutoWithPublication = ProdutoRow & ZeloMenuPublicationProduct;
-type PublicationActionState = 'paused' | 'resumed' | 'publish';
+type PublicationActionState = 'publish';
+type ComponentUsage = { containerName: string; groupName: string; active: boolean };
+type CatalogFilter = 'all' | 'standalone' | 'component' | 'paused' | 'out_of_stock' | 'draft';
 
 export const CatalogView = ({
   isAuthenticated,
@@ -150,10 +153,12 @@ export const CatalogView = ({
   const [reorderMode, setReorderMode] = useState(false);
   const [reorderBusy, setReorderBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState<ZeloMenuPublicationStatus | null>(null);
+  const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>('all');
   const [undoAction, setUndoAction] = useState<{
-    type: 'published' | 'paused' | 'resumed';
+    type: 'published' | 'paused' | 'resumed' | 'availability';
     changedIds: number[];
-    previousStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }>;
+    previousStates: Record<number, { visivel_online: boolean }>;
+    previousAvailability?: Record<number, boolean>;
     message: string;
   } | null>(null);
   const actionTokenRef = useRef(0);
@@ -163,20 +168,74 @@ export const CatalogView = ({
     state: PublicationActionState;
   } | null>(null);
 
-  const normalized = query.trim().toLowerCase();
+  const normalized = normalizeCatalogSearchText(query);
+  const componentUsages = useMemo(() => {
+    const productsById = new Map(produtos.map((produto) => [produto.id, produto]));
+    const usagesByProductId: Record<number, ComponentUsage[]> = {};
+
+    for (const groups of Object.values(productModifierGroups)) {
+      for (const group of groups) {
+        const container = productsById.get(group.productId);
+        if (!container) continue;
+        for (const option of group.options) {
+          const link = modifierOptionProducts[option.id];
+          if (!link) continue;
+          const linkedProduct = productsById.get(link.productId);
+          if (!linkedProduct) continue;
+          const active = group.active
+            && option.active
+            && resolveZeloMenuLinkedOptionAvailability({
+              controlar_estoque: linkedProduct.controlar_estoque,
+              estoque_atual: linkedProduct.estoque_atual,
+              ocultar_no_pdv: linkedProduct.ocultar_no_pdv,
+            });
+          const usages = usagesByProductId[link.productId] ?? [];
+          usages.push({ containerName: container.nome, groupName: group.name, active });
+          usagesByProductId[link.productId] = usages;
+        }
+      }
+    }
+
+    return usagesByProductId;
+  }, [modifierOptionProducts, productModifierGroups, produtos]);
+  const productUsageCounts = useMemo(
+    () => Object.fromEntries(Object.entries(componentUsages).map(([productId, usages]) => [Number(productId), usages.length])),
+    [componentUsages],
+  );
   const filtered = useMemo(() => {
     if (!normalized) return produtos;
-    return produtos.filter((p) => p.nome.toLowerCase().includes(normalized));
-  }, [produtos, normalized]);
+    const optionNamesByProductId = new Map<number, string[]>();
+    for (const groups of Object.values(productModifierGroups)) {
+      for (const group of groups) {
+        for (const option of group.options) {
+          const link = modifierOptionProducts[option.id];
+          if (!link || !option.name.trim()) continue;
+          const names = optionNamesByProductId.get(link.productId) ?? [];
+          names.push(option.name);
+          optionNamesByProductId.set(link.productId, names);
+        }
+      }
+    }
+    return produtos.filter((p) => (
+      normalizeCatalogSearchText(p.nome).includes(normalized)
+      || (optionNamesByProductId.get(p.id) ?? []).some((name) => normalizeCatalogSearchText(name).includes(normalized))
+    ));
+  }, [modifierOptionProducts, productModifierGroups, produtos, normalized]);
 
   const displayProducts = useMemo(() => {
-    if (!statusFilter) return filtered;
-    return filtered.filter((p) => {
+    const roleFiltered = catalogFilter === 'all' ? filtered : filtered.filter((p) => {
       const pub = productPublications[p.id] ?? null;
+      const role = getCatalogProductRole(Boolean(pub?.visivel_online), componentUsages[p.id]?.length ?? 0);
       const details = getZeloMenuPublicationStatus({ ...p, publication: pub });
-      return details.status === statusFilter;
+      if (catalogFilter === 'standalone') return role === 'standalone' || role === 'standalone_and_component';
+      if (catalogFilter === 'component') return role === 'component' || role === 'standalone_and_component';
+      if (catalogFilter === 'paused') return details.status === 'paused';
+      if (catalogFilter === 'out_of_stock') return details.status === 'out_of_stock';
+      return role === 'draft';
     });
-  }, [filtered, statusFilter, productPublications]);
+    if (!statusFilter) return roleFiltered;
+    return roleFiltered.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === statusFilter);
+  }, [catalogFilter, componentUsages, filtered, statusFilter, productPublications]);
 
   const tree = useMemo(
     () => buildTree(categorias, subcategorias, displayProducts, productPublications),
@@ -227,10 +286,10 @@ export const CatalogView = ({
     });
     if (ids.length === 0) return;
 
-    const prevStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }> = {};
+    const prevStates: Record<number, { visivel_online: boolean }> = {};
     for (const id of ids) {
       const pub = productPublications[id];
-      prevStates[id] = { visivel_online: pub?.visivel_online ?? false, pausado_manualmente: pub?.pausado_manualmente ?? false };
+      prevStates[id] = { visivel_online: pub?.visivel_online ?? false };
     }
 
     const actionToken = ++actionTokenRef.current;
@@ -238,7 +297,7 @@ export const CatalogView = ({
     const failed: Array<{ productId: number; reason: string }> = [];
     for (const id of ids) {
       try {
-        await upsertProductPublication(id, { visivel_online: true, pausado_manualmente: false });
+        await upsertProductPublication(id, { visivel_online: true });
         changed++;
       } catch (e) {
         failed.push({ productId: id, reason: getFriendlyErrorMessage(e) || 'Não foi possível publicar.' });
@@ -266,43 +325,9 @@ export const CatalogView = ({
 
   const handlePublicationState = async (
     productIds: Iterable<number>,
-    state: 'paused' | 'resumed' | 'publish',
+    state: PublicationActionState,
   ) => {
-    if (state === 'publish') {
-      void handlePublishProducts(productIds);
-      return;
-    }
-    setBulkFeedback(null);
-    const ids = [...new Set(productIds)];
-    const prevStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }> = {};
-    for (const id of ids) {
-      const pub = productPublications[id];
-      prevStates[id] = { visivel_online: pub?.visivel_online ?? false, pausado_manualmente: pub?.pausado_manualmente ?? false };
-    }
-    const actionToken = ++actionTokenRef.current;
-    const result = await bulk.runForProductIds(productIds, { type: 'set-publication', state });
-    if (result.total === 0) return;
-    if (actionToken !== actionTokenRef.current) return;
-
-    const actionLabel = state === 'paused' ? 'pausado' : 'retomado';
-    const plural = result.changed === 1 ? '' : 's';
-    let message = `${result.changed} produto${plural} ${actionLabel}${plural}.`;
-    if (result.skipped > 0) {
-      message += ` ${result.skipped} item${result.skipped === 1 ? '' : 's'} sem publicação ativa foi${result.skipped === 1 ? '' : 'ram'} mantido${result.skipped === 1 ? '' : 's'} como estava${result.skipped === 1 ? '' : 'm'}.`;
-    }
-    if (result.failed.length > 0) {
-      message += ` ${result.failed.length} não ${result.failed.length === 1 ? 'pôde' : 'puderam'} ser atualizado${result.failed.length === 1 ? '' : 's'}.`;
-    }
-    setBulkFeedback({ tone: result.failed.length > 0 ? 'error' : 'success', message });
-
-    if (result.changed > 0 && result.failed.length === 0) {
-      setUndoAction({
-        type: state,
-        changedIds: ids.filter((id) => !result.failed.some((f) => f.productId === id)),
-        previousStates: prevStates,
-        message,
-      });
-    }
+    if (state === 'publish') void handlePublishProducts(productIds);
   };
 
 
@@ -311,6 +336,20 @@ export const CatalogView = ({
     const token = ++actionTokenRef.current;
     setUndoAction(null);
     setBulkFeedback(null);
+
+    if (undoAction.type === 'availability') {
+      const id = undoAction.changedIds[0];
+      const previous = undoAction.previousAvailability?.[id];
+      if (id != null && previous != null) {
+        try {
+          await updateProduto(id, { ocultar_no_pdv: previous });
+          setBulkFeedback({ tone: 'success', message: 'Disponibilidade restaurada.' });
+        } catch (error) {
+          setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(error) || 'Não foi possível desfazer.' });
+        }
+      }
+      return;
+    }
 
     let undoneCount = 0;
     const failed: Array<{ productId: number; reason: string }> = [];
@@ -335,29 +374,8 @@ export const CatalogView = ({
     void refresh();
   };
 
-  const handleProductPublicationToggle = (product: ProdutoRow) => {
-    if (bulk.busyAction !== null) return;
-    setUndoAction(null);
-    const publication = productPublications[product.id];
-    if (!publication?.visivel_online) {
-      void handlePublicationState([product.id], 'publish');
-    } else {
-      void handlePublicationState([product.id], publication.pausado_manualmente ? 'resumed' : 'paused');
-    }
-  };
-
   const handleBulkPublish = async () => {
     void handlePublishProducts(bulk.selectedIds);
-  };
-
-  const handleBulkPause = () => {
-    setUndoAction(null);
-    void handlePublicationState(bulk.selectedIds, 'paused');
-  };
-
-  const handleBulkResume = () => {
-    setUndoAction(null);
-    void handlePublicationState(bulk.selectedIds, 'resumed');
   };
 
   const toggleCat = (id: number) => {
@@ -395,6 +413,97 @@ export const CatalogView = ({
       setReorderBusy(false);
     }
   };
+
+  const handleStatusFilter = (status: ZeloMenuPublicationStatus | null) => {
+    setStatusFilter(status);
+    setBulkFeedback(null);
+    if (status !== null) {
+      productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const handleProductAvailabilityToggle = async (produto: ProdutoRow) => {
+    setBulkFeedback(null);
+    try {
+      await updateProduto(produto.id, { ocultar_no_pdv: !produto.ocultar_no_pdv });
+      setUndoAction({
+        type: 'availability',
+        changedIds: [produto.id],
+        previousStates: {},
+        previousAvailability: { [produto.id]: produto.ocultar_no_pdv },
+        message: produto.ocultar_no_pdv
+          ? `${produto.nome} reativado em todos os usos.`
+          : `${produto.nome} pausado em todos os usos.`,
+      });
+      setBulkFeedback({
+        tone: 'success',
+        message: produto.ocultar_no_pdv
+          ? `${produto.nome} reativado em todos os usos.`
+          : `${produto.nome} pausado em todos os usos.`,
+      });
+    } catch (toggleError) {
+      setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(toggleError) || 'Não foi possível atualizar a disponibilidade.' });
+    }
+  };
+
+  const createComponentProduct = async ({ nome, preco }: { nome: string; preco: number }) => {
+    const duplicate = isExactCatalogProductNameDuplicate(nome, produtos);
+    if (duplicate) throw new Error(`Já existe um produto chamado “${duplicate.nome}”. Selecione o existente para evitar duplicatas.`);
+    const created = await createProduto({
+      nome,
+      preco,
+      id_categoria: null,
+      id_subcategoria: null,
+      ocultar_no_pdv: false,
+    });
+    await upsertProductPublication(created.id, { visivel_online: false });
+    return created;
+  };
+
+  const requestDeleteProduct = (produto: ProdutoRow) => {
+    const usageCount = componentUsages[produto.id]?.length ?? 0;
+    if (usageCount > 0) {
+      setBulkFeedback({
+        tone: 'error',
+        message: `${produto.nome} está vinculado a ${usageCount} uso${usageCount === 1 ? '' : 's'}. Remova ou substitua os vínculos antes de excluir o produto.`,
+      });
+      return;
+    }
+    setDel({ kind: 'produto', item: produto });
+  };
+
+  const requestDeleteCategory = (categoria: Categoria) => {
+    const publishedCount = produtos.filter((produto) => (
+      produto.id_categoria === categoria.id && productPublications[produto.id]?.visivel_online
+    )).length;
+    if (publishedCount > 0) {
+      setBulkFeedback({
+        tone: 'error',
+        message: `Mova ou deixe como Somente complemento os ${publishedCount} produto${publishedCount === 1 ? '' : 's'} vendidos separadamente antes de excluir esta categoria.`,
+      });
+      return;
+    }
+    setDel({ kind: 'categoria', item: categoria });
+  };
+
+  const renderSearchProduct = (produto: ProdutoRow) => (
+    <ProdutoRowItem
+      key={produto.id}
+      produto={produto}
+      componentUsages={componentUsages[produto.id]}
+      onToggleAvailability={() => void handleProductAvailabilityToggle(produto)}
+      selectionMode={bulk.selectionMode}
+      selected={bulk.isSelected(produto.id)}
+      onToggleSelected={() => {
+        setBulkFeedback(null);
+        bulk.toggle(produto.id);
+      }}
+      onEdit={() => setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria })}
+      onDelete={() => requestDeleteProduct(produto)}
+      publication={productPublications[produto.id] ?? null}
+      onConfigurePublication={() => setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria, initialTab: 'publicacao' })}
+    />
+  );
 
   return (
     <>
@@ -519,6 +628,33 @@ export const CatalogView = ({
                 />
               </div>
             </div>
+
+            <div className="flex flex-wrap gap-2" aria-label="Filtrar produtos">
+              {[
+                { value: 'all' as const, label: 'Todos', count: produtos.length },
+                { value: 'standalone' as const, label: 'Vendidos separadamente', count: produtos.filter((p) => ['standalone', 'standalone_and_component'].includes(getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0))).length },
+                { value: 'component' as const, label: 'Componentes', count: produtos.filter((p) => ['component', 'standalone_and_component'].includes(getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0))).length },
+                { value: 'paused' as const, label: 'Pausados', count: produtos.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === 'paused').length },
+                { value: 'out_of_stock' as const, label: 'Sem estoque', count: produtos.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === 'out_of_stock').length },
+                { value: 'draft' as const, label: 'Rascunhos', count: produtos.filter((p) => getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0) === 'draft').length },
+              ].map((filter) => {
+                const active = catalogFilter === filter.value;
+                return (
+                  <button
+                    key={filter.label}
+                    type="button"
+                    onClick={() => setCatalogFilter(filter.value)}
+                    className={`min-h-10 rounded-full border px-3 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40 ${
+                      active
+                        ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]'
+                        : 'border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-muted)]'
+                    }`}
+                  >
+                    {filter.label} <span className="font-mono">{filter.count}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {bulk.selectionMode && (
@@ -556,22 +692,6 @@ export const CatalogView = ({
                       className="min-h-[44px] rounded-lg bg-[var(--color-brand)] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-brand-deep)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {bulk.busyAction === 'set-publication' ? 'Publicando...' : 'Publicar no link'}
-                    </button>
-                    <button
-                      onClick={handleBulkPause}
-                      disabled={!bulk.hasSelection || bulk.busyAction !== null}
-                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <PauseCircle className="h-3.5 w-3.5" />
-                      Pausar selecionados
-                    </button>
-                    <button
-                      onClick={handleBulkResume}
-                      disabled={!bulk.hasSelection || bulk.busyAction !== null}
-                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <PlayCircle className="h-3.5 w-3.5" />
-                      Retomar selecionados
                     </button>
                   </>
                 )}
@@ -636,7 +756,23 @@ export const CatalogView = ({
                   </button>
                 </div>
               )}
-              {reorderMode ? (
+              {normalized ? (
+                <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
+                  <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                    <p className="text-sm font-bold text-[var(--color-ink)]">Resultados para “{query.trim()}”</p>
+                    <span className="text-xs font-medium text-[var(--color-ink-muted)]">
+                      {displayProducts.length} produto{displayProducts.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  {displayProducts.length > 0 ? (
+                    <div className="space-y-1">{displayProducts.map(renderSearchProduct)}</div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-[var(--color-line)] p-6 text-center text-sm text-[var(--color-ink-muted)]">
+                      Nenhum produto encontrado para “{query.trim()}”.
+                    </div>
+                  )}
+                </div>
+              ) : reorderMode ? (
                 <SortableList
                   items={tree}
                   getId={(node) => node.categoria.id}
@@ -651,7 +787,7 @@ export const CatalogView = ({
                   forceExpanded={Boolean(normalized)}
                   toggle={() => toggleCat(node.categoria.id)}
                   onEditCategoria={() => setModal({ kind: 'categoria', initial: node.categoria })}
-                  onDeleteCategoria={() => setDel({ kind: 'categoria', item: node.categoria })}
+                  onDeleteCategoria={() => requestDeleteCategory(node.categoria)}
                   onNewSubcategoria={() =>
                     setModal({ kind: 'subcategoria', initial: null, defaultCategoriaId: node.categoria.id })
                   }
@@ -682,14 +818,15 @@ export const CatalogView = ({
                   onEditProduto={(p) =>
                     setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
                   }
-                  onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
+                  componentUsages={componentUsages}
+                  onToggleProductAvailability={handleProductAvailabilityToggle}
+                  onDeleteProduto={requestDeleteProduct}
                   productPublications={productPublications}
                   onConfigurePublication={(p) => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
                   onSetCategoryPublication={(ids, state) => {
                     setUndoAction(null);
                     setConfirmCategoryAction({ ids, state });
                   }}
-                  onToggleProductPublication={handleProductPublicationToggle}
                   publicationActionBusy={bulk.busyAction !== null}
                   reorderMode
                   reorderBusy={reorderBusy}
@@ -705,7 +842,7 @@ export const CatalogView = ({
                   forceExpanded={Boolean(normalized)}
                   toggle={() => toggleCat(node.categoria.id)}
                   onEditCategoria={() => setModal({ kind: 'categoria', initial: node.categoria })}
-                  onDeleteCategoria={() => setDel({ kind: 'categoria', item: node.categoria })}
+                  onDeleteCategoria={() => requestDeleteCategory(node.categoria)}
                   onNewSubcategoria={() =>
                     setModal({ kind: 'subcategoria', initial: null, defaultCategoriaId: node.categoria.id })
                   }
@@ -736,14 +873,15 @@ export const CatalogView = ({
                   onEditProduto={(p) =>
                     setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
                   }
-                  onDeleteProduto={(p) => setDel({ kind: 'produto', item: p })}
+                  componentUsages={componentUsages}
+                  onToggleProductAvailability={handleProductAvailabilityToggle}
+                  onDeleteProduto={requestDeleteProduct}
                   productPublications={productPublications}
                   onConfigurePublication={(p) => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
                   onSetCategoryPublication={(ids, state) => {
                     setUndoAction(null);
                     setConfirmCategoryAction({ ids, state });
                   }}
-                  onToggleProductPublication={handleProductPublicationToggle}
                   publicationActionBusy={bulk.busyAction !== null}
                   reorderMode={false}
                   reorderBusy={false}
@@ -751,7 +889,7 @@ export const CatalogView = ({
                 />
               ))}
 
-              {orphanProducts.length > 0 && (
+              {!normalized && orphanProducts.length > 0 && (
                 <div className="rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface-muted)] p-4">
                   <div className="mb-3 flex items-center gap-2">
                     {bulk.selectionMode && (
@@ -777,6 +915,8 @@ export const CatalogView = ({
                       <ProdutoRowItem
                         key={p.id}
                         produto={p}
+                        componentUsages={componentUsages[p.id]}
+                        onToggleAvailability={() => void handleProductAvailabilityToggle(p)}
                         selectionMode={bulk.selectionMode}
                         selected={bulk.isSelected(p.id)}
                         onToggleSelected={() => {
@@ -786,11 +926,9 @@ export const CatalogView = ({
                         onEdit={() =>
                           setModal({ kind: 'produto', initial: p, defaultCategoriaId: null, defaultSubcategoriaId: null })
                         }
-                        onDelete={() => setDel({ kind: 'produto', item: p })}
+                        onDelete={() => requestDeleteProduct(p)}
                         publication={productPublications[p.id] ?? null}
                         onConfigurePublication={() => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
-                        onTogglePublication={() => handleProductPublicationToggle(p)}
-                        publicationActionBusy={bulk.busyAction !== null}
                       />
                       )}
                     />
@@ -800,6 +938,8 @@ export const CatalogView = ({
                         <ProdutoRowItem
                           key={p.id}
                           produto={p}
+                          componentUsages={componentUsages[p.id]}
+                          onToggleAvailability={() => void handleProductAvailabilityToggle(p)}
                           selectionMode={bulk.selectionMode}
                           selected={bulk.isSelected(p.id)}
                           onToggleSelected={() => {
@@ -809,11 +949,9 @@ export const CatalogView = ({
                           onEdit={() =>
                             setModal({ kind: 'produto', initial: p, defaultCategoriaId: null, defaultSubcategoriaId: null })
                           }
-                          onDelete={() => setDel({ kind: 'produto', item: p })}
+                          onDelete={() => requestDeleteProduct(p)}
                           publication={productPublications[p.id] ?? null}
                           onConfigurePublication={() => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
-                          onTogglePublication={() => handleProductPublicationToggle(p)}
-                          publicationActionBusy={bulk.busyAction !== null}
                         />
                       ))}
                     </div>
@@ -821,11 +959,6 @@ export const CatalogView = ({
                 </div>
               )}
 
-              {normalized && filtered.length === 0 && (
-                <div className="rounded-xl border border-dashed border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-muted)]">
-                  Nenhum produto encontrado para "{query}".
-                </div>
-              )}
             </div>
           )}
 
@@ -840,13 +973,7 @@ export const CatalogView = ({
           }
           onConfigurePublication={(produto) => setModal({ kind: 'produto', initial: produto, defaultCategoriaId: produto.id_categoria, defaultSubcategoriaId: produto.id_subcategoria, initialTab: 'publicacao' })}
           statusFilter={statusFilter}
-          onSetStatusFilter={(status) => {
-            setStatusFilter(status);
-            setBulkFeedback(null);
-            if (status !== null && productsSectionRef.current) {
-              productsSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-          }}
+          onSetStatusFilter={handleStatusFilter}
         />
       </div>
 
@@ -889,12 +1016,14 @@ export const CatalogView = ({
         categorias={categorias}
         subcategorias={subcategorias}
         products={editorProducts}
+        productUsageCounts={productUsageCounts}
         modifierGroups={
           modal?.kind === 'produto' && modal.initial
             ? productModifierGroups[modal.initial.id] ?? []
             : []
         }
         modifierOptionProducts={modifierOptionProducts}
+        onCreateComponentProduct={createComponentProduct}
         onClose={() => setModal(null)}
         onSubmit={async (input) => {
           if (modal?.kind === 'produto' && modal.initial) {
@@ -932,7 +1061,7 @@ export const CatalogView = ({
             : del?.kind === 'subcategoria'
               ? `A subcategoria "${del.item.nome}" será removida. Produtos ligados a ela ficarão sem subcategoria.`
               : del?.kind === 'categoria'
-                ? `A categoria "${del.item.nome}" e suas subcategorias serão removidas. Produtos ficarão sem categoria.`
+                ? `A categoria "${del.item.nome}" e suas subcategorias serão removidas. Os produtos serão preservados e componentes continuarão vinculados aos seus produtos-pai.`
                 : ''
         }
         onClose={() => setDel(null)}
@@ -972,24 +1101,10 @@ export const CatalogView = ({
       {confirmCategoryAction && (
         <ConfirmModal
           open
-          title={
-            confirmCategoryAction.state === 'publish'
-              ? 'Publicar produtos?'
-              : confirmCategoryAction.state === 'paused'
-                ? 'Pausar produtos?'
-                : 'Retomar produtos?'
-          }
-          message={`${confirmCategoryAction.ids.length} produto${confirmCategoryAction.ids.length === 1 ? '' : 's'} será${confirmCategoryAction.ids.length === 1 ? '' : 'o'} ${
-            confirmCategoryAction.state === 'publish' ? 'publicado' : confirmCategoryAction.state === 'paused' ? 'pausado' : 'retomado'
-          }${confirmCategoryAction.ids.length === 1 ? '' : 's'} no cardápio.`}
+          title="Publicar produtos?"
+          message={`${confirmCategoryAction.ids.length} produto${confirmCategoryAction.ids.length === 1 ? '' : 's'} será${confirmCategoryAction.ids.length === 1 ? '' : 'o'} publicado${confirmCategoryAction.ids.length === 1 ? '' : 's'} no cardápio.`}
           destructive={false}
-          confirmLabel={
-            confirmCategoryAction.state === 'publish'
-              ? 'Publicar'
-              : confirmCategoryAction.state === 'paused'
-                ? 'Pausar'
-                : 'Retomar'
-          }
+          confirmLabel="Publicar"
           onClose={() => setConfirmCategoryAction(null)}
           onConfirm={async () => {
             const action = confirmCategoryAction;
@@ -1029,20 +1144,6 @@ export const CatalogView = ({
                 className="min-h-[44px] rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)]/50 px-3 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Publicar
-              </button>
-              <button
-                onClick={handleBulkPause}
-                disabled={bulk.busyAction !== null || bulk.selectedCount === 0}
-                className="min-h-[44px] rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Pausar
-              </button>
-              <button
-                onClick={handleBulkResume}
-                disabled={bulk.busyAction !== null || bulk.selectedCount === 0}
-                className="min-h-[44px] rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Retomar
               </button>
               <button
                 onClick={() => setBulkDeleteConfirm(true)}
@@ -1150,11 +1251,12 @@ type CategoriaCardProps = {
   onToggleSubcategorySelection: (ids: number[]) => void;
   onToggleProdutoSelection: (id: number) => void;
   onEditProduto: (p: ProdutoRow) => void;
+  componentUsages: Record<number, ComponentUsage[]>;
+  onToggleProductAvailability: (p: ProdutoRow) => void;
   onDeleteProduto: (p: ProdutoRow) => void;
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
   onConfigurePublication: (p: ProdutoRow) => void;
   onSetCategoryPublication: (ids: number[], state: PublicationActionState) => void;
-  onToggleProductPublication: (product: ProdutoRow) => void;
   publicationActionBusy: boolean;
   reorderMode: boolean;
   reorderBusy: boolean;
@@ -1178,11 +1280,12 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
   onToggleSubcategorySelection,
   onToggleProdutoSelection,
   onEditProduto,
+  componentUsages,
+  onToggleProductAvailability,
   onDeleteProduto,
   productPublications,
   onConfigurePublication,
   onSetCategoryPublication,
-  onToggleProductPublication,
   publicationActionBusy,
   reorderMode,
   reorderBusy,
@@ -1226,42 +1329,12 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
           )}
         </button>
 
-        <div className="ml-auto hidden shrink-0 items-center gap-1 sm:flex">
-          {categoryActions.map((action) => (
-            <button
-              key={action.state}
-              type="button"
-              onClick={() => onSetCategoryPublication(categoryIds, action.state)}
-              disabled={publicationActionBusy}
-              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2.5 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {action.state === 'paused' ? <PauseCircle className="h-3.5 w-3.5" /> : action.state === 'resumed' ? <PlayCircle className="h-3.5 w-3.5" /> : <Globe2 className="h-3.5 w-3.5" />}
-              <span>{action.label}</span>
-            </button>
-          ))}
-          <IconBtn title="Nova subcategoria" onClick={onNewSubcategoria}>
-            <FolderPlus className="h-4 w-4" />
-          </IconBtn>
-          <IconBtn title="Novo produto nesta categoria" onClick={() => onNewProduto(null)}>
-            <Plus className="h-4 w-4" />
-          </IconBtn>
-          <IconBtn title="Editar categoria" onClick={onEditCategoria}>
-            <Pencil className="h-4 w-4" />
-          </IconBtn>
-          <IconBtn title="Excluir categoria" onClick={onDeleteCategoria} destructive>
-            <Trash2 className="h-4 w-4" />
-          </IconBtn>
-        </div>
-        <MobileActionsMenu
+        <ActionsMenu
           label={node.categoria.nome}
           actions={[
             ...categoryActions.map((action) => ({
               label: action.label,
-              icon: action.state === 'paused'
-                ? <PauseCircle className="h-4 w-4" />
-                : action.state === 'resumed'
-                  ? <PlayCircle className="h-4 w-4" />
-                  : <Globe2 className="h-4 w-4" />,
+              icon: <Globe2 className="h-4 w-4" />,
               onSelect: () => onSetCategoryPublication(categoryIds, action.state),
               disabled: publicationActionBusy,
             })),
@@ -1285,12 +1358,12 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                 renderItem={(p) => (
                   <ProdutoRowItem
                     produto={p}
+                    componentUsages={componentUsages[p.id]}
+                    onToggleAvailability={() => onToggleProductAvailability(p)}
                     publication={productPublications[p.id] ?? null}
                     onEdit={() => onEditProduto(p)}
                     onDelete={() => onDeleteProduto(p)}
                     onConfigurePublication={() => onConfigurePublication(p)}
-                    onTogglePublication={() => onToggleProductPublication(p)}
-                    publicationActionBusy={publicationActionBusy}
                   />
                 )}
               />
@@ -1299,6 +1372,8 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
             <div key={p.id} className="px-4 py-2">
               <ProdutoRowItem
                 produto={p}
+                componentUsages={componentUsages[p.id]}
+                onToggleAvailability={() => onToggleProductAvailability(p)}
                 selectionMode={selectionMode}
                 selected={selectedIds.has(p.id)}
                 onToggleSelected={() => onToggleProdutoSelection(p.id)}
@@ -1306,8 +1381,6 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                 onEdit={() => onEditProduto(p)}
                 onDelete={() => onDeleteProduto(p)}
                 onConfigurePublication={() => onConfigurePublication(p)}
-                onTogglePublication={() => onToggleProductPublication(p)}
-                publicationActionBusy={publicationActionBusy}
               />
             </div>
           ))}
@@ -1336,39 +1409,12 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                 {subSummary && !selectionMode && (
                   <span className="hidden text-[11px] text-[var(--color-ink-faint)] sm:inline">{subSummary}</span>
                 )}
-                <div className="ml-auto hidden items-center gap-1 sm:flex">
-                  {subActions.map((action) => (
-                    <button
-                      key={action.state}
-                      type="button"
-                      onClick={() => onSetCategoryPublication(subIds, action.state)}
-                      disabled={publicationActionBusy}
-                      className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {action.state === 'paused' ? <PauseCircle className="h-3 w-3" /> : action.state === 'resumed' ? <PlayCircle className="h-3 w-3" /> : <Globe2 className="h-3 w-3" />}
-                      <span className="hidden sm:inline">{action.label}</span>
-                    </button>
-                  ))}
-                  <IconBtn title="Novo produto nesta subcategoria" onClick={() => onNewProduto(subcategoria.id)}>
-                    <Plus className="h-3.5 w-3.5" />
-                  </IconBtn>
-                  <IconBtn title="Editar subcategoria" onClick={() => onEditSubcategoria(subcategoria)}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </IconBtn>
-                  <IconBtn title="Excluir subcategoria" onClick={() => onDeleteSubcategoria(subcategoria)} destructive>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </IconBtn>
-                </div>
-                <MobileActionsMenu
+                <ActionsMenu
                   label={subcategoria.nome}
                   actions={[
                     ...subActions.map((action) => ({
                       label: action.label,
-                      icon: action.state === 'paused'
-                        ? <PauseCircle className="h-4 w-4" />
-                        : action.state === 'resumed'
-                          ? <PlayCircle className="h-4 w-4" />
-                          : <Globe2 className="h-4 w-4" />,
+                      icon: <Globe2 className="h-4 w-4" />,
                       onSelect: () => onSetCategoryPublication(subIds, action.state),
                       disabled: publicationActionBusy,
                     })),
@@ -1387,12 +1433,12 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                   renderItem={(p) => (
                   <ProdutoRowItem
                     produto={p}
+                    componentUsages={componentUsages[p.id]}
+                    onToggleAvailability={() => onToggleProductAvailability(p)}
                     publication={productPublications[p.id] ?? null}
                     onEdit={() => onEditProduto(p)}
                     onDelete={() => onDeleteProduto(p)}
                     onConfigurePublication={() => onConfigurePublication(p)}
-                    onTogglePublication={() => onToggleProductPublication(p)}
-                    publicationActionBusy={publicationActionBusy}
                   />
                   )}
                 />
@@ -1402,6 +1448,8 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                     <ProdutoRowItem
                       key={p.id}
                       produto={p}
+                      componentUsages={componentUsages[p.id]}
+                      onToggleAvailability={() => onToggleProductAvailability(p)}
                       selectionMode={selectionMode}
                       selected={selectedIds.has(p.id)}
                       onToggleSelected={() => onToggleProdutoSelection(p.id)}
@@ -1409,8 +1457,6 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                       onEdit={() => onEditProduto(p)}
                       onDelete={() => onDeleteProduto(p)}
                       onConfigurePublication={() => onConfigurePublication(p)}
-                      onTogglePublication={() => onToggleProductPublication(p)}
-                      publicationActionBusy={publicationActionBusy}
                     />
                   ))}
                 </div>
@@ -1443,6 +1489,8 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
 
 type ProdutoRowItemProps = {
   produto: ProdutoRow;
+  componentUsages?: ComponentUsage[];
+  onToggleAvailability?: () => void;
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelected?: () => void;
@@ -1450,12 +1498,12 @@ type ProdutoRowItemProps = {
   onEdit: () => void;
   onDelete: () => void;
   onConfigurePublication: () => void;
-  onTogglePublication?: () => void;
-  publicationActionBusy?: boolean;
 };
 
 const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
   produto,
+  componentUsages,
+  onToggleAvailability,
   selectionMode = false,
   selected = false,
   onToggleSelected,
@@ -1463,10 +1511,16 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
   onEdit,
   onDelete,
   onConfigurePublication,
-  onTogglePublication,
-  publicationActionBusy = false,
 }) => {
   const publicationStatus = getZeloMenuPublicationStatus({ ...produto, publication: publication ?? null });
+  const role = getCatalogProductRole(Boolean(publication?.visivel_online), componentUsages?.length ?? 0);
+  const roleLabel = role === 'component'
+    ? 'Somente complemento'
+    : role === 'standalone_and_component'
+      ? 'Vendido separadamente · componente'
+      : role === 'standalone'
+        ? 'Vendido separadamente'
+        : 'Rascunho';
 
   return (
     <div className="group flex min-h-[44px] items-start gap-2 rounded-lg px-2 py-2 hover:bg-[var(--color-surface-muted)] sm:items-center sm:gap-3 sm:py-1.5">
@@ -1480,12 +1534,10 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
       <div className="min-w-0 flex-1">
         <p className="break-words text-sm font-medium leading-5 text-[var(--color-ink)] sm:truncate">{produto.nome}</p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:mt-0 sm:gap-2">
-          {produto.ocultar_no_pdv && (
-            <span className="rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-ink-muted)]">
-              Oculto
-            </span>
-          )}
           <PublicationStatusPill status={publicationStatus.status} />
+          <span className="rounded-full bg-[var(--color-surface-muted)] px-2 py-1 text-[11px] font-semibold text-[var(--color-ink-soft)]">
+            {roleLabel}
+          </span>
           <span className="font-mono text-sm text-[var(--color-ink-soft)] sm:hidden">R$ {produto.preco.toFixed(2)}</span>
           {produto.controlar_estoque && (
             <span
@@ -1507,6 +1559,16 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
             {publication.descricao_publica ? ` · ${publication.descricao_publica}` : ''}
           </p>
         )}
+        {componentUsages && componentUsages.length > 0 && (
+          <p className="mt-1 text-[11px] leading-snug text-[var(--color-ink-muted)]">
+            <span className="font-semibold text-[var(--color-ink-soft)]">Componente em:</span>{' '}
+            {componentUsages.map((usage, index) => (
+              <span key={`${usage.containerName}-${usage.groupName}-${index}`} className={usage.active ? '' : 'text-[var(--color-warn)]'}>
+                {index > 0 ? ' · ' : ''}{usage.containerName} ({usage.groupName}) — {usage.active ? 'disponível' : 'indisponível'}
+              </span>
+            ))}
+          </p>
+        )}
       </div>
 
       <span className="hidden font-mono text-sm text-[var(--color-ink-soft)] sm:inline">R$ {produto.preco.toFixed(2)}</span>
@@ -1525,59 +1587,15 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
         </span>
       )}
 
-      {!selectionMode && onTogglePublication && (
-        publication?.visivel_online ? (
-          <button
-            type="button"
-            onClick={onTogglePublication}
-            disabled={publicationActionBusy}
-            className="hidden min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50 sm:inline-flex"
-            aria-label={publication.pausado_manualmente ? `Retomar ${produto.nome}` : `Pausar ${produto.nome}`}
-          >
-            {publication.pausado_manualmente ? <PlayCircle className="h-3.5 w-3.5" /> : <PauseCircle className="h-3.5 w-3.5" />}
-            <span className="hidden sm:inline">{publication.pausado_manualmente ? 'Retomar' : 'Pausar'}</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onTogglePublication}
-            disabled={publicationActionBusy}
-            className="hidden min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-brand-soft)] bg-[var(--color-surface)] px-2 text-xs font-semibold text-[var(--color-brand-deep)] transition-colors hover:bg-[var(--color-brand-soft)] disabled:cursor-not-allowed disabled:opacity-50 sm:inline-flex"
-            aria-label={`Publicar ${produto.nome} no cardápio`}
-          >
-            <Globe2 className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Publicar</span>
-          </button>
-        )
-      )}
-
       {!selectionMode && (
-        <div className="hidden items-center gap-1 opacity-100 transition-opacity sm:flex sm:opacity-0 sm:group-hover:opacity-100" role="toolbar" aria-label="Ações do produto">
-          <IconBtn title="Editar produto" onClick={onEdit}>
-            <Pencil className="h-3.5 w-3.5" />
-          </IconBtn>
-          <IconBtn title="Configurar publicação" onClick={onConfigurePublication}>
-            <Globe2 className="h-3.5 w-3.5" />
-          </IconBtn>
-          <IconBtn title="Excluir produto" onClick={onDelete} destructive>
-            <Trash2 className="h-3.5 w-3.5" />
-          </IconBtn>
-        </div>
-      )}
-      {!selectionMode && (
-        <MobileActionsMenu
+        <ActionsMenu
           label={produto.nome}
           actions={[
-            ...(onTogglePublication
+            ...(onToggleAvailability
               ? [{
-                  label: publication?.visivel_online
-                    ? publication.pausado_manualmente ? 'Retomar no cardápio' : 'Pausar no cardápio'
-                    : 'Publicar no cardápio',
-                  icon: publication?.visivel_online
-                    ? publication.pausado_manualmente ? <PlayCircle className="h-4 w-4" /> : <PauseCircle className="h-4 w-4" />
-                    : <Globe2 className="h-4 w-4" />,
-                  onSelect: onTogglePublication,
-                  disabled: publicationActionBusy,
+                  label: produto.ocultar_no_pdv ? 'Reativar produto em todos os usos' : 'Pausar produto em todos os usos',
+                  icon: produto.ocultar_no_pdv ? <CircleCheck className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
+                  onSelect: onToggleAvailability,
                 }]
               : []),
             { label: 'Editar produto', icon: <Pencil className="h-4 w-4" />, onSelect: onEdit },
@@ -1598,12 +1616,12 @@ type MobileAction = {
   disabled?: boolean;
 };
 
-function MobileActionsMenu({ label, actions }: { label: string; actions: MobileAction[] }) {
+function ActionsMenu({ label, actions }: { label: string; actions: MobileAction[] }) {
   const [open, setOpen] = useState(false);
   const titleId = useId();
 
   return (
-    <div className="shrink-0 sm:hidden">
+    <div className="shrink-0">
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -1619,7 +1637,7 @@ function MobileActionsMenu({ label, actions }: { label: string; actions: MobileA
         open={open}
         onClose={() => setOpen(false)}
         titleId={titleId}
-        containerClassName="fixed inset-0 z-50 flex items-end justify-center sm:hidden"
+        containerClassName="fixed inset-0 z-50 flex items-end justify-center"
         backdropClassName="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
         panelLayoutClassName="w-full"
         panelClassName="rounded-t-2xl bg-[var(--color-surface)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(11,29,58,0.14)]"
@@ -1651,6 +1669,98 @@ function MobileActionsMenu({ label, actions }: { label: string; actions: MobileA
         </div>
       </Modal>
     </div>
+  );
+}
+
+/** @deprecated Price editing lives inside Editar produto. Kept exported for one compatibility release. */
+export function ProductPriceEditModal({
+  product,
+  onClose,
+  onSave,
+}: {
+  product: ProdutoRow | null;
+  onClose: () => void;
+  onSave: (price: number) => Promise<void>;
+}) {
+  const titleId = useId();
+  const [value, setValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!product) return;
+    setValue(formatPrecoInput(product.preco));
+    setError(null);
+    setSaving(false);
+  }, [product]);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const price = parsePrecoInput(value);
+    if (!Number.isFinite(price) || price < 0) {
+      setError('Informe um preço válido.');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(price);
+      onClose();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Não foi possível salvar o preço.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={product !== null}
+      onClose={() => { if (!saving) onClose(); }}
+      titleId={titleId}
+      containerClassName="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
+      backdropClassName="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+      panelLayoutClassName="w-full max-w-md"
+      panelClassName="rounded-2xl bg-[var(--color-surface)] p-5 shadow-[0_4px_8px_rgba(11,29,58,0.14)] sm:p-6"
+      disableEscape={saving}
+    >
+      <form onSubmit={handleSubmit}>
+        <h2 id={titleId} className="text-lg font-bold text-[var(--color-ink)]">Editar produto</h2>
+        <p className="mt-1 text-sm leading-5 text-[var(--color-ink-muted)]">
+          {product ? `Atualize o preço de ${product.nome}.` : 'Atualize o preço do produto.'}
+        </p>
+        <label className="mt-5 block space-y-1.5">
+          <span className="text-sm font-semibold text-[var(--color-ink)]">Preço (R$)</span>
+          <input
+            autoFocus
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            inputMode="decimal"
+            placeholder="0,00"
+            aria-invalid={error !== null}
+            className="min-h-12 w-full rounded-xl border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-3 text-base font-mono text-[var(--color-ink)] outline-none focus:border-[var(--color-brand)] focus:ring-2 focus:ring-[var(--color-brand)]/30"
+          />
+        </label>
+        {error && <p role="alert" className="mt-2 text-sm font-medium text-[var(--color-alert)]">{error}</p>}
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="min-h-11 rounded-xl px-4 text-sm font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="min-h-11 rounded-xl bg-[var(--color-brand)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-brand-deep)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/40 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? 'Salvando...' : 'Salvar preço'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -1693,7 +1803,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
 
       <div className="mt-5 -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 md:mx-0 md:grid md:snap-none md:grid-cols-5 md:overflow-visible md:px-0 md:pb-0">
         <PublicationMetric label="Publicados" value={summary.published} detail={`${readyPercent}% do cardápio`} tone="published" active={statusFilter === 'published'} onClick={() => onSetStatusFilter(statusFilter === 'published' ? null : 'published')} />
-        <PublicationMetric label="Não publicados" value={summary.unpublished} detail="Fora do link" tone="unpublished" active={statusFilter === 'unpublished'} onClick={() => onSetStatusFilter(statusFilter === 'unpublished' ? null : 'unpublished')} />
+        <PublicationMetric label="Somente complemento" value={summary.unpublished} detail="Não vendido separadamente" tone="unpublished" active={statusFilter === 'unpublished'} onClick={() => onSetStatusFilter(statusFilter === 'unpublished' ? null : 'unpublished')} />
         <PublicationMetric label="Pausados" value={summary.paused} detail="Ocultos por agora" tone="paused" active={statusFilter === 'paused'} onClick={() => onSetStatusFilter(statusFilter === 'paused' ? null : 'paused')} />
         <PublicationMetric label="Sem estoque" value={summary.outOfStock} detail="Bloqueados pelo estoque" tone="out_of_stock" active={statusFilter === 'out_of_stock'} onClick={() => onSetStatusFilter(statusFilter === 'out_of_stock' ? null : 'out_of_stock')} />
         <PublicationMetric label="Sem categoria" value={summary.missingCategory} detail="Precisam de organização" tone="missing_category" active={statusFilter === 'missing_category'} onClick={() => onSetStatusFilter(statusFilter === 'missing_category' ? null : 'missing_category')} />
@@ -1720,7 +1830,7 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
                 key={produto.id}
                 type="button"
                 onClick={() => {
-                  if (details.status === 'unpublished' || details.status === 'paused') {
+                  if (details.status === 'unpublished') {
                     onConfigurePublication(produto);
                   } else {
                     onEditProduto(produto);
@@ -1747,12 +1857,12 @@ const ZeloMenuPublicationPanel: React.FC<ZeloMenuPublicationPanelProps> = ({
 
       {totalProdutos > 0 && summary.published === 0 && (
         <div className="mt-4 rounded-xl border border-[var(--color-warn-soft)] bg-[var(--color-warn-soft)]/30 px-4 py-3">
-          <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Ainda não publicado</p>
+          <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Nenhum produto vendido separadamente</p>
           <ul className="space-y-2 text-[12px] text-[var(--color-ink-soft)]">
             <li className="flex items-start gap-2">
               <Globe2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-warn)]" />
               <span>
-                Publique um produto — clique em <strong className="text-[var(--color-ink)]">Publicar</strong> ao lado do nome ou abra a publicação para configurar.
+                Ative <strong className="text-[var(--color-ink)]">Vender separadamente no cardápio</strong> dentro de Editar produto para disponibilizar um item no link.
               </span>
             </li>
             <li className="flex items-start gap-2">
@@ -1829,45 +1939,18 @@ function publicationTone(status: ZeloMenuPublicationStatus): { label: string; cl
     return { label: 'Publicado', className: 'bg-[var(--color-brand-soft)] text-[var(--color-brand-deep)]' };
   }
   if (status === 'unpublished') {
-    return { label: 'Não publicado', className: 'bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)]' };
+    return { label: 'Somente complemento', className: 'bg-[var(--color-surface-muted)] text-[var(--color-ink-soft)]' };
   }
   if (status === 'paused') {
     return { label: 'Pausado', className: 'bg-blue-50 text-blue-700' };
   }
   if (status === 'hidden') {
-    return { label: 'Inativo', className: 'bg-slate-100 text-slate-700' };
+    return { label: 'Ocultado automaticamente', className: 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]' };
   }
   if (status === 'out_of_stock') {
     return { label: 'Sem estoque', className: 'bg-[var(--color-alert-soft)] text-[var(--color-alert)]' };
   }
   return { label: 'Sem categoria', className: 'bg-[var(--color-warn-soft)] text-[var(--color-warn)]' };
-}
-
-function IconBtn({
-  title,
-  onClick,
-  destructive,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  destructive?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      className={`rounded-lg p-1.5 transition-colors ${
-        destructive
-          ? 'text-[var(--color-ink-faint)] hover:bg-[var(--color-alert-soft)] hover:text-[var(--color-alert)]'
-          : 'text-[var(--color-ink-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-ink)]'
-      }`}
-    >
-      {children}
-    </button>
-  );
 }
 
 type SelectionState = 'none' | 'some' | 'all';
@@ -1948,9 +2031,7 @@ function getCategoryProductIds(node: TreeNode): number[] {
 function getCategoryActions(
   productIds: number[],
   productPublications: Record<number, ZeloMenuProductPublicationRow>,
-): { state: PublicationActionState; label: string; publishIds?: number[] }[] {
-  let activeCount = 0;
-  let pausedCount = 0;
+): Array<{ state: PublicationActionState; label: string; publishIds?: number[] }> {
   const unpublishedIds: number[] = [];
 
   for (const productId of productIds) {
@@ -1959,13 +2040,9 @@ function getCategoryActions(
       unpublishedIds.push(productId);
       continue;
     }
-    if (publication.pausado_manualmente) pausedCount += 1;
-    else activeCount += 1;
   }
 
   const actions: { state: PublicationActionState; label: string; publishIds?: number[] }[] = [];
-  if (activeCount > 0) actions.push({ state: 'paused', label: 'Pausar' });
-  if (pausedCount > 0) actions.push({ state: 'resumed', label: 'Retomar' });
   if (unpublishedIds.length > 0) actions.push({ state: 'publish', label: 'Publicar', publishIds: unpublishedIds });
   return actions;
 }
@@ -1975,7 +2052,7 @@ function getCategorySummary(
   productPublications: Record<number, ZeloMenuProductPublicationRow>,
   produtos: ProdutoRow[],
 ): string {
-  let published = 0, paused = 0, unpublished = 0;
+  let published = 0, paused = 0, blocked = 0, unpublished = 0;
   for (const id of productIds) {
     const product = produtos.find((p) => p.id === id);
     if (!product) continue;
@@ -1983,12 +2060,14 @@ function getCategorySummary(
     const status = getZeloMenuPublicationStatus({ ...product, publication: pub }).status;
     if (status === 'published') published++;
     else if (status === 'paused') paused++;
+    else if (status === 'hidden') blocked++;
     else unpublished++;
   }
   const parts: string[] = [];
   if (published > 0) parts.push(`${published} publicado${published === 1 ? '' : 's'}`);
   if (paused > 0) parts.push(`${paused} pausado${paused === 1 ? '' : 's'}`);
-  if (unpublished > 0) parts.push(`${unpublished} não publicado${unpublished === 1 ? '' : 's'}`);
+  if (blocked > 0) parts.push(`${blocked} ocultado automaticamente`);
+  if (unpublished > 0) parts.push(`${unpublished} somente complemento`);
   return parts.join(' · ');
 }
 

@@ -6,6 +6,8 @@ import type {
   ZeloMenuModifierOptionDraft,
   ZeloMenuModifierGroupKind,
 } from '../../domain/zelomenuModifiers';
+import { resolveZeloMenuLinkedOptionAvailability } from '../../domain/zelomenuPublication';
+import { isSimilarCatalogProductName } from '../../domain/zelomenuCatalog';
 import type { ProdutoRow } from '../../hooks/useCatalog';
 
 /* ─── Constants ────────────────────────────────────────────────────────────── */
@@ -124,6 +126,9 @@ function createEmptyModifierOption(order: number): ZeloMenuModifierOptionDraft {
 interface ModifierGroupsPanelProps {
   groups: ZeloMenuModifierGroupDraft[];
   products: ProdutoRow[];
+  productUsageCounts?: Record<number, number>;
+  onCreateProduct?: (input: { nome: string; preco: number }) => Promise<ProdutoRow>;
+  excludeProductId?: number;
   productName: string;
   onChange: (index: number, group: ZeloMenuModifierGroupDraft) => void;
   onAdd: () => void;
@@ -134,6 +139,9 @@ interface ModifierGroupsPanelProps {
 export function ModifierGroupsPanel({
   groups,
   products,
+  productUsageCounts,
+  onCreateProduct,
+  excludeProductId,
   productName,
   onChange,
   onAdd,
@@ -214,6 +222,9 @@ export function ModifierGroupsPanel({
             <GroupDetail
               group={selectedGroup}
               products={products}
+              productUsageCounts={productUsageCounts}
+              onCreateProduct={onCreateProduct}
+              excludeProductId={excludeProductId}
               productName={productName}
               modelId={resolveModelId(selectedGroup, modelOverrides[groupKey(selectedGroup, selectedIndex ?? 0)])}
               onModelSelect={(modelId) => {
@@ -381,6 +392,9 @@ function SummaryBar({
 function GroupDetail({
   group,
   products,
+  productUsageCounts,
+  onCreateProduct,
+  excludeProductId,
   productName,
   modelId,
   onModelSelect,
@@ -391,6 +405,9 @@ function GroupDetail({
 }: {
   group: ZeloMenuModifierGroupDraft;
   products: ProdutoRow[];
+  productUsageCounts?: Record<number, number>;
+  onCreateProduct?: (input: { nome: string; preco: number }) => Promise<ProdutoRow>;
+  excludeProductId?: number;
   productName: string;
   modelId: ModifierModelId;
   onModelSelect: (modelId: ModifierModelId) => void;
@@ -402,6 +419,7 @@ function GroupDetail({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [productPickerIndex, setProductPickerIndex] = useState<number | null>(null);
   const [productSearch, setProductSearch] = useState('');
+  const [creatingProduct, setCreatingProduct] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
@@ -417,8 +435,15 @@ function GroupDetail({
   }, [productPickerIndex]);
 
   const filteredProducts = products
-    .filter((p) => p.nome.toLowerCase().includes(productSearch.toLowerCase()))
+    .filter((p) => p.id !== excludeProductId)
+    .filter((p) => p.nome.toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(productSearch.toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g, '')))
     .sort((a, b) => a.nome.localeCompare(b.nome));
+  const similarProducts = productSearch.trim()
+    ? products
+      .filter((p) => p.id !== excludeProductId)
+      .filter((p) => isSimilarCatalogProductName(productSearch, p))
+      .slice(0, 3)
+    : [];
 
   const currentModel = GROUP_MODELS.find((m) => m.id === modelId) ?? GROUP_MODELS[0];
 
@@ -572,7 +597,7 @@ function GroupDetail({
             onChange={(e) => updateGroup({ active: e.target.checked })}
             className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
           />
-          Grupo ativo no link
+          Grupo incluído neste produto
         </label>
       </div>
 
@@ -713,11 +738,24 @@ function GroupDetail({
           </button>
         </div>
 
-        {group.options.map((option, optionIndex) => (
-          <div
-            key={option.id ?? `opt-${optionIndex}`}
-            className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3"
-          >
+        {group.options.map((option, optionIndex) => {
+          const linkedProduct = option.linkedProductId == null
+            ? null
+            : products.find((product) => product.id === option.linkedProductId) ?? null;
+          const linkedProductAvailable = option.linkedProductId == null
+            ? true
+            : linkedProduct != null && resolveZeloMenuLinkedOptionAvailability({
+                controlar_estoque: linkedProduct.controlar_estoque,
+                estoque_atual: linkedProduct.estoque_atual,
+                ocultar_no_pdv: linkedProduct.ocultar_no_pdv,
+              });
+          const linkedProductUnavailable = option.linkedProductId != null && !linkedProductAvailable;
+
+          return (
+            <div
+              key={option.id ?? `opt-${optionIndex}`}
+              className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-3"
+            >
             <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_auto]">
               <label className="space-y-1">
                 <span className="text-[11px] font-semibold text-[var(--color-ink-muted)]">Nome</span>
@@ -745,11 +783,12 @@ function GroupDetail({
                 <label className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
                   <input
                     type="checkbox"
-                    checked={option.active}
+                    checked={option.active && linkedProductAvailable}
+                    disabled={linkedProductUnavailable}
                     onChange={(e) => updateOption(optionIndex, { active: e.target.checked })}
-                    className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
+                    className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-50"
                   />
-                  Ativa
+                  {linkedProductUnavailable ? 'Indisponível pelo produto' : 'Incluída neste grupo'}
                 </label>
                 <button
                   type="button"
@@ -775,17 +814,17 @@ function GroupDetail({
                   onChange={(e) => {
                     const linking = e.target.checked;
                     updateOption(optionIndex, {
-                      linkedProductId: linking ? (option.linkedProductId ?? products[0]?.id ?? null) : null,
+                      linkedProductId: linking ? option.linkedProductId : null,
                       priceOverride: linking ? option.priceOverride : null,
                     });
                     if (linking) setProductPickerIndex(optionIndex);
                   }}
                   className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
                 />
-                Vincular a um produto do catálogo
+                Vincular a um produto canônico do catálogo
               </label>
 
-              {option.linkedProductId && (
+              {(option.linkedProductId || productPickerIndex === optionIndex) && (
                 <div className="relative mt-2" ref={productPickerIndex === optionIndex ? pickerRef : undefined}>
                   <button
                     type="button"
@@ -797,7 +836,7 @@ function GroupDetail({
                   >
                     <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)]" />
                     <span className="truncate text-[var(--color-ink)]">
-                      {products.find((p) => p.id === option.linkedProductId)?.nome ?? 'Produto não encontrado'}
+                      {products.find((p) => p.id === option.linkedProductId)?.nome ?? 'Escolher produto existente'}
                     </span>
                   </button>
 
@@ -812,12 +851,13 @@ function GroupDetail({
                           className="w-full rounded-md border border-[var(--color-line)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--color-brand)]"
                         />
                       </div>
-                      {filteredProducts.length === 0 ? (
+                      {filteredProducts.length === 0 && !onCreateProduct ? (
                         <p className="px-3 py-4 text-center text-xs text-[var(--color-ink-faint)]">
                           Nenhum produto encontrado
                         </p>
                       ) : (
-                        filteredProducts.map((p) => (
+                        <>
+                        {filteredProducts.map((p) => (
                           <button
                             key={p.id}
                             type="button"
@@ -829,12 +869,54 @@ function GroupDetail({
                               option.linkedProductId === p.id ? 'bg-[var(--color-brand-soft)] font-semibold' : ''
                             }`}
                           >
-                            <span className="truncate">{p.nome}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">{p.nome}</span>
+                              <span className="block text-[10px] font-normal text-[var(--color-ink-muted)]">
+                                {resolveZeloMenuLinkedOptionAvailability({
+                                  controlar_estoque: p.controlar_estoque,
+                                  estoque_atual: p.estoque_atual,
+                                  ocultar_no_pdv: p.ocultar_no_pdv,
+                                }) ? 'Disponível' : p.ocultar_no_pdv ? 'Pausado' : 'Sem estoque'}
+                                {' · '}usado em {productUsageCounts?.[p.id] ?? 0} {productUsageCounts?.[p.id] === 1 ? 'produto' : 'produtos'}
+                              </span>
+                            </span>
                             <span className="shrink-0 text-[var(--color-ink-muted)]">
                               R$ {Number(p.preco).toFixed(2).replace('.', ',')}
                             </span>
                           </button>
-                        ))
+                        ))}
+                        {onCreateProduct && productSearch.trim() && (
+                          <>
+                          {similarProducts.length > 0 && (
+                            <p className="border-t border-[var(--color-line)] bg-[var(--color-warn-soft)]/40 px-3 py-2 text-[11px] leading-snug text-[var(--color-warn)]">
+                              Encontramos produto parecido. Selecione um resultado acima para reutilizá-lo; crie um produto diferente somente se for realmente outro item.
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            disabled={creatingProduct}
+                            onClick={async () => {
+                              const name = productSearch.trim();
+                              setCreatingProduct(true);
+                              try {
+                                const created = await onCreateProduct({ nome: name, preco: 0 });
+                                updateOption(optionIndex, { linkedProductId: created.id, name: created.nome });
+                                setProductPickerIndex(null);
+                                setProductSearch('');
+                              } catch (error) {
+                                toast.error(error instanceof Error ? error.message : 'Não foi possível criar o produto.');
+                              } finally {
+                                setCreatingProduct(false);
+                              }
+                            }}
+                            className="flex min-h-11 w-full items-center justify-between gap-2 border-t border-[var(--color-line)] px-3 py-2 text-left text-xs font-semibold text-[var(--color-brand-deep)] hover:bg-[var(--color-brand-soft)] disabled:opacity-50"
+                          >
+                            <span>{creatingProduct ? 'Criando produto…' : `${similarProducts.length > 0 ? 'Criar produto diferente' : 'Criar novo produto'} “${productSearch.trim()}”`}</span>
+                            <Plus className="h-4 w-4 shrink-0" />
+                          </button>
+                          </>
+                        )}
+                        </>
                       )}
                     </div>
                   )}
@@ -857,11 +939,19 @@ function GroupDetail({
                       />
                     </label>
                   )}
+                  {linkedProductUnavailable && (
+                    <p className="mt-1.5 text-[11px] leading-snug text-[var(--color-warn)]">
+                      {linkedProduct
+                        ? 'Produto oculto ou sem estoque: esta opção fica indisponível automaticamente.'
+                        : 'Produto vinculado não encontrado: esta opção fica indisponível até ser reconfigurada.'}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
 
       {/* Delete */}

@@ -1,0 +1,153 @@
+import type { ZeloMenuModifierGroup, ZeloMenuModifierOption } from './zelomenuModifiers';
+import { normalizeText } from '../utils/normalizeText';
+
+export type CatalogProductRole = 'standalone' | 'component' | 'standalone_and_component' | 'draft';
+
+export type OperationalAvailability = 'available' | 'paused' | 'out_of_stock' | 'blocked_by_required_options';
+
+export type CatalogProductForResolution = {
+  id: number;
+  nome: string;
+  preco?: number;
+  id_categoria?: number | null;
+  ocultar_no_pdv?: boolean;
+  controlar_estoque?: boolean;
+  estoque_atual?: number;
+};
+
+export type CatalogProductUsage = {
+  productId: number;
+  containerId: number;
+  containerName: string;
+  groupId: string;
+  groupName: string;
+  active: boolean;
+};
+
+export type CatalogProductAvailability = {
+  available: boolean;
+  state: OperationalAvailability;
+  reason: string | null;
+  blockingGroups: Array<{ id: string; name: string; availableOptions: number; minimum: number }>;
+};
+
+export function normalizeCatalogSearchText(value: string): string {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+export function getCatalogProductRole(
+  publicationVisible: boolean,
+  usageCount: number,
+): CatalogProductRole {
+  if (usageCount > 0 && publicationVisible) return 'standalone_and_component';
+  if (usageCount > 0) return 'component';
+  if (publicationVisible) return 'standalone';
+  return 'draft';
+}
+
+export function getProductOperationalAvailability(
+  product: Pick<CatalogProductForResolution, 'ocultar_no_pdv' | 'controlar_estoque' | 'estoque_atual'>,
+): CatalogProductAvailability {
+  if (product.ocultar_no_pdv) {
+    return { available: false, state: 'paused', reason: 'Produto pausado globalmente.', blockingGroups: [] };
+  }
+  if (product.controlar_estoque && Number(product.estoque_atual ?? 0) <= 0) {
+    return { available: false, state: 'out_of_stock', reason: 'Produto sem estoque.', blockingGroups: [] };
+  }
+  return { available: true, state: 'available', reason: null, blockingGroups: [] };
+}
+
+export function getUnavailableRequiredModifierGroups(
+  groups: ZeloMenuModifierGroup[] | null | undefined,
+): CatalogProductAvailability['blockingGroups'] {
+  return (groups ?? [])
+    .filter((group) => group.active && group.minSelections > 0)
+    .map((group) => {
+      const availableOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false).length;
+      return { id: group.id, name: group.name, availableOptions, minimum: group.minSelections };
+    })
+    .filter((group) => group.availableOptions < group.minimum);
+}
+
+export function resolveCatalogProductAvailability(
+  product: Pick<CatalogProductForResolution, 'ocultar_no_pdv' | 'controlar_estoque' | 'estoque_atual'>,
+  groups: ZeloMenuModifierGroup[] | null | undefined,
+): CatalogProductAvailability {
+  const base = getProductOperationalAvailability(product);
+  if (!base.available) return base;
+
+  const blockingGroups = getUnavailableRequiredModifierGroups(groups);
+  if (blockingGroups.length === 0) return base;
+
+  return {
+    available: false,
+    state: 'blocked_by_required_options',
+    reason: blockingGroups
+      .map((group) => `${group.name} tem ${group.availableOptions} de ${group.minimum} opções disponíveis`)
+      .join('; '),
+    blockingGroups,
+  };
+}
+
+export function buildCatalogProductUsages(
+  products: CatalogProductForResolution[],
+  groupsByProductId: Record<number, ZeloMenuModifierGroup[]>,
+): Record<number, CatalogProductUsage[]> {
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const usages: Record<number, CatalogProductUsage[]> = {};
+
+  for (const groups of Object.values(groupsByProductId)) {
+    for (const group of groups) {
+      const container = productsById.get(group.productId);
+      if (!container) continue;
+      for (const option of group.options) {
+        const linkedProduct = option.linkedProduct;
+        if (!linkedProduct) continue;
+        const active = group.active && option.active && linkedProduct.available !== false;
+        const list = usages[linkedProduct.productId] ?? [];
+        list.push({
+          productId: linkedProduct.productId,
+          containerId: container.id,
+          containerName: container.nome,
+          groupId: group.id,
+          groupName: group.name,
+          active,
+        });
+        usages[linkedProduct.productId] = list;
+      }
+    }
+  }
+  return usages;
+}
+
+export function isExactCatalogProductNameDuplicate(
+  name: string,
+  products: Array<Pick<CatalogProductForResolution, 'id' | 'nome'>>,
+  excludeId?: number,
+): CatalogProductForResolution | null {
+  const normalizedName = normalizeCatalogSearchText(name);
+  if (!normalizedName) return null;
+  return products.find((product) => (
+    product.id !== excludeId && normalizeCatalogSearchText(product.nome) === normalizedName
+  )) ?? null;
+}
+
+export function isSimilarCatalogProductName(
+  name: string,
+  candidate: Pick<CatalogProductForResolution, 'nome'>,
+): boolean {
+  const normalizedName = normalizeCatalogSearchText(name);
+  const normalizedCandidate = normalizeCatalogSearchText(candidate.nome);
+  if (normalizedName.length <= 2 || normalizedCandidate.length <= 2) return false;
+  if (normalizedCandidate.includes(normalizedName) || normalizedName.includes(normalizedCandidate)) return true;
+  const queryTokens = normalizedName.split(' ').filter(Boolean);
+  const candidateTokens = new Set(normalizedCandidate.split(' ').filter(Boolean));
+  const sharedTokens = queryTokens.filter((token) => candidateTokens.has(token)).length;
+  return queryTokens.length > 1 && sharedTokens >= Math.min(2, queryTokens.length);
+}
+
+export function countActiveModifierOptions(group: Pick<ZeloMenuModifierGroup, 'active' | 'minSelections' | 'options'>): number {
+  return group.active
+    ? group.options.filter((option: ZeloMenuModifierOption) => option.active && option.linkedProduct?.available !== false).length
+    : 0;
+}

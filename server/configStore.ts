@@ -4,6 +4,7 @@ import {
   resolveZeloMenuLinkedOptionAvailability,
   summarizeZeloMenuPublication,
 } from '../src/domain/zelomenuPublication.js';
+import { resolveCatalogProductAvailability } from '../src/domain/zelomenuCatalog.js';
 import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication, ZeloMenuPublicationProduct, ZeloMenuPublicationSummary } from '../src/domain/zelomenuPublication.js';
@@ -553,6 +554,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
       const linkedOptionAvailable = resolveZeloMenuLinkedOptionAvailability({
         controlar_estoque: linkedCatalogProduct.stockControlled === true,
         estoque_atual: linkedCatalogProduct.stockQuantity ?? 0,
+        ocultar_no_pdv: linkedCatalogProduct.ocultarNoPdv,
       });
       return {
         ...option,
@@ -574,9 +576,16 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
 
   const productsWithPlacement = [...rawProductMap.values()]
     .map((product) => {
+      const modifierGroups = modifierGroupsByProductId.get(product.id) ?? [];
+      const availability = resolveCatalogProductAvailability({
+        ocultar_no_pdv: product.ocultarNoPdv,
+        controlar_estoque: product.stockControlled,
+        estoque_atual: product.stockQuantity,
+      }, modifierGroups);
       return {
         ...product,
-        modifierGroups: modifierGroupsByProductId.get(product.id) ?? [],
+        available: product.available && availability.available,
+        modifierGroups,
       };
     });
 

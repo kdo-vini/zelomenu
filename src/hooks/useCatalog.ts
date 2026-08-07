@@ -91,7 +91,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .limit(CATALOG_PRODUCT_LIMIT),
         supabase
           .from('zelomenu_product_publications')
-          .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem')
+          .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, ordem')
           .eq('id_usuario', userId)
           .order('ordem')
           .limit(CATALOG_PUBLICATION_LIMIT),

@@ -335,19 +335,22 @@ export function ToggleCard({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className={`flex min-h-[72px] items-start gap-3 rounded-xl border p-3 ${checked ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)]/40' : 'border-[var(--color-line)] bg-[var(--color-surface)]'} ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-        className="mt-0.5 h-4 w-4"
-      />
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`flex min-h-[72px] w-full items-start gap-3 rounded-xl border p-3 text-left ${checked ? 'border-[var(--color-brand)] bg-[var(--color-brand-soft)]/40' : 'border-[var(--color-line)] bg-[var(--color-surface)]'} ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/30`}
+    >
+      <span aria-hidden="true" className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${checked ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-line-strong)]'}`}>
+        <span className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : ''}`} />
+      </span>
       <span>
         <span className="block text-sm font-semibold text-[var(--color-ink)]">{title}</span>
         <span className="mt-0.5 block text-xs leading-snug text-[var(--color-ink-muted)]">{description}</span>
       </span>
-    </label>
+    </button>
   );
 }
 
