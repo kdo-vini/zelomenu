@@ -1,8 +1,9 @@
 begin;
 
 -- A pausa operacional é uma propriedade do produto canônico. O campo legado
--- da publicação é convertido uma única vez e depois zerado para não haver dois
--- estados concorrentes.
+-- da publicação é convertido para manter a versão antiga do runtime segura
+-- durante o rollout. O campo será removido da leitura/escrita pelo runtime novo
+-- e permanece sincronizado nesta janela de compatibilidade.
 update public.produtos as produto
 set ocultar_no_pdv = true
 from public.zelomenu_product_publications as publicacao
@@ -11,9 +12,12 @@ where publicacao.id_usuario = produto.id_usuario
   and publicacao.pausado_manualmente = true
   and coalesce(produto.ocultar_no_pdv, false) = false;
 
-update public.zelomenu_product_publications
-set pausado_manualmente = false
-where pausado_manualmente = true;
+update public.zelomenu_product_publications as publicacao
+set pausado_manualmente = coalesce(produto.ocultar_no_pdv, false)
+from public.produtos as produto
+where produto.id_usuario = publicacao.id_usuario
+  and produto.id = publicacao.id_produto
+  and publicacao.pausado_manualmente is distinct from coalesce(produto.ocultar_no_pdv, false);
 
 alter table public.produtos
   alter column ocultar_no_pdv set default false,
