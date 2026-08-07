@@ -5,6 +5,7 @@ import { getServiceSupabase, getEmpresaUserId } from './supabaseServer.js';
 import { notifyPushSubscribers } from './zelomenuPushSubscriptions.js';
 import { getMesaContext } from './zelomenuMesaHandler.js';
 import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
+import { filterAvailableCatalog } from '../src/domain/zelomenuCatalog.js';
 import {
   resolveModifierSelections,
   formatModifierAwareCartItem,
@@ -827,18 +828,6 @@ function buildPublicBusinessHoursStatus(config: ReturnType<typeof getConfig>): P
 
 // ─── Catalog helpers ──────────────────────────────────────────────────────────
 
-function filterVisibleCatalog(groups: CatalogCategoriaGroup[]): CatalogCategoriaGroup[] {
-  return groups
-    .map((group) => {
-      const subcategorias = group.subcategorias
-        .map((sub) => ({ nome: sub.nome, produtos: sub.produtos.filter((p) => p.available) }))
-        .filter((sub) => sub.produtos.length > 0);
-      const produtosDireto = group.produtosDireto.filter((p) => p.available);
-      return { nome: group.nome, subcategorias, produtosDireto };
-    })
-    .filter((group) => group.subcategorias.length > 0 || group.produtosDireto.length > 0);
-}
-
 function applyCategoryOrder(catalog: CatalogCategoriaGroup[], order: string[]): CatalogCategoriaGroup[] {
   if (order.length === 0) return catalog;
   const idx = new Map(order.map((n, i) => [n, i]));
@@ -1432,7 +1421,7 @@ async function buildPublicResponse(
         : {},
       businessHours: buildPublicBusinessHoursStatus(config),
     },
-    catalog: filterVisibleCatalog(config.catalogHierarchy),
+    catalog: filterAvailableCatalog(config.catalogHierarchy),
     link: {
       path: buildPublicCartPath(token),
       tokenStatus: sessionRow.current_token_hash === tokenRow.token_hash && !tokenRow.revoked_at ? 'current' : 'stale',
@@ -1476,7 +1465,7 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
     loadZeloMenuProfile(empresaId),
   ]);
   const config = getConfig(empresaId);
-  const rawCatalog = filterVisibleCatalog(config.catalogHierarchy);
+  const rawCatalog = filterAvailableCatalog(config.catalogHierarchy);
   const categoryOrder = Array.isArray(perfil?.zelomenu_category_order) ? (perfil.zelomenu_category_order as string[]) : [];
 
   const response: PublicStoreResponse = {
@@ -1551,7 +1540,7 @@ export async function getZeloMenuStoreSettings(empresaId: string): Promise<ZeloM
     loadZeloMenuProfile(empresaId),
   ]);
   const config = getConfig(empresaId);
-  const catalog = filterVisibleCatalog(config.catalogHierarchy);
+  const catalog = filterAvailableCatalog(config.catalogHierarchy);
 
   const availableProducts: Array<{ id: number; name: string; categoryName: string; price: number; photoUrl: string | null }> = [];
   for (const cat of catalog) {

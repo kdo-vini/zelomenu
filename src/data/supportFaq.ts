@@ -128,7 +128,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     id: 'pause-product',
     category: 'products',
     question: 'Como pauso ou retomo um produto?',
-    answer: 'Localize o produto e abra o menu de três pontos. Escolha Pausar em todos os usos ou Reativar. A pausa global afeta o produto vendido separadamente e todas as marmitas que o utilizam; a configuração é preservada.',
+    answer: 'Localize o produto e abra o menu de três pontos. Escolha pausar ou reativar. Se for um produto-pai, somente ele sai do cardápio e seus grupos voltam quando ele for reativado; os complementos continuam salvos e reutilizáveis em outros pais. Se for um componente, a pausa canônica afeta todos os pais que o utilizam.',
     keywords: ['pausar', 'retomar', 'reativar', 'despausar', 'indisponível', 'temporário'],
     action: { label: 'Abrir Cardápio', hash: '#catalog' },
     relatedIds: ['publication-statuses', 'undo-publication'],
@@ -137,7 +137,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     id: 'hide-product',
     category: 'products',
     question: 'Qual é a diferença entre ocultar no PDV e pausar no cardápio?',
-    answer: 'Disponível para venda é o estado global do produto canônico. Ao desligá-lo, ele deixa de aparecer sozinho e também em todos os grupos que o utilizam. Vender separadamente é outra decisão: controla apenas se o produto tem um card próprio no cardápio.',
+    answer: 'Disponível para venda é o estado operacional global do produto canônico. Ao desligar um componente, ele deixa de aparecer sozinho e fica indisponível em todos os grupos que o utilizam. Ao desligar um produto-pai, somente aquele pai sai do cardápio; Vender separadamente é outra decisão e controla apenas o card próprio de cada produto.',
     keywords: ['oculto', 'pdv', 'pausado', 'diferença', 'disponibilidade'],
   },
   {

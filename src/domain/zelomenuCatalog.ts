@@ -15,6 +15,17 @@ export type CatalogProductForResolution = {
   estoque_atual?: number;
 };
 
+export type CatalogOperationalProduct = Pick<
+  CatalogProductForResolution,
+  'ocultar_no_pdv' | 'controlar_estoque' | 'estoque_atual'
+>;
+
+export type CatalogVisibilityGroup<T extends { available: boolean }> = {
+  nome: string;
+  subcategorias: Array<{ nome: string; produtos: T[] }>;
+  produtosDireto: T[];
+};
+
 export type CatalogProductUsage = {
   productId: number;
   containerId: number;
@@ -29,6 +40,13 @@ export type CatalogProductAvailability = {
   state: OperationalAvailability;
   reason: string | null;
   blockingGroups: Array<{ id: string; name: string; availableOptions: number; minimum: number }>;
+};
+
+export type CatalogUsageAvailabilityInput = {
+  parent: CatalogOperationalProduct;
+  linked: CatalogOperationalProduct;
+  groupActive: boolean;
+  optionActive: boolean;
 };
 
 export function normalizeCatalogSearchText(value: string): string {
@@ -46,7 +64,7 @@ export function getCatalogProductRole(
 }
 
 export function getProductOperationalAvailability(
-  product: Pick<CatalogProductForResolution, 'ocultar_no_pdv' | 'controlar_estoque' | 'estoque_atual'>,
+  product: CatalogOperationalProduct,
 ): CatalogProductAvailability {
   if (product.ocultar_no_pdv) {
     return { available: false, state: 'paused', reason: 'Produto pausado globalmente.', blockingGroups: [] };
@@ -55,6 +73,41 @@ export function getProductOperationalAvailability(
     return { available: false, state: 'out_of_stock', reason: 'Produto sem estoque.', blockingGroups: [] };
   }
   return { available: true, state: 'available', reason: null, blockingGroups: [] };
+}
+
+/**
+ * Resolves a linked option in the context of one product-pai. The canonical
+ * child availability remains global, while a paused/stocked-out parent only
+ * disables this particular usage; no publication flags are involved.
+ */
+export function resolveCatalogUsageAvailability({
+  parent,
+  linked,
+  groupActive,
+  optionActive,
+}: CatalogUsageAvailabilityInput): boolean {
+  if (!groupActive || !optionActive) return false;
+  return getProductOperationalAvailability(parent).available
+    && getProductOperationalAvailability(linked).available;
+}
+
+/**
+ * Keeps only products eligible for a standalone public card. Linked options
+ * remain untouched inside each product so component-only products can still be
+ * selected from their parent groups.
+ */
+export function filterAvailableCatalog<T extends { available: boolean }>(
+  groups: Array<CatalogVisibilityGroup<T>>,
+): Array<CatalogVisibilityGroup<T>> {
+  return groups
+    .map((group) => {
+      const subcategorias = group.subcategorias
+        .map((sub) => ({ nome: sub.nome, produtos: sub.produtos.filter((product) => product.available) }))
+        .filter((sub) => sub.produtos.length > 0);
+      const produtosDireto = group.produtosDireto.filter((product) => product.available);
+      return { nome: group.nome, subcategorias, produtosDireto };
+    })
+    .filter((group) => group.subcategorias.length > 0 || group.produtosDireto.length > 0);
 }
 
 export function getUnavailableRequiredModifierGroups(

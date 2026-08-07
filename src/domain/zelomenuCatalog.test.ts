@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   getCatalogProductRole,
+  filterAvailableCatalog,
   normalizeCatalogSearchText,
+  resolveCatalogUsageAvailability,
   resolveCatalogProductAvailability,
   isExactCatalogProductNameDuplicate,
   isSimilarCatalogProductName,
@@ -47,5 +49,58 @@ describe('catalog canonical product rules', () => {
       }],
     );
     expect(result.available).toBe(true);
+  });
+
+  it('pauses a shared component only in the paused parent context', () => {
+    const linked = { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 };
+    const activeParent = { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 };
+    const pausedParent = { ocultar_no_pdv: true, controlar_estoque: false, estoque_atual: 0 };
+
+    expect(resolveCatalogUsageAvailability({
+      parent: pausedParent,
+      linked,
+      groupActive: true,
+      optionActive: true,
+    })).toBe(false);
+    expect(resolveCatalogUsageAvailability({
+      parent: activeParent,
+      linked,
+      groupActive: true,
+      optionActive: true,
+    })).toBe(true);
+  });
+
+  it('keeps a global child pause unavailable in every parent', () => {
+    const pausedChild = { ocultar_no_pdv: true, controlar_estoque: false, estoque_atual: 0 };
+    const activeParent = { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 };
+
+    expect(resolveCatalogUsageAvailability({
+      parent: activeParent,
+      linked: pausedChild,
+      groupActive: true,
+      optionActive: true,
+    })).toBe(false);
+  });
+
+  it('filters component-only products from standalone cards without touching parent options', () => {
+    const linkedOption = { id: 'option', available: false };
+    const catalog = [{
+      nome: 'Marmitas',
+      produtosDireto: [{ id: 1, available: true, modifierGroups: [{ options: [linkedOption] }] }],
+      subcategorias: [{
+        nome: 'Componentes',
+        produtos: [
+          { id: 2, available: false, modifierGroups: [] },
+          { id: 3, available: true, modifierGroups: [] },
+        ],
+      }],
+    }];
+
+    const visible = filterAvailableCatalog(catalog);
+
+    expect(visible).toHaveLength(1);
+    expect(visible[0].produtosDireto.map((product) => product.id)).toEqual([1]);
+    expect(visible[0].subcategorias[0].produtos.map((product) => product.id)).toEqual([3]);
+    expect(visible[0].produtosDireto[0].modifierGroups[0].options).toEqual([linkedOption]);
   });
 });

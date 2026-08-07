@@ -117,6 +117,14 @@ Regras de interação:
 - Todas as linhas com múltiplas ações secundárias usam três pontos; os nomes das ações aparecem no menu.
 - O rótulo de um switch nunca muda quando seu valor muda. A descrição explica o efeito global.
 - A disponibilidade global é herdada por todos os usos. A inclusão estrutural de uma opção permanece separada e visível.
+- A pausa de um produto-pai é contextual: remove somente o pai do cardápio e não
+  altera publicação, inclusão ou disponibilidade dos filhos reutilizados em
+  outros pais. A pausa do produto-filho canônico continua sendo global.
+- `Vender separadamente no cardápio` nunca é alterado por uma pausa de pai. Um
+  componente publicado separadamente permanece como card próprio; um produto
+  somente-complemento continua fora da lista de cards, mas disponível nos grupos.
+- A cascata de um pai é derivada na leitura. Nunca atualizar filhos, grupos,
+  opções ou publicações para simular essa cascata.
 - Produtos usados somente como complemento não recebem o estado ambíguo “Não publicado”; mostram “Somente complemento”.
 - Menus e folhas de ação têm alvo mínimo de 44px, foco visível, `aria-haspopup`, `aria-expanded`, teclado e estados loading/disabled/erro.
 - Toasts confirmam a ação e oferecem **Desfazer** quando a alteração é reversível.

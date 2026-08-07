@@ -34,7 +34,6 @@ import { useCatalogBulkController } from '../../hooks/useCatalogBulkController';
 import type { ZeloMenuModifierGroupDraft } from '../../domain/zelomenuModifiers';
 import {
   getZeloMenuPublicationStatus,
-  resolveZeloMenuLinkedOptionAvailability,
   summarizeZeloMenuPublication,
   type ZeloMenuPublicationProduct,
   type ZeloMenuPublicationStatus,
@@ -45,7 +44,12 @@ import {
   SubcategoriaModal,
 } from './catalog/CatalogModals';
 import { ProductModal, formatPrecoInput, parsePrecoInput, type ProductModalTab } from './catalog/ProductEditorModal';
-import { getCatalogProductRole, isExactCatalogProductNameDuplicate, normalizeCatalogSearchText } from '../../domain/zelomenuCatalog';
+import {
+  getCatalogProductRole,
+  isExactCatalogProductNameDuplicate,
+  normalizeCatalogSearchText,
+  resolveCatalogUsageAvailability,
+} from '../../domain/zelomenuCatalog';
 
 interface Props {
   isAuthenticated: boolean;
@@ -191,13 +195,20 @@ export const CatalogView = ({
           if (!link) continue;
           const linkedProduct = productsById.get(link.productId);
           if (!linkedProduct) continue;
-          const active = group.active
-            && option.active
-            && resolveZeloMenuLinkedOptionAvailability({
+          const active = resolveCatalogUsageAvailability({
+            parent: {
+              controlar_estoque: container.controlar_estoque,
+              estoque_atual: container.estoque_atual,
+              ocultar_no_pdv: container.ocultar_no_pdv,
+            },
+            linked: {
               controlar_estoque: linkedProduct.controlar_estoque,
               estoque_atual: linkedProduct.estoque_atual,
               ocultar_no_pdv: linkedProduct.ocultar_no_pdv,
-            });
+            },
+            groupActive: group.active,
+            optionActive: option.active,
+          });
           const usages = usagesByProductId[link.productId] ?? [];
           usages.push({ containerName: container.nome, groupName: group.name, active });
           usagesByProductId[link.productId] = usages;
