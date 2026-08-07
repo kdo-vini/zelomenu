@@ -115,6 +115,15 @@ type PublicationActionState = 'publish';
 type ComponentUsage = { containerName: string; groupName: string; active: boolean };
 type CatalogFilter = 'all' | 'standalone' | 'component' | 'paused' | 'out_of_stock' | 'draft';
 
+const CATALOG_FILTER_LABELS: Record<CatalogFilter, string> = {
+  all: 'Todos',
+  standalone: 'Vendidos separadamente',
+  component: 'Componentes',
+  paused: 'Pausados',
+  out_of_stock: 'Sem estoque',
+  draft: 'Rascunhos',
+};
+
 export const CatalogView = ({
   isAuthenticated,
   authLoading,
@@ -236,6 +245,18 @@ export const CatalogView = ({
     if (!statusFilter) return roleFiltered;
     return roleFiltered.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === statusFilter);
   }, [catalogFilter, componentUsages, filtered, statusFilter, productPublications]);
+
+  // Busca e filtros virtuais compartilham o mesmo resultado plano. Renderizar
+  // a árvore aqui deixa categorias/subcategorias vazias ocupando a tela e
+  // obriga o operador a rolar até o produto que acabou de filtrar.
+  const flatResultMode = Boolean(normalized || catalogFilter !== 'all' || statusFilter);
+  const flatResultHeading = normalized
+    ? `Resultados para “${query.trim()}”`
+    : catalogFilter !== 'all'
+      ? `Produtos: ${CATALOG_FILTER_LABELS[catalogFilter]}`
+      : statusFilter
+        ? `Produtos: ${publicationTone(statusFilter).label}`
+        : 'Produtos filtrados';
 
   const tree = useMemo(
     () => buildTree(categorias, subcategorias, displayProducts, productPublications),
@@ -631,12 +652,12 @@ export const CatalogView = ({
 
             <div className="flex flex-wrap gap-2" aria-label="Filtrar produtos">
               {[
-                { value: 'all' as const, label: 'Todos', count: produtos.length },
-                { value: 'standalone' as const, label: 'Vendidos separadamente', count: produtos.filter((p) => ['standalone', 'standalone_and_component'].includes(getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0))).length },
-                { value: 'component' as const, label: 'Componentes', count: produtos.filter((p) => ['component', 'standalone_and_component'].includes(getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0))).length },
-                { value: 'paused' as const, label: 'Pausados', count: produtos.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === 'paused').length },
-                { value: 'out_of_stock' as const, label: 'Sem estoque', count: produtos.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === 'out_of_stock').length },
-                { value: 'draft' as const, label: 'Rascunhos', count: produtos.filter((p) => getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0) === 'draft').length },
+                { value: 'all' as const, label: CATALOG_FILTER_LABELS.all, count: produtos.length },
+                { value: 'standalone' as const, label: CATALOG_FILTER_LABELS.standalone, count: produtos.filter((p) => ['standalone', 'standalone_and_component'].includes(getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0))).length },
+                { value: 'component' as const, label: CATALOG_FILTER_LABELS.component, count: produtos.filter((p) => ['component', 'standalone_and_component'].includes(getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0))).length },
+                { value: 'paused' as const, label: CATALOG_FILTER_LABELS.paused, count: produtos.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === 'paused').length },
+                { value: 'out_of_stock' as const, label: CATALOG_FILTER_LABELS.out_of_stock, count: produtos.filter((p) => getZeloMenuPublicationStatus({ ...p, publication: productPublications[p.id] ?? null }).status === 'out_of_stock').length },
+                { value: 'draft' as const, label: CATALOG_FILTER_LABELS.draft, count: produtos.filter((p) => getCatalogProductRole(Boolean(productPublications[p.id]?.visivel_online), componentUsages[p.id]?.length ?? 0) === 'draft').length },
               ].map((filter) => {
                 const active = catalogFilter === filter.value;
                 return (
@@ -756,19 +777,19 @@ export const CatalogView = ({
                   </button>
                 </div>
               )}
-              {normalized ? (
+              {flatResultMode ? (
                 <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
                   <div className="mb-2 flex items-center justify-between gap-3 px-1">
-                    <p className="text-sm font-bold text-[var(--color-ink)]">Resultados para “{query.trim()}”</p>
+                    <p className="text-sm font-bold text-[var(--color-ink)]">{flatResultHeading}</p>
                     <span className="text-xs font-medium text-[var(--color-ink-muted)]">
                       {displayProducts.length} produto{displayProducts.length === 1 ? '' : 's'}
                     </span>
                   </div>
                   {displayProducts.length > 0 ? (
-                    <div className="space-y-1">{displayProducts.map(renderSearchProduct)}</div>
+                    <div className="divide-y divide-[var(--color-line)]">{displayProducts.map(renderSearchProduct)}</div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-[var(--color-line)] p-6 text-center text-sm text-[var(--color-ink-muted)]">
-                      Nenhum produto encontrado para “{query.trim()}”.
+                      {normalized ? `Nenhum produto encontrado para “${query.trim()}”.` : 'Nenhum produto corresponde a este filtro.'}
                     </div>
                   )}
                 </div>
@@ -784,7 +805,7 @@ export const CatalogView = ({
                   key={node.categoria.id}
                   node={node}
                   expanded={expanded.has(node.categoria.id)}
-                  forceExpanded={Boolean(normalized)}
+                  forceExpanded={flatResultMode}
                   toggle={() => toggleCat(node.categoria.id)}
                   onEditCategoria={() => setModal({ kind: 'categoria', initial: node.categoria })}
                   onDeleteCategoria={() => requestDeleteCategory(node.categoria)}
@@ -839,7 +860,7 @@ export const CatalogView = ({
                   key={node.categoria.id}
                   node={node}
                   expanded={expanded.has(node.categoria.id)}
-                  forceExpanded={Boolean(normalized)}
+                  forceExpanded={flatResultMode}
                   toggle={() => toggleCat(node.categoria.id)}
                   onEditCategoria={() => setModal({ kind: 'categoria', initial: node.categoria })}
                   onDeleteCategoria={() => requestDeleteCategory(node.categoria)}
@@ -889,7 +910,7 @@ export const CatalogView = ({
                 />
               ))}
 
-              {!normalized && orphanProducts.length > 0 && (
+              {!flatResultMode && orphanProducts.length > 0 && (
                 <div className="rounded-xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface-muted)] p-4">
                   <div className="mb-3 flex items-center gap-2">
                     {bulk.selectionMode && (
@@ -1560,14 +1581,25 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
           </p>
         )}
         {componentUsages && componentUsages.length > 0 && (
-          <p className="mt-1 text-[11px] leading-snug text-[var(--color-ink-muted)]">
-            <span className="font-semibold text-[var(--color-ink-soft)]">Componente em:</span>{' '}
-            {componentUsages.map((usage, index) => (
-              <span key={`${usage.containerName}-${usage.groupName}-${index}`} className={usage.active ? '' : 'text-[var(--color-warn)]'}>
-                {index > 0 ? ' · ' : ''}{usage.containerName} ({usage.groupName}) — {usage.active ? 'disponível' : 'indisponível'}
-              </span>
-            ))}
-          </p>
+          <div className="mt-2">
+            <p className="text-[11px] font-semibold text-[var(--color-ink-soft)]">Produto em:</p>
+            <div className="mt-1 divide-y divide-[var(--color-line)]" role="list" aria-label="Produtos que usam este produto">
+              {componentUsages.map((usage, index) => (
+                <div
+                  key={`${usage.containerName}-${usage.groupName}-${index}`}
+                  className={`py-2 first:pt-0 last:pb-0 ${usage.active ? '' : 'text-[var(--color-warn)]'}`}
+                  role="listitem"
+                >
+                  <p className="break-words text-[11px] font-medium leading-snug text-[var(--color-ink)]">
+                    {usage.containerName}
+                  </p>
+                  <p className="mt-0.5 text-[10.5px] leading-snug text-current">
+                    {usage.groupName} · {usage.active ? 'disponível' : 'indisponível'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 

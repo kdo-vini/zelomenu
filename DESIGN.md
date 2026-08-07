@@ -120,3 +120,9 @@ Regras de interação:
 - Produtos usados somente como complemento não recebem o estado ambíguo “Não publicado”; mostram “Somente complemento”.
 - Menus e folhas de ação têm alvo mínimo de 44px, foco visível, `aria-haspopup`, `aria-expanded`, teclado e estados loading/disabled/erro.
 - Toasts confirmam a ação e oferecem **Desfazer** quando a alteração é reversível.
+- Busca e filtros virtuais do catálogo usam o mesmo resultado plano de produtos:
+  quando qualquer busca ou filtro está ativo, não renderizar categorias ou
+  subcategorias vazias antes dos resultados.
+- Antipadrão a evitar: filtrar os produtos, mas continuar renderizando a árvore
+  completa de categorias. Isso aumenta a rolagem e esconde o resultado que o
+  operador acabou de solicitar.
