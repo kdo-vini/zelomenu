@@ -10,6 +10,17 @@ function toBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function requiredActionLabel(groupName: string): string {
+  const subject = groupName
+    .trim()
+    .replace(/^escolha\s+/i, '')
+    .replace(/^(?:o|a|um|uma)\s+/i, '')
+    .trim();
+  if (!subject) return 'Escolher opção';
+  const conciseSubject = subject.length > 22 ? 'opção' : subject;
+  return `Escolher ${conciseSubject.charAt(0).toLocaleLowerCase('pt-BR')}${conciseSubject.slice(1)}`;
+}
+
 /** Mini-stepper para opções com quantidade (visualmente menor que o stepper do produto). */
 function MiniStepper({
   value,
@@ -192,7 +203,7 @@ export function ProductAddModal({
   const canConfirm = resolution.ok && validQuantity;
   const canScrollToRequiredGroup = Boolean(nextRequiredGroup && validQuantity);
   const primaryActionLabel = nextRequiredGroup
-    ? `${nextRequiredGroup.name} é obrigatório`
+    ? requiredActionLabel(nextRequiredGroup.name)
     : canConfirm
       ? (isEditing ? 'Atualizar' : 'Adicionar')
       : 'Corrija a seleção';
@@ -544,7 +555,7 @@ export function ProductAddModal({
             onClick={handlePrimaryAction}
             disabled={!canConfirm && !canScrollToRequiredGroup}
             aria-label={primaryActionLabel}
-            className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-[14px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 sm:px-4"
             style={{ background: 'var(--color-brand)' }}
           >
             {nextRequiredGroup ? (
@@ -552,8 +563,10 @@ export function ProductAddModal({
             ) : (
               <Plus className="h-4 w-4" strokeWidth={2.5} />
             )}
-            {primaryActionLabel}
-            {validQuantity && resolution.ok ? ` · ${toBRL(resolution.finalUnitPrice * quantity)}` : ''}
+            <span className="min-w-0 truncate whitespace-nowrap">
+              {primaryActionLabel}
+              {validQuantity && resolution.ok ? ` · ${toBRL(resolution.finalUnitPrice * quantity)}` : ''}
+            </span>
           </button>
         </div>
       </div>
