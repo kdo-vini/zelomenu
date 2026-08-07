@@ -1625,7 +1625,7 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
           actions={[
             ...(onToggleAvailability
               ? [{
-                  label: produto.ocultar_no_pdv ? 'Reativar produto em todos os usos' : 'Pausar produto em todos os usos',
+                  label: produto.ocultar_no_pdv ? 'Reativar produto' : 'Pausar produto em todos os usos',
                   icon: produto.ocultar_no_pdv ? <CircleCheck className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
                   onSelect: onToggleAvailability,
                 }]
