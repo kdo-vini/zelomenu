@@ -1624,7 +1624,7 @@ function ZeloMenuCartPageContent() {
                         </button>
                       )}
                     </div>
-                    {revalidationIssues.length > 0 && !isConfirmed ? (
+                    {revalidationIssues.length > 0 && !isConfirmed && step > 0 ? (
                       <section
                         role="alert"
                         className="rounded-xl border border-[var(--color-alert-soft)] bg-[var(--color-alert-soft)] p-3 text-[12px] text-[var(--color-alert)]"

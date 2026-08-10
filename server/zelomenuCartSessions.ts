@@ -1242,7 +1242,12 @@ async function runRevalidation(session: PublicCartSession): Promise<InternalZelo
       if (status === 'out_of_area') {
         issues.push({ code: 'delivery_out_of_area', message: 'Este endereço está fora da área de entrega.' });
       } else if (status === 'pending' || status === 'unavailable' || resolved.fulfillment.deliveryFeeToConfirm) {
-        issues.push({ code: 'delivery_quote_pending', message: 'Não foi possível calcular o frete agora. Sua solicitação será preservada para nova cotação.' });
+        issues.push({
+          code: 'delivery_quote_pending',
+          message: status === 'pending'
+            ? 'Informe o endereço para calcular o frete.'
+            : 'Não foi possível calcular o frete. Tente novamente.',
+        });
       }
     }
 
@@ -1284,7 +1289,12 @@ function revalidationFromResolved(resolved: ResolvedCart): ZeloMenuCartRevalidat
       || resolved.fulfillment.deliveryStatus === 'unavailable'
       || resolved.fulfillment.deliveryFeeToConfirm
     ) {
-      issues.push({ code: 'delivery_quote_pending', message: 'Não foi possível calcular o frete agora. Sua solicitação será preservada para nova cotação.' });
+      issues.push({
+        code: 'delivery_quote_pending',
+        message: resolved.fulfillment.deliveryStatus === 'pending'
+          ? 'Informe o endereço para calcular o frete.'
+          : 'Não foi possível calcular o frete. Tente novamente.',
+      });
     }
   }
   return {
