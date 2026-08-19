@@ -1,4 +1,5 @@
 import { getServiceSupabase } from './supabaseServer.js';
+import { getEligibleZeloMenuUserIds } from './zelomenuAccess.js';
 
 // Curadoria editorial independente dos produtos destacados no cardápio.
 // Por enquanto, somente o Bem Servido entra nessa vitrine.
@@ -95,7 +96,8 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
   const companyIds = profiles
     .map((row: Record<string, unknown>) => String(row.id ?? '').trim())
     .filter(Boolean);
-  const [deliveryRangesResult, productsAndPublicationsResult, categoriesResult] = await Promise.all([
+  const [eligibleUserIds, deliveryRangesResult, productsAndPublicationsResult, categoriesResult] = await Promise.all([
+    getEligibleZeloMenuUserIds(userIds),
     companyIds.length > 0
       ? supabase
           .from('zelomenu_delivery_ranges')
@@ -128,6 +130,9 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
           .limit(1000)
       : Promise.resolve({ data: [], error: null }),
   ]);
+  const eligibleProfiles = profiles.filter((row) => eligibleUserIds.has(String(row.user_id ?? '').trim()));
+  if (eligibleProfiles.length === 0) return [];
+
   const [productsResult, publicationsResult] = productsAndPublicationsResult;
 
   if (deliveryRangesResult.error) {
@@ -166,7 +171,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
     categoriesByUser.set(userId, names);
   }
 
-  return profiles.map((row: Record<string, unknown>) => {
+  return eligibleProfiles.map((row: Record<string, unknown>) => {
     const city = String(row.delivery_city ?? '') || extractCityFromAddress(String(row.endereco ?? ''));
     const state = String(row.delivery_state ?? '') || extractStateFromAddress(String(row.endereco ?? ''));
     const slug = row.zelomenu_slug ? String(row.zelomenu_slug) : null;

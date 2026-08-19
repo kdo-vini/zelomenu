@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { AlertTriangle, Loader2, Minus, Plus, RefreshCw, Search, ShoppingBag, X } from 'lucide-react';
 import {
   getPublicStore,
+  isPublicStoreNotFoundError,
   type TableOrderContext,
   type ZeloMenuCatalogGroup,
   type ZeloMenuCatalogProduct,
@@ -15,6 +16,7 @@ import { useStoreCart } from '../hooks/useStoreCart';
 import { ToastProvider } from '../contexts/ToastContext';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { ProductAddModal } from '../components/zelomenu/ZeloMenuProductAddModal';
+import { ZeloMenuNotFoundPage } from './ZeloMenuNotFoundPage';
 
 type SelectedItem = ZeloMenuStoreCartItem;
 
@@ -100,6 +102,7 @@ function ZeloMenuStorePageContent({
   const [store, setStore] = useState<ZeloMenuPublicStoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
@@ -117,6 +120,7 @@ function ZeloMenuStorePageContent({
       try {
         setLoading(true);
         setError(null);
+        setNotFound(false);
         setStore(null);
         setActiveCategory('');
         const data = await getPublicStore(slug);
@@ -126,7 +130,12 @@ function ZeloMenuStorePageContent({
         if (data.catalog.length > 0) setActiveCategory(data.catalog[0].nome);
       } catch (err) {
         if (!active) return;
-        setError(err instanceof Error ? err.message : 'Não consegui carregar o cardápio.');
+        if (isPublicStoreNotFoundError(err)) {
+          setNotFound(true);
+          document.title = 'Cardápio não encontrado | ZeloMenu';
+        } else {
+          setError(err instanceof Error ? err.message : 'Não consegui carregar o cardápio.');
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -237,6 +246,10 @@ function ZeloMenuStorePageContent({
         <p className="text-[13px] text-[var(--zm-ink-soft)]">Carregando cardápio…</p>
       </div>
     );
+  }
+
+  if (notFound) {
+    return <ZeloMenuNotFoundPage />;
   }
 
   if (error && !store) {

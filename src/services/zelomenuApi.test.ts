@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { startPublicOrder, ZeloMenuApiError } from './zelomenuApi';
+import { isPublicStoreNotFoundError, startPublicOrder, ZeloMenuApiError } from './zelomenuApi';
 
 describe('startPublicOrder', () => {
   afterEach(() => {
@@ -43,5 +43,16 @@ describe('startPublicOrder', () => {
     await expect(startPublicOrder('loja-a', {
       items: [{ productId: 1, productName: 'Produto', quantity: 1 }],
     })).rejects.toBeInstanceOf(ZeloMenuApiError);
+  });
+});
+
+describe('isPublicStoreNotFoundError', () => {
+  it('recognizes a missing public store response', () => {
+    expect(isPublicStoreNotFoundError(new ZeloMenuApiError(404, 'STORE_NOT_FOUND'))).toBe(true);
+  });
+
+  it('does not hide unrelated public store failures as a 404', () => {
+    expect(isPublicStoreNotFoundError(new ZeloMenuApiError(503, 'STORE_UNAVAILABLE'))).toBe(false);
+    expect(isPublicStoreNotFoundError(new Error('STORE_NOT_FOUND'))).toBe(false);
   });
 });

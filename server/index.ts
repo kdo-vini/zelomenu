@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug, resolvePublicOrderSubscription, getZeloMenuOperationalMetrics } from './zelomenuCartSessions.js';
 import { requireEmpresaId, getEmpresaUserId } from './supabaseServer.js';
+import { requireZeloMenuAccess } from './zelomenuAccess.js';
 import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
 import { listZeloMenuCoupons, createZeloMenuCoupon, updateZeloMenuCoupon, deleteZeloMenuCoupon } from './zelomenuCoupons.js';
 import { PIX_KEY_TYPES, type PixKeyType } from '../src/domain/pixBrCode.js';
@@ -214,6 +215,7 @@ function sendAdminError(res: Response, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   console.error('[ZeloMenu] admin error:', error);
   if (message === 'UNAUTHORIZED' || message === 'EMPRESA_NOT_FOUND') return void res.status(401).json({ error: message });
+  if (message === 'ZELOMENU_ACCESS_REQUIRED') return void res.status(403).json({ error: message });
   if (message === 'INVALID_SLUG') return void res.status(400).json({ error: 'INVALID_SLUG' });
   if (message === 'RESERVED_SLUG') return void res.status(400).json({ error: 'RESERVED_SLUG' });
   if (message === 'SLUG_TAKEN') return void res.status(409).json({ error: 'SLUG_TAKEN' });
@@ -236,6 +238,17 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'SCHEDULING_LEAD_TIME_INVALID') return void res.status(400).json({ error: 'SCHEDULING_LEAD_TIME_INVALID' });
   res.status(500).json({ error: 'INTERNAL_ERROR' });
 }
+
+// Every ZeloMenu admin endpoint keeps the login barrier but requires an active
+// ZeloMenu entitlement before reaching the route handler.
+app.use('/api/admin/zelomenu', async (req, res, next) => {
+  try {
+    await requireZeloMenuAccess(req);
+    next();
+  } catch (error) {
+    sendAdminError(res, error);
+  }
+});
 
 // ─── Slug management (admin, Bearer-authed) ────────────────────────────────────
 

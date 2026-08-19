@@ -62,6 +62,9 @@ export async function resolveEmpresaIdFromToken(token: string): Promise<string> 
 }
 
 export async function requireEmpresaId(req: Request): Promise<string> {
+  const existingEmpresaId = (req as Request & { empresaId?: string }).empresaId;
+  if (existingEmpresaId) return existingEmpresaId;
+
   const token = extractBearerToken(req);
   if (!token) throw new Error('UNAUTHORIZED');
   const empresaId = await resolveEmpresaIdFromToken(token);

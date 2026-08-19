@@ -67,4 +67,12 @@ test.describe('Vitrine pública', () => {
     await expect(page.getByRole('heading', { name: /casa dos salgados/i })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByPlaceholder('Buscar no cardápio…')).toBeVisible();
   });
+
+  test('mostra uma página 404 estilizada para um slug indisponível', async ({ page }) => {
+    await page.goto('/slug-publico-inexistente-zelomenu');
+
+    await expect(page.getByRole('heading', { name: /este cardápio não está disponível/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('link', { name: /voltar para o início/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /conhecer o zelomenu/i })).toBeVisible();
+  });
 });

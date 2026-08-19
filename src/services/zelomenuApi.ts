@@ -231,6 +231,12 @@ export class ZeloMenuApiError extends Error {
   }
 }
 
+export function isPublicStoreNotFoundError(error: unknown): error is ZeloMenuApiError {
+  return error instanceof ZeloMenuApiError
+    && error.status === 404
+    && error.code === 'STORE_NOT_FOUND';
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {

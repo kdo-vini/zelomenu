@@ -52,6 +52,7 @@ import { buildCanonicalOrderSnapshots, usesDirectCanonicalOrderEngine } from '..
 import { shouldAutoAcceptPublicOrder } from '../src/domain/zelomenuOrderAcceptance.js';
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
+import { hasZeloMenuAccessForEmpresa } from './zelomenuAccess.js';
 
 // ─── Token helpers (node:crypto, backend only) ─────────────────────────────────
 
@@ -1456,7 +1457,10 @@ export async function resolveEmpresaIdBySlug(slug: string): Promise<string | nul
     .eq('zelomenu_slug', normalized)
     .maybeSingle();
   if (error) throw error;
-  return (data as { id?: string } | null)?.id ?? null;
+  const empresaId = (data as { id?: string } | null)?.id ?? null;
+  if (!empresaId) return null;
+
+  return (await hasZeloMenuAccessForEmpresa(empresaId)) ? empresaId : null;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -1464,11 +1468,11 @@ export async function resolveEmpresaIdBySlug(slug: string): Promise<string | nul
 export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreResponse | null> {
   const normalizedSlug = normalizeZeloMenuSlug(slug);
   if (!normalizedSlug) return null;
-  const cached = publicStoreCache.get(normalizedSlug);
-  if (cached && cached.expiresAt > Date.now()) return cached.response;
-
   const empresaId = await resolveEmpresaIdBySlug(normalizedSlug);
   if (!empresaId) return null;
+
+  const cached = publicStoreCache.get(normalizedSlug);
+  if (cached && cached.expiresAt > Date.now()) return cached.response;
 
   const [, perfil] = await Promise.all([
     loadCatalogFromDb(empresaId),
