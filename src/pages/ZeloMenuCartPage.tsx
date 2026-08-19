@@ -73,6 +73,7 @@ import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
 import { ZeloMenuScheduleCalendar } from '../components/zelomenu/ZeloMenuScheduleCalendar';
 import { PushNotificationButton } from '../components/home/PushNotificationButton';
 import { resolveCheckoutSuggestions } from '../domain/zelomenuRecommendations';
+import { resolvePublicPushOrderId } from '../domain/zelomenuPush';
 import { ToastProvider, useToast } from '../contexts/ToastContext';
 
 type DraftState = {
@@ -1362,8 +1363,8 @@ function ZeloMenuCartPageContent() {
                         </p>
                       </header>
 
-                      {!isTerminalBad && !isTableOrder && (
-                        <PushNotificationButton variant="order" orderId={payload.session.orderingId ?? undefined} cartToken={token} />
+                      {!isTerminalBad && !isTableOrder && payload.order && (
+                        <PushNotificationButton variant="order" orderId={resolvePublicPushOrderId(payload.order)} cartToken={token} />
                       )}
 
                       {hasPix && (
