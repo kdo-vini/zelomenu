@@ -51,7 +51,7 @@ describe('catalog canonical product rules', () => {
     expect(result.available).toBe(true);
   });
 
-  it('pauses a shared component only in the paused parent context', () => {
+  it('keeps a linked component available when the parent is hidden only in the PDV', () => {
     const linked = { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 };
     const activeParent = { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 };
     const pausedParent = { ocultar_no_pdv: true, controlar_estoque: false, estoque_atual: 0 };
@@ -61,7 +61,7 @@ describe('catalog canonical product rules', () => {
       linked,
       groupActive: true,
       optionActive: true,
-    })).toBe(false);
+    })).toBe(true);
     expect(resolveCatalogUsageAvailability({
       parent: activeParent,
       linked,
@@ -70,7 +70,7 @@ describe('catalog canonical product rules', () => {
     })).toBe(true);
   });
 
-  it('keeps a global child pause unavailable in every parent', () => {
+  it('keeps a linked child available when it is hidden only in the PDV', () => {
     const pausedChild = { ocultar_no_pdv: true, controlar_estoque: false, estoque_atual: 0 };
     const activeParent = { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 };
 
@@ -79,7 +79,7 @@ describe('catalog canonical product rules', () => {
       linked: pausedChild,
       groupActive: true,
       optionActive: true,
-    })).toBe(false);
+    })).toBe(true);
   });
 
   it('filters component-only products from standalone cards without touching parent options', () => {

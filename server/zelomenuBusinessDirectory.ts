@@ -185,7 +185,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
           const product = productsByKey.get(`${userId}:${productId}`);
           const publication = publicationsByKey.get(`${userId}:${productId}`);
           if (!product || !publication || publication.visivel_online !== true || publication.pausado_manualmente === true) return null;
-          if (product.ocultar_no_pdv === true || (product.controlar_estoque === true && Number(product.estoque_atual ?? 0) <= 0)) return null;
+          if (product.controlar_estoque === true && Number(product.estoque_atual ?? 0) <= 0) return null;
           const name = String(publication.nome_publico ?? product.nome ?? '').trim();
           if (!name) return null;
           return {

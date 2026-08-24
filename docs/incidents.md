@@ -2,6 +2,16 @@
 
 Runbook curto para diagnosticar rapidamente problemas de preço, deploy e roteamento do cardápio público.
 
+## 0. Visibilidade do PDV não é publicação online
+
+`produtos.ocultar_no_pdv` é somente o controle interno de venda manual do
+ZeloPDV. Para o cliente, a fonte de verdade é o overlay
+`zelomenu_product_publications`: `visivel_online` publica e
+`pausado_manualmente` pausa. Se um produto estiver oculto no PDV, isso não deve
+alterar a publicação no storefront. Não corrigir esse caso com backfill de
+dados sem instrução explícita do produto; a correção de 2026-08-24 foi somente
+de contrato/código e preservou o catálogo da Bem Servido.
+
 ## 1. Preço `R$0,00` em produto com grupo `substituir`
 
 ### Sintoma

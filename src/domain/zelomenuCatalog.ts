@@ -17,8 +17,11 @@ export type CatalogProductForResolution = {
 
 export type CatalogOperationalProduct = Pick<
   CatalogProductForResolution,
-  'ocultar_no_pdv' | 'controlar_estoque' | 'estoque_atual'
->;
+  'controlar_estoque' | 'estoque_atual'
+> & {
+  /** Legacy row compatibility; this internal PDV flag is deliberately ignored here. */
+  ocultar_no_pdv?: boolean;
+};
 
 export type CatalogVisibilityGroup<T extends { available: boolean }> = {
   nome: string;
@@ -66,9 +69,6 @@ export function getCatalogProductRole(
 export function getProductOperationalAvailability(
   product: CatalogOperationalProduct,
 ): CatalogProductAvailability {
-  if (product.ocultar_no_pdv) {
-    return { available: false, state: 'paused', reason: 'Produto pausado globalmente.', blockingGroups: [] };
-  }
   if (product.controlar_estoque && Number(product.estoque_atual ?? 0) <= 0) {
     return { available: false, state: 'out_of_stock', reason: 'Produto sem estoque.', blockingGroups: [] };
   }
@@ -77,8 +77,9 @@ export function getProductOperationalAvailability(
 
 /**
  * Resolves a linked option in the context of one product-pai. The canonical
- * child availability remains global, while a paused/stocked-out parent only
- * disables this particular usage; no publication flags are involved.
+ * child availability remains global, while a stocked-out parent only disables
+ * this particular usage. `ocultar_no_pdv` is intentionally absent: it is an
+ * internal ZeloPDV visibility flag and must not affect the customer catalog.
  */
 export function resolveCatalogUsageAvailability({
   parent,
@@ -123,7 +124,7 @@ export function getUnavailableRequiredModifierGroups(
 }
 
 export function resolveCatalogProductAvailability(
-  product: Pick<CatalogProductForResolution, 'ocultar_no_pdv' | 'controlar_estoque' | 'estoque_atual'>,
+  product: CatalogOperationalProduct,
   groups: ZeloMenuModifierGroup[] | null | undefined,
 ): CatalogProductAvailability {
   const base = getProductOperationalAvailability(product);

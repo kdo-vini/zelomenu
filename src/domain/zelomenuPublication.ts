@@ -77,15 +77,6 @@ export type ZeloMenuResolvedCatalogProduct = {
 export function getZeloMenuPublicationStatus(
   product: ZeloMenuPublicationProduct,
 ): ZeloMenuPublicationStatusDetails {
-  if (product.ocultar_no_pdv) {
-    return {
-      status: 'paused',
-      label: 'Pausado',
-      description: 'Produto pausado globalmente em todos os usos.',
-      issue: 'paused',
-    };
-  }
-
   if (product.controlar_estoque && product.estoque_atual <= 0) {
     return {
       status: 'out_of_stock',
@@ -167,8 +158,9 @@ export function summarizeZeloMenuPublication(
  * Whether a product can be used as a modifier-option ingredient inside a
  * combo (e.g. "Penne" inside "Monte sua Massa"). A product intentionally
  * unpublished from its own online listing may still be a component, but an
- * item explicitly hidden/inactivated in the PDV must stop propagating into
- * every linked group. Stock-out is also a hard availability boundary.
+ * item hidden in the PDV remains eligible here because PDV visibility is an
+ * internal sales-channel setting. Stock-out is still a hard availability
+ * boundary.
  */
 export function resolveZeloMenuLinkedOptionAvailability(
   product: Pick<ZeloMenuPublicationCatalogProduct, 'controlar_estoque' | 'estoque_atual'>

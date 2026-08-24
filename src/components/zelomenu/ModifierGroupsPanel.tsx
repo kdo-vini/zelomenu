@@ -876,7 +876,7 @@ function GroupDetail({
                                   controlar_estoque: p.controlar_estoque,
                                   estoque_atual: p.estoque_atual,
                                   ocultar_no_pdv: p.ocultar_no_pdv,
-                                }) ? 'Disponível' : p.ocultar_no_pdv ? 'Pausado' : 'Sem estoque'}
+                                }) ? 'Disponível' : 'Sem estoque'}
                                 {' · '}usado em {productUsageCounts?.[p.id] ?? 0} {productUsageCounts?.[p.id] === 1 ? 'produto' : 'produtos'}
                               </span>
                             </span>

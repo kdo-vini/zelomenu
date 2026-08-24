@@ -8,6 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The app is hosted at `menu.zelopdv.com.br`. All UI copy and error messages must be in **Portuguese (PT-BR)**.
 
+## Visibilidade por canal
+
+`produtos.ocultar_no_pdv` pertence exclusivamente ao canal interno do
+ZeloPDV, usado pela empresa para venda manual. Nunca use essa flag para
+publicar, despublicar ou pausar um item no cardápio digital. O storefront e a
+publicação administrativa devem usar `zelomenu_product_publications.visivel_online`
+e `pausado_manualmente`; estoque, categoria e complementos são validações
+online separadas. Um produto pode estar visível no PDV e continuar despublicado
+no ZeloMenu.
+
 ## Development Commands
 
 ```bash

@@ -388,8 +388,8 @@ export function ProductModal({
 
               <ToggleCard
                 checked={!ocultar}
-                title="Disponível para venda"
-                description="Desligue para pausar este produto em todos os usos e cardápios."
+                title="Visível no PDV"
+                description="Desligue para ocultar este produto apenas no ZeloPDV. A publicação online é controlada separadamente."
                 onChange={(checked) => {
                   setOcultar(!checked);
                   setProductDirty(true);

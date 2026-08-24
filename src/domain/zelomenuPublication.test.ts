@@ -22,14 +22,14 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({ controlar_estoque: false, estoque_atual: 0 })).toBe(true);
   });
 
-  it('keeps an unpublished product available as a component when it is not hidden in the PDV', () => {
+  it('keeps an unpublished product available as a component regardless of PDV visibility', () => {
     const unpublished: ZeloMenuPublicationProduct = {
       id: 196,
       nome: 'Penne',
       id_categoria: 52,
       controlar_estoque: false,
       estoque_atual: 0,
-      ocultar_no_pdv: false,
+      ocultar_no_pdv: true,
       publication: {
         id_produto: 196,
         nome_publico: null,
@@ -44,15 +44,15 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
     expect(resolveZeloMenuLinkedOptionAvailability(unpublished)).toBe(true);
   });
 
-  it('disables every linked component when the catalog product is hidden in the PDV', () => {
+  it('keeps linked components available when they are hidden only in the PDV', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({
       controlar_estoque: false,
       estoque_atual: 0,
       ocultar_no_pdv: true,
-    })).toBe(false);
+    })).toBe(true);
   });
 
-  it('reports global PDV hiding as a single paused state', () => {
+  it('does not let PDV visibility pause a published ZeloMenu product', () => {
     expect(getZeloMenuPublicationStatus({
       id: 850,
       nome: 'Bife a rolê',
@@ -60,7 +60,15 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
       controlar_estoque: false,
       estoque_atual: 0,
       ocultar_no_pdv: true,
-      publication: null,
-    })).toMatchObject({ status: 'paused', label: 'Pausado' });
+      publication: {
+        id_produto: 850,
+        nome_publico: null,
+        descricao_publica: null,
+        foto_url: null,
+        visivel_online: true,
+        pausado_manualmente: false,
+        ordem: 0,
+      },
+    })).toMatchObject({ status: 'published', label: 'Publicado' });
   });
 });

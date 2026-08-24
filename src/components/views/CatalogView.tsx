@@ -464,14 +464,14 @@ export const CatalogView = ({
         previousStates: {},
         previousAvailability: { [produto.id]: produto.ocultar_no_pdv },
         message: produto.ocultar_no_pdv
-          ? `${produto.nome} reativado em todos os usos.`
-          : `${produto.nome} pausado em todos os usos.`,
+          ? `${produto.nome} reativado no PDV.`
+          : `${produto.nome} ocultado no PDV.`,
       });
       setBulkFeedback({
         tone: 'success',
         message: produto.ocultar_no_pdv
-          ? `${produto.nome} reativado em todos os usos.`
-          : `${produto.nome} pausado em todos os usos.`,
+          ? `${produto.nome} reativado no PDV.`
+          : `${produto.nome} ocultado no PDV.`,
       });
     } catch (toggleError) {
       setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(toggleError) || 'Não foi possível atualizar a disponibilidade.' });
@@ -1636,7 +1636,7 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
           actions={[
             ...(onToggleAvailability
               ? [{
-                  label: produto.ocultar_no_pdv ? 'Reativar produto' : 'Pausar produto em todos os usos',
+                  label: produto.ocultar_no_pdv ? 'Reativar no PDV' : 'Ocultar no PDV',
                   icon: produto.ocultar_no_pdv ? <CircleCheck className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
                   onSelect: onToggleAvailability,
                 }]
