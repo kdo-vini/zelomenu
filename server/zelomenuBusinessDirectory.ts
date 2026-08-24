@@ -109,7 +109,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
       ? Promise.all([
           supabase
             .from('produtos')
-            .select('id, id_usuario, nome, preco, ocultar_no_pdv, controlar_estoque, estoque_atual')
+            .select('id, id_usuario, nome, preco, controlar_estoque, estoque_atual')
             .in('id_usuario', userIds)
             .limit(5000),
           supabase
