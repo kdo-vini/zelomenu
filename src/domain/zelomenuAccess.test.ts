@@ -32,6 +32,10 @@ describe('hasActiveZeloMenuAccess', () => {
     expect(hasActiveZeloMenuAccess(subscription({ has_zelo_menu: true }))).toBe(true);
   });
 
+  it('accepts a trialing pdv subscription with the ZeloMenu flag', () => {
+    expect(hasActiveZeloMenuAccess(subscription({ status: 'trialing', has_zelo_menu: true }))).toBe(true);
+  });
+
   it('accepts chat and bundle subscriptions while they are active', () => {
     expect(hasActiveZeloMenuAccess(subscription({ plan_tier: 'chat' }))).toBe(true);
     expect(hasActiveZeloMenuAccess(subscription({ plan_tier: 'bundle' }))).toBe(true);

@@ -50,7 +50,7 @@ export function isSubscriptionCurrentlyActive(
   subscription: ActiveSubscriptionLike | null | undefined,
   nowMs = Date.now(),
 ): boolean {
-  if (!subscription || subscription.status !== 'active') return false;
+  if (!subscription || (subscription.status !== 'active' && subscription.status !== 'trialing')) return false;
   const expiryMs = getEffectiveSubscriptionExpiryMs(subscription);
   return expiryMs != null && expiryMs > nowMs;
 }
