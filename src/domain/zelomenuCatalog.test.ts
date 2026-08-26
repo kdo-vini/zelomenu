@@ -30,7 +30,7 @@ describe('catalog canonical product rules', () => {
       { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 },
       [{
         id: 'group', productId: 10, name: 'Escolha a mistura', kind: 'variacao', pricingMode: 'substituir',
-        minSelections: 1, maxSelections: 1, allowsQuantity: false, maxPerOption: null, active: true, order: 0,
+        minSelections: 1, maxSelections: 1, minTotalQuantity: 0, maxTotalQuantity: null, allowsQuantity: false, maxPerOption: null, active: true, order: 0,
         options: [{ id: 'option', name: 'Bife', priceDelta: 0, active: true, order: 0, linkedProduct: { productId: 11, name: 'Bife', photoUrl: null, price: 0, available: false } }],
       }],
     );
@@ -44,7 +44,7 @@ describe('catalog canonical product rules', () => {
       { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 },
       [{
         id: 'group', productId: 10, name: 'Extra', kind: 'adicional', pricingMode: 'somar',
-        minSelections: 0, maxSelections: null, allowsQuantity: false, maxPerOption: null, active: true, order: 0,
+        minSelections: 0, maxSelections: null, minTotalQuantity: 0, maxTotalQuantity: null, allowsQuantity: false, maxPerOption: null, active: true, order: 0,
         options: [],
       }],
     );

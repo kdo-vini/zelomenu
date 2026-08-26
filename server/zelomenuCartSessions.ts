@@ -860,9 +860,10 @@ function normalizeIncomingModifierSelections(value: unknown): ZeloMenuModifierSe
       const s = sel as { optionId?: unknown; quantity?: unknown };
       const optionId = sanitizeText(s.optionId, 64);
       if (!optionId) return [];
-      const qty = Number(s.quantity);
-      const quantity = Number.isFinite(qty) && qty >= 1 ? Math.floor(qty) : 1;
-      return [{ optionId, quantity }];
+      if (typeof s.quantity !== 'number' || !Number.isSafeInteger(s.quantity) || s.quantity < 1) {
+        throw new Error('MODIFIER_QUANTITY_INVALID');
+      }
+      return [{ optionId, quantity: s.quantity }];
     });
     if (optionSelections.length === 0) return [];
     return [{ groupId, optionSelections }];

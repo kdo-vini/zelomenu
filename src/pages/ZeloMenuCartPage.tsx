@@ -512,7 +512,7 @@ function ZeloMenuCartPageContent() {
   const latestAutosaveRef = useRef<ZeloMenuUpdateCartPayload | null>(null);
   const loadRequestRef = useRef(0);
   const [recModalProduct, setRecModalProduct] = useState<ZeloMenuCatalogProduct | null>(null);
-  const [recModalSelections, setRecModalSelections] = useState<Record<string, string[]>>({});
+  const [recModalSelections, setRecModalSelections] = useState<Record<string, Record<string, number>>>({});
   const pixCodeRef = useRef<HTMLParagraphElement>(null);
 
   const beginDeliveryAddressEdit = () => {
@@ -1763,7 +1763,9 @@ function ZeloMenuCartPageContent() {
                                   type="button"
                                   disabled={!isOpen}
                                   onClick={() => {
-                                    const hasRequired = p.modifierGroups.some((g) => g.active && g.minSelections > 0);
+                                    const hasRequired = p.modifierGroups.some((g) =>
+                                      g.active && (g.minSelections > 0 || (g.allowsQuantity && g.minTotalQuantity > 0)),
+                                    );
                                     if (hasRequired) {
                                       setRecModalProduct(p);
                                       setRecModalSelections({});
@@ -2339,21 +2341,44 @@ function ZeloMenuCartPageContent() {
             setRecModalSelections((prev) => {
               const group = recModalProduct.modifierGroups.find((g) => g.id === groupId);
               if (!group) return prev;
-              const current = prev[groupId] ?? [];
-              const has = current.includes(optionId);
-              let next: string[];
-              if (has) next = current.filter((id) => id !== optionId);
-              else if (group.maxSelections === 1) next = [optionId];
-              else next = [...current, optionId];
-              return { ...prev, [groupId]: next };
+              const current = { ...(prev[groupId] ?? {}) };
+              if (current[optionId]) {
+                delete current[optionId];
+              } else if (group.maxSelections === 1) {
+                return { ...prev, [groupId]: { [optionId]: 1 } };
+              } else if (group.maxSelections == null || Object.keys(current).length < group.maxSelections) {
+                current[optionId] = 1;
+              }
+              return { ...prev, [groupId]: current };
+            });
+          }}
+          onQuantityChange={(groupId, optionId, quantity) => {
+            setRecModalSelections((prev) => {
+              const group = recModalProduct.modifierGroups.find((g) => g.id === groupId);
+              if (!group) return prev;
+              const current = { ...(prev[groupId] ?? {}) };
+              const currentTotal = Object.values(current).reduce((total, value) => total + value, 0);
+              const currentQuantity = current[optionId] ?? 0;
+              if (quantity <= 0) delete current[optionId];
+              else {
+                const max = Math.min(
+                  group.maxPerOption ?? Number.MAX_SAFE_INTEGER,
+                  group.maxTotalQuantity == null
+                    ? Number.MAX_SAFE_INTEGER
+                    : Math.max(0, group.maxTotalQuantity - currentTotal + currentQuantity),
+                );
+                if (max <= 0) delete current[optionId];
+                else current[optionId] = Math.min(quantity, max);
+              }
+              return { ...prev, [groupId]: current };
             });
           }}
           onConfirm={() => {
             if (!recModalProduct) return;
             const selectedOptions = Object.entries(recModalSelections)
-              .map(([groupId, optionIds]) => ({
+              .map(([groupId, options]) => ({
                 groupId,
-                optionSelections: optionIds.map((optionId) => ({ optionId, quantity: 1 })),
+                optionSelections: Object.entries(options).map(([optionId, quantity]) => ({ optionId, quantity })),
               }))
               .filter((sel) => sel.optionSelections.length > 0);
             const resolution = resolveModifierSelections(recModalProduct.modifierGroups, selectedOptions, recModalProduct.basePrice);

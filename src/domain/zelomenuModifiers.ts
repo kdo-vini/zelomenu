@@ -25,6 +25,8 @@ export type ZeloMenuModifierGroup = {
   pricingMode: 'somar' | 'substituir';
   minSelections: number;
   maxSelections: number | null;
+  minTotalQuantity: number;
+  maxTotalQuantity: number | null;
   allowsQuantity: boolean;
   maxPerOption: number | null;
   active: boolean;
@@ -49,6 +51,8 @@ export type ZeloMenuModifierGroupDraft = {
   pricingMode: 'somar' | 'substituir';
   minSelections: number;
   maxSelections: number | null;
+  minTotalQuantity: number;
+  maxTotalQuantity: number | null;
   allowsQuantity: boolean;
   maxPerOption: number | null;
   active: boolean;
@@ -79,8 +83,11 @@ export type ZeloMenuModifierResolutionErrorCode =
   | 'group_missing'
   | 'option_missing'
   | 'group_required'
+  | 'group_quantity_required'
+  | 'group_quantity_exceeded'
   | 'selection_bounds'
-  | 'option_quantity_exceeded';
+  | 'option_quantity_exceeded'
+  | 'option_quantity_invalid';
 
 export type ZeloMenuModifierResolutionResult =
   | {
@@ -153,22 +160,41 @@ export function resolveModifierSelections(
   let addDeltaTotal = 0;
 
   for (const group of activeGroups) {
-    const input = (selections ?? []).find((s) => s.groupId === group.id);
-    const rawSelections = input?.optionSelections ?? [];
+    const rawSelections = (selections ?? [])
+      .filter((selection) => selection.groupId === group.id)
+      .flatMap((selection) => selection.optionSelections ?? []);
     const activeOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false);
     const selectedOptions: ZeloMenuSelectedModifierOption[] = [];
 
-    // Defensive sanitization: quantity must be positive integer
-    const sanitized: Array<{ optionId: string; quantity: number }> = [];
+    // Quantidades chegam ao servidor pelo payload do carrinho. Não arredonde,
+    // converta ou descarte valores inválidos: isso poderia alterar o preço ou
+    // permitir que um payload adulterado escapasse dos limites do grupo.
+    const quantitiesByOption = new Map<string, number>();
     for (const sel of rawSelections) {
       if (typeof sel.optionId !== 'string' || !sel.optionId.trim()) continue;
-      const qty = Math.floor(Number(sel.quantity));
-      if (!Number.isFinite(qty) || qty < 1) continue; // 0 = deselected, NaN/negative = invalid
-      sanitized.push({ optionId: sel.optionId.trim(), quantity: qty });
+      const quantity = sel.quantity;
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || (!group.allowsQuantity && quantity !== 1)) {
+        return {
+          ok: false,
+          code: 'option_quantity_invalid',
+          message: `A quantidade escolhida para uma opção de ${group.name} é inválida.`,
+        };
+      }
+      const optionId = sel.optionId.trim();
+      const currentQuantity = quantitiesByOption.get(optionId) ?? 0;
+      const nextQuantity = currentQuantity + quantity;
+      if (!Number.isSafeInteger(nextQuantity)) {
+        return {
+          ok: false,
+          code: 'option_quantity_invalid',
+          message: `A quantidade escolhida para uma opção de ${group.name} é inválida.`,
+        };
+      }
+      quantitiesByOption.set(optionId, nextQuantity);
     }
 
-    for (const sel of sanitized) {
-      const option = activeOptions.find((candidate) => candidate.id === sel.optionId);
+    for (const [optionId, quantity] of quantitiesByOption) {
+      const option = activeOptions.find((candidate) => candidate.id === optionId);
       if (!option) {
         return {
           ok: false,
@@ -178,7 +204,7 @@ export function resolveModifierSelections(
       }
 
       // Validate maxPerOption
-      if (group.allowsQuantity && group.maxPerOption != null && sel.quantity > group.maxPerOption) {
+      if (group.allowsQuantity && group.maxPerOption != null && quantity > group.maxPerOption) {
         return {
           ok: false,
           code: 'option_quantity_exceeded',
@@ -190,8 +216,35 @@ export function resolveModifierSelections(
         optionId: option.id,
         optionName: option.linkedProduct ? option.linkedProduct.name : option.name,
         priceDelta: resolveOptionPrice(option),
-        quantity: sel.quantity,
+        quantity,
       });
+    }
+
+    const totalQuantity = selectedOptions.reduce((total, option) => total + option.quantity, 0);
+    if (!Number.isSafeInteger(totalQuantity)) {
+      return {
+        ok: false,
+        code: 'option_quantity_invalid',
+        message: `A quantidade escolhida para ${group.name} é inválida.`,
+      };
+    }
+    const minTotalQuantity = group.allowsQuantity ? Math.max(0, group.minTotalQuantity ?? 0) : 0;
+    const maxTotalQuantity = group.allowsQuantity ? group.maxTotalQuantity ?? null : null;
+
+    if (totalQuantity < minTotalQuantity) {
+      return {
+        ok: false,
+        code: 'group_quantity_required',
+        message: `Escolha ${quantityCountLabel(minTotalQuantity)} no total em ${group.name}.`,
+      };
+    }
+
+    if (maxTotalQuantity != null && totalQuantity > maxTotalQuantity) {
+      return {
+        ok: false,
+        code: 'group_quantity_exceeded',
+        message: `Você pode escolher no máximo ${quantityCountLabel(maxTotalQuantity)} no total em ${group.name}.`,
+      };
     }
 
     if (selectedOptions.length < group.minSelections) {
@@ -256,28 +309,48 @@ export function previewModifierPrice(
   let additionsTotal = 0;
   let requiredAdditionsMinimum = 0;
   let hasRequiredGroup = false;
-  let hasSelectedRequiredOption = false;
+  let requiredGroupsCount = 0;
+  let allRequiredGroupsSatisfied = true;
 
   for (const group of activeGroups) {
     const activeOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false);
-    const input = (selections ?? []).find((selection) => selection.groupId === group.id);
-    const selectedOptions = (input?.optionSelections ?? [])
-      .map((selection) => ({
-        option: activeOptions.find((candidate) => candidate.id === selection.optionId),
-        quantity: Math.floor(Number(selection.quantity)),
+    const rawSelections = (selections ?? [])
+      .filter((selection) => selection.groupId === group.id)
+      .flatMap((selection) => selection.optionSelections ?? []);
+    const quantitiesByOption = new Map<string, number>();
+    for (const selection of rawSelections) {
+      if (typeof selection.optionId !== 'string' || !selection.optionId.trim()) continue;
+      if (!Number.isSafeInteger(selection.quantity) || selection.quantity < 1) continue;
+      const current = quantitiesByOption.get(selection.optionId.trim()) ?? 0;
+      const next = current + selection.quantity;
+      if (Number.isSafeInteger(next)) quantitiesByOption.set(selection.optionId.trim(), next);
+    }
+    const selectedOptions = [...quantitiesByOption.entries()]
+      .map(([optionId, quantity]) => ({
+        option: activeOptions.find((candidate) => candidate.id === optionId),
+        quantity,
       }))
-      .filter((selection) => selection.option && Number.isFinite(selection.quantity) && selection.quantity > 0);
-
-    if (group.minSelections > 0) {
+      .filter((selection) => selection.option);
+    const validQuantitiesByOption = new Map(
+      selectedOptions.map((selection) => [selection.option!.id, selection.quantity]),
+    );
+    const selectedQuantity = selectedOptions.reduce((total, selection) => total + selection.quantity, 0);
+    const requiredDistinct = group.minSelections > 0;
+    const requiredQuantity = group.allowsQuantity && (group.minTotalQuantity ?? 0) > 0;
+    const hasRequired = requiredDistinct || requiredQuantity;
+    if (hasRequired) {
       hasRequiredGroup = true;
-      if (selectedOptions.length > 0) hasSelectedRequiredOption = true;
+      requiredGroupsCount += 1;
+      const meetsDistinct = selectedOptions.length >= group.minSelections;
+      const meetsQuantity = !requiredQuantity || selectedQuantity >= (group.minTotalQuantity ?? 0);
+      if (!meetsDistinct || !meetsQuantity) allRequiredGroupsSatisfied = false;
     }
 
     if (group.pricingMode === 'substituir') {
       const selectedOption = selectedOptions[0]?.option;
       if (selectedOption) {
         baseOverride = resolveOptionPrice(selectedOption);
-      } else if (group.minSelections > 0) {
+      } else if (hasRequired) {
         const lowestPrice = activeOptions
           .map(resolveOptionPrice)
           .sort((a, b) => a - b)[0];
@@ -289,15 +362,13 @@ export function previewModifierPrice(
     for (const selection of selectedOptions) {
       additionsTotal += resolveOptionPrice(selection.option!) * selection.quantity;
     }
-    if (group.minSelections > 0) {
-      requiredAdditionsMinimum += activeOptions
-        .map(resolveOptionPrice)
-        .sort((a, b) => a - b)
-        .slice(0, group.minSelections)
-        .reduce((total, price) => total + price, 0);
+    if (hasRequired) {
+      const missingPrice = minimumMissingQuantityPrice(group, activeOptions, validQuantitiesByOption);
+      requiredAdditionsMinimum += missingPrice;
     }
   }
 
+  const hasSelectedRequiredOption = requiredGroupsCount > 0 && allRequiredGroupsSatisfied;
   const selectedUnitPrice = (baseOverride ?? basePrice) + additionsTotal;
   const startingUnitPrice = (lowestSubstitutionPrice ?? baseOverride ?? basePrice)
     + (hasSelectedRequiredOption ? additionsTotal : requiredAdditionsMinimum + additionsTotal);
@@ -343,6 +414,14 @@ export function validateModifierGroupDrafts(groups: ZeloMenuModifierGroupDraft[]
     if (group.maxPerOption != null && group.maxPerOption < 1) {
       return `O grupo ${group.name} tem máximo por opção inválido.`;
     }
+    const minTotalQuantity = group.minTotalQuantity ?? 0;
+    const maxTotalQuantity = group.maxTotalQuantity ?? null;
+    if (!Number.isSafeInteger(minTotalQuantity) || minTotalQuantity < 0) {
+      return `O grupo ${group.name} tem quantidade total mínima inválida.`;
+    }
+    if (maxTotalQuantity != null && (!Number.isSafeInteger(maxTotalQuantity) || maxTotalQuantity < minTotalQuantity)) {
+      return `A quantidade total mínima do grupo ${group.name} não pode ser maior que a máxima.`;
+    }
     if (group.allowsQuantity && group.kind === 'variacao') {
       return `Quantidade só é permitida em grupos do tipo Adicional.`;
     }
@@ -382,6 +461,68 @@ export function validateModifierGroupDrafts(groups: ZeloMenuModifierGroupDraft[]
 
 function selectionCountLabel(value: number): string {
   return `${value} ${value === 1 ? 'opção' : 'opções'}`;
+}
+
+function quantityCountLabel(value: number): string {
+  return `${value} ${value === 1 ? 'item' : 'itens'}`;
+}
+
+function minimumMissingQuantityPrice(
+  group: ZeloMenuModifierGroup,
+  activeOptions: ZeloMenuModifierOption[],
+  selectedQuantities: Map<string, number>,
+): number {
+  const requiredDistinct = Math.max(0, group.minSelections);
+  const requiredTotal = group.allowsQuantity
+    ? Math.max(requiredDistinct, group.minTotalQuantity ?? 0)
+    : requiredDistinct;
+  if (requiredTotal === 0) return 0;
+
+  const options = [...activeOptions].sort((a, b) => resolveOptionPrice(a) - resolveOptionPrice(b) || a.order - b.order);
+  const added = new Map<string, number>();
+  let missingDistinct = Math.max(0, requiredDistinct - selectedQuantities.size);
+  let missingTotal = Math.max(0, requiredTotal - [...selectedQuantities.values()].reduce((total, quantity) => total + quantity, 0));
+  let total = 0;
+
+  if (!group.allowsQuantity) {
+    for (const option of options) {
+      if (missingDistinct <= 0) break;
+      if (selectedQuantities.has(option.id)) continue;
+      total += resolveOptionPrice(option);
+      missingDistinct -= 1;
+    }
+    return roundCurrency(total);
+  }
+
+  // Reserve the cheapest not-yet-selected options when the group also has a
+  // minimum of distinct options. The remaining units can repeat an option,
+  // respecting its individual cap.
+  for (const option of options) {
+    if (missingDistinct <= 0) break;
+    if (selectedQuantities.has(option.id)) continue;
+    const cap = group.maxPerOption ?? Number.MAX_SAFE_INTEGER;
+    const current = selectedQuantities.get(option.id) ?? 0;
+    if (current + (added.get(option.id) ?? 0) >= cap) continue;
+    added.set(option.id, 1);
+    total += resolveOptionPrice(option);
+    missingDistinct -= 1;
+    missingTotal = Math.max(0, missingTotal - 1);
+  }
+
+  for (const option of options) {
+    if (missingTotal <= 0) break;
+    const cap = group.maxPerOption ?? Number.MAX_SAFE_INTEGER;
+    const current = selectedQuantities.get(option.id) ?? 0;
+    const alreadyAdded = added.get(option.id) ?? 0;
+    const available = Math.max(0, cap - current - alreadyAdded);
+    const take = Math.min(available, missingTotal);
+    if (take <= 0) continue;
+    total += resolveOptionPrice(option) * take;
+    added.set(option.id, alreadyAdded + take);
+    missingTotal -= take;
+  }
+
+  return roundCurrency(total);
 }
 
 function roundCurrency(value: number): number {

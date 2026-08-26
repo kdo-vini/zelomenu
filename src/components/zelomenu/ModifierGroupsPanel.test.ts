@@ -11,6 +11,8 @@ function baseDraft(overrides: Partial<ZeloMenuModifierGroupDraft> = {}): ZeloMen
     pricingMode: 'somar',
     minSelections: 0,
     maxSelections: null,
+    minTotalQuantity: 0,
+    maxTotalQuantity: null,
     allowsQuantity: false,
     maxPerOption: null,
     active: true,
@@ -99,8 +101,26 @@ describe('applyModel', () => {
     expect(result.maxPerOption).toBe(5);
   });
 
+  it('quantity preserves the total quantity limits', () => {
+    const result = applyModel(quantityModel, baseDraft({ minTotalQuantity: 3, maxTotalQuantity: 3 }));
+    expect(result.minTotalQuantity).toBe(3);
+    expect(result.maxTotalQuantity).toBe(3);
+  });
+
   it('price_add clears maxPerOption', () => {
     const result = applyModel(priceAddModel, baseDraft({ maxPerOption: 5, allowsQuantity: true }));
+    expect(result.maxPerOption).toBeNull();
+  });
+
+  it('modelo sem quantidade limpa os limites totais', () => {
+    const result = applyModel(priceAddModel, baseDraft({
+      allowsQuantity: true,
+      minTotalQuantity: 3,
+      maxTotalQuantity: 3,
+      maxPerOption: 2,
+    }));
+    expect(result.minTotalQuantity).toBe(0);
+    expect(result.maxTotalQuantity).toBeNull();
     expect(result.maxPerOption).toBeNull();
   });
 

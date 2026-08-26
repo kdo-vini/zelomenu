@@ -21,6 +21,49 @@ function requiredActionLabel(groupName: string): string {
   return `Escolher ${conciseSubject.charAt(0).toLocaleLowerCase('pt-BR')}${conciseSubject.slice(1)}`;
 }
 
+function quantityTotal(selections: Record<string, number>): number {
+  return Object.values(selections).reduce((total, quantity) => total + quantity, 0);
+}
+
+function groupSelectedCount(
+  group: { allowsQuantity: boolean },
+  selections: Record<string, number>,
+): number {
+  return group.allowsQuantity ? quantityTotal(selections) : Object.keys(selections).length;
+}
+
+function groupCounterLabel(
+  group: {
+    allowsQuantity: boolean;
+    minSelections: number;
+    maxSelections: number | null;
+    minTotalQuantity: number;
+    maxTotalQuantity: number | null;
+  },
+  selectedCount: number,
+): string {
+  if (group.allowsQuantity) {
+    const min = Math.max(group.minTotalQuantity, group.minSelections);
+    const max = group.maxTotalQuantity;
+    const choiceLabel = min > 0 && max != null && min === max
+      ? `Escolha ${min} ${min === 1 ? 'item' : 'itens'}`
+      : min > 0 && max != null
+        ? `Escolha de ${min} a ${max} itens`
+        : min > 0
+          ? `Escolha pelo menos ${min} ${min === 1 ? 'item' : 'itens'}`
+          : max != null
+            ? `Escolha até ${max} ${max === 1 ? 'item' : 'itens'}`
+            : 'Escolha os itens';
+    const countLabel = max != null ? `${selectedCount} de ${max}` : `${selectedCount} selecionado${selectedCount === 1 ? '' : 's'}`;
+    const distinctLabel = group.maxSelections != null ? ` · até ${group.maxSelections} opções diferentes` : '';
+    return `${choiceLabel} · ${countLabel}${distinctLabel}`;
+  }
+
+  const minimum = group.minSelections > 0 ? `Obrigatório · mínimo ${group.minSelections}` : 'Opcional';
+  const maximum = group.maxSelections != null ? ` · máximo ${group.maxSelections}` : '';
+  return `${minimum}${maximum} · ${selectedCount} selecionada${selectedCount === 1 ? '' : 's'}`;
+}
+
 /** Mini-stepper para opções com quantidade (visualmente menor que o stepper do produto). */
 function MiniStepper({
   value,
@@ -44,11 +87,15 @@ function MiniStepper({
         onClick={() => onChange(value - 1)}
         disabled={atMin}
         className="flex h-7 w-7 items-center justify-center rounded-l-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
-        aria-label={label ? `Diminuir quantidade de ${label}` : 'Diminuir quantidade'}
+        aria-label={label ? `Diminuir quantidade de ${label}${max != null ? ` (limite ${max})` : ''}` : 'Diminuir quantidade'}
       >
         <Minus className="h-3 w-3" strokeWidth={2.5} />
       </button>
-      <span className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)]" aria-live="polite">
+      <span
+        className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)]"
+        aria-live="polite"
+        aria-label={label ? `${label}: ${value}${max != null ? ` de ${max}` : ''}` : `Quantidade: ${value}`}
+      >
         {value}
       </span>
       <button
@@ -56,7 +103,7 @@ function MiniStepper({
         onClick={() => onChange(value + 1)}
         disabled={atMax}
         className="flex h-7 w-7 items-center justify-center rounded-r-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
-        aria-label={label ? `Aumentar quantidade de ${label}` : 'Aumentar quantidade'}
+        aria-label={label ? `Aumentar quantidade de ${label}${max != null ? ` (limite ${max})` : ''}` : 'Aumentar quantidade'}
       >
         <Plus className="h-3 w-3" strokeWidth={2.5} />
       </button>
@@ -146,10 +193,18 @@ export function ProductAddModal({
       if (quantity <= 0) {
         delete groupSelections[optionId];
       } else {
-        groupSelections[optionId] = quantity;
+        const currentQuantity = groupSelections[optionId] ?? 0;
+        const currentTotal = quantityTotal(groupSelections);
+        const totalRemaining = group.maxTotalQuantity == null
+          ? Number.MAX_SAFE_INTEGER
+          : Math.max(0, group.maxTotalQuantity - currentTotal + currentQuantity);
+        const individualLimit = group.maxPerOption == null
+          ? Number.MAX_SAFE_INTEGER
+          : group.maxPerOption;
+        const nextQuantity = Math.min(quantity, individualLimit, totalRemaining);
+        if (nextQuantity <= 0) return prev;
+        groupSelections[optionId] = nextQuantity;
       }
-      if (group.allowsQuantity) return { ...prev, [groupId]: groupSelections };
-      // Legacy toggle behavior (no quantity)
       return { ...prev, [groupId]: groupSelections };
     });
   }
@@ -189,8 +244,10 @@ export function ProductAddModal({
   const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
   const activeGroups = sortModifierGroups(product.modifierGroups.filter((group) => group.active));
   const nextRequiredGroup = activeGroups.find((group) => (
-    group.minSelections > 0
-    && Object.keys(selections[group.id] ?? {}).length < group.minSelections
+    (group.minSelections > 0 && Object.keys(selections[group.id] ?? {}).length < group.minSelections)
+    || (group.allowsQuantity
+      && group.minTotalQuantity > 0
+      && quantityTotal(selections[group.id] ?? {}) < group.minTotalQuantity)
   ));
   const pricePreview = previewModifierPrice(product.modifierGroups, selectedOptions, product.basePrice);
   const displayedUnitPrice = resolution.ok ? resolution.finalUnitPrice : pricePreview.unitPrice;
@@ -203,7 +260,9 @@ export function ProductAddModal({
   const canConfirm = resolution.ok && validQuantity;
   const canScrollToRequiredGroup = Boolean(nextRequiredGroup && validQuantity);
   const primaryActionLabel = nextRequiredGroup
-    ? requiredActionLabel(nextRequiredGroup.name)
+    ? nextRequiredGroup.allowsQuantity && nextRequiredGroup.minTotalQuantity > quantityTotal(selections[nextRequiredGroup.id] ?? {})
+      ? `Escolha mais ${nextRequiredGroup.minTotalQuantity - quantityTotal(selections[nextRequiredGroup.id] ?? {})} ${nextRequiredGroup.minTotalQuantity - quantityTotal(selections[nextRequiredGroup.id] ?? {}) === 1 ? 'item' : 'itens'}`
+      : requiredActionLabel(nextRequiredGroup.name)
     : canConfirm
       ? (isEditing ? 'Atualizar' : 'Adicionar')
       : 'Corrija a seleção';
@@ -306,11 +365,13 @@ export function ProductAddModal({
                 <div className="mb-2.5">
                   <p className="text-[14px] font-bold text-[var(--color-ink)]">{group.name}</p>
                   <p className="text-[12px] text-[var(--color-ink-muted)]">
-                    {group.minSelections > 0
-                      ? `Obrigatório · mínimo ${group.minSelections}`
-                      : 'Opcional'}
-                    {group.maxSelections != null ? ` · máximo ${group.maxSelections}` : ''}
+                    {groupCounterLabel(group, groupSelectedCount(group, selections[group.id] ?? {}))}
                   </p>
+                  {nextRequiredGroup?.id === group.id && group.allowsQuantity && group.minTotalQuantity > quantityTotal(selections[group.id] ?? {}) ? (
+                    <p className="mt-1 text-[12px] font-semibold text-[var(--color-alert)]" role="alert">
+                      Escolha mais {group.minTotalQuantity - quantityTotal(selections[group.id] ?? {})} {group.minTotalQuantity - quantityTotal(selections[group.id] ?? {}) === 1 ? 'item' : 'itens'}.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="space-y-2">
                   {group.options.filter((o) => o.active && o.linkedProduct?.available !== false).map((option) => {
@@ -320,6 +381,14 @@ export function ProductAddModal({
                       const currentQty = groupSelections[option.id] ?? 0;
                       const checked = currentQty > 0;
                       const unitPrice = option.linkedProduct ? option.linkedProduct.price : option.priceDelta;
+                      const optionMax = group.maxPerOption == null && group.maxTotalQuantity == null
+                        ? null
+                        : Math.min(
+                          group.maxPerOption ?? Number.MAX_SAFE_INTEGER,
+                          group.maxTotalQuantity == null
+                            ? Number.MAX_SAFE_INTEGER
+                            : Math.max(0, group.maxTotalQuantity - quantityTotal(groupSelections) + currentQty),
+                        );
                       return (
                         <div
                           key={option.id}
@@ -353,7 +422,7 @@ export function ProductAddModal({
                             <MiniStepper
                               value={currentQty}
                               min={0}
-                              max={group.maxPerOption ?? null}
+                              max={optionMax}
                               label={option.linkedProduct?.name ?? option.name}
                               onChange={(v) => setOptionQuantity(group.id, option.id, v)}
                             />

@@ -153,7 +153,11 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       const errorCode = err instanceof ZeloMenuApiError ? err.code : msg;
-      const friendlyMessage = errorCode === 'TABLE_TAKEN_BY_OTHER_GROUP'
+      const friendlyMessage = errorCode === 'MODIFIER_QUANTITY_INVALID'
+        ? 'A quantidade de complemento precisa ser um número inteiro positivo.'
+        : errorCode === 'MODIFIER_INVALID' && err instanceof ZeloMenuApiError && err.detail
+          ? err.detail
+          : errorCode === 'TABLE_TAKEN_BY_OTHER_GROUP'
         ? 'Esta mesa já tem um pedido em aberto por outro grupo. Peça ao garçom para liberar a comanda.'
         : errorCode === 'COMANDA_CLOSED'
           ? 'Esta comanda já foi encerrada. Peça ao garçom para abrir uma nova comanda.'

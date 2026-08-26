@@ -163,7 +163,9 @@ function ZeloMenuStorePageContent({
     handledHighlightRef.current = intentKey;
     const cleanUrl = `${window.location.pathname}${window.location.hash}`;
     window.history.replaceState(window.history.state, '', cleanUrl);
-    const hasRequiredModifiers = product.modifierGroups.some((group) => group.active && group.minSelections > 0);
+    const hasRequiredModifiers = product.modifierGroups.some((group) =>
+      group.active && (group.minSelections > 0 || (group.allowsQuantity && group.minTotalQuantity > 0)),
+    );
     if (hasRequiredModifiers) {
       cart.onAddProduct(product);
     } else {

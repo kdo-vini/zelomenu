@@ -110,9 +110,19 @@ export function applyModel(
     pricingMode: model.pricingMode,
     allowsQuantity: model.allowsQuantity,
     minSelections: model.id === 'price_swap' ? Math.min(group.minSelections, 1) : group.minSelections,
-    maxSelections: model.id === 'price_swap' ? 1 : group.maxSelections,
+    maxSelections: model.id === 'price_swap'
+      ? 1
+      : model.allowsQuantity && group.maxSelections === 1
+        ? null
+        : group.maxSelections,
+    minTotalQuantity: model.allowsQuantity ? group.minTotalQuantity : 0,
+    maxTotalQuantity: model.allowsQuantity ? group.maxTotalQuantity : null,
     maxPerOption: model.allowsQuantity ? group.maxPerOption : null,
   };
+}
+
+function groupIsRequired(group: Pick<ZeloMenuModifierGroupDraft, 'allowsQuantity' | 'minSelections' | 'minTotalQuantity'>): boolean {
+  return group.minSelections > 0 || (group.allowsQuantity && group.minTotalQuantity > 0);
 }
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
@@ -308,7 +318,7 @@ function GroupList({
                 </span>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
-                <Tag>{group.minSelections > 0 ? 'Obrigatório' : 'Opcional'}</Tag>
+                <Tag>{groupIsRequired(group) ? 'Obrigatório' : 'Opcional'}</Tag>
                 <Tag>{modelInfo?.title ?? model}</Tag>
                 {!group.active && <Tag muted>Inativo</Tag>}
               </div>
@@ -372,7 +382,7 @@ function SummaryBar({
                 <span className="truncate text-[var(--color-ink)]">
                   {group.name || 'Sem nome'}{' '}
                   <span className="text-[var(--color-ink-muted)]">
-                    ({group.minSelections > 0 ? 'obrigatório' : 'opcional'})
+                    ({groupIsRequired(group) ? 'obrigatório' : 'opcional'})
                   </span>
                 </span>
                 <span className="shrink-0 text-[var(--color-ink-muted)]">
@@ -475,7 +485,7 @@ function GroupDetail({
     });
   };
 
-  const isObrigatorio = group.minSelections > 0;
+  const isObrigatorio = groupIsRequired(group);
 
   return (
     <div className="space-y-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
@@ -547,35 +557,46 @@ function GroupDetail({
           <input
             type="checkbox"
             checked={isObrigatorio}
-            onChange={(e) => updateGroup({ minSelections: e.target.checked ? 1 : 0 })}
+            onChange={(e) => updateGroup(group.allowsQuantity
+              ? { minTotalQuantity: e.target.checked ? Math.max(1, group.minTotalQuantity) : 0 }
+              : { minSelections: e.target.checked ? 1 : 0 })}
             className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
           />
           Obrigatório
         </label>
 
-        {/* price_add / free_option / quantity: max selections */}
-        {currentModel.id !== 'price_swap' && (
-          <label className="space-y-1.5">
-            <span className={LABEL_CLS}>
-              {currentModel.id === 'quantity' ? 'Quantas opções distintas?' : 'Quantas o cliente pode escolher?'}
-            </span>
-            <input
-              type="number"
-              min={1}
-              value={group.maxSelections == null ? '' : String(group.maxSelections)}
-              onChange={(e) =>
-                updateGroup({ maxSelections: e.target.value === '' ? null : Number(e.target.value || 1) })
-              }
-              className={INPUT_CLS}
-              placeholder="Sem limite"
-            />
-          </label>
+        {/* quantity: limits on the total number of units */}
+        {currentModel.id === 'quantity' && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className={LABEL_CLS}>Quantidade mínima no grupo</span>
+              <input
+                type="number"
+                min={0}
+                value={String(group.minTotalQuantity)}
+                onChange={(e) => updateGroup({ minTotalQuantity: Number(e.target.value || 0) })}
+                className={INPUT_CLS}
+                placeholder="Sem mínimo"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className={LABEL_CLS}>Quantidade máxima no grupo</span>
+              <input
+                type="number"
+                min={1}
+                value={group.maxTotalQuantity == null ? '' : String(group.maxTotalQuantity)}
+                onChange={(e) => updateGroup({ maxTotalQuantity: e.target.value === '' ? null : Number(e.target.value || 1) })}
+                className={INPUT_CLS}
+                placeholder="Sem limite"
+              />
+            </label>
+          </div>
         )}
 
         {/* quantity: max per option */}
         {currentModel.id === 'quantity' && (
           <label className="space-y-1.5">
-            <span className={LABEL_CLS}>Máximo por opção</span>
+            <span className={LABEL_CLS}>Máximo do mesmo item</span>
             <input
               type="number"
               min={1}
@@ -583,7 +604,7 @@ function GroupDetail({
               onChange={(e) =>
                 updateGroup({ maxPerOption: e.target.value === '' ? null : Number(e.target.value || 1) })
               }
-              className={INPUT_CLS + ' max-w-[140px]'}
+              className={INPUT_CLS + ' max-w-[180px]'}
               placeholder="Sem limite"
             />
           </label>
@@ -623,6 +644,8 @@ function GroupDetail({
                     kind: nextKind,
                     allowsQuantity: nextKind !== 'adicional' ? false : group.allowsQuantity,
                     maxPerOption: nextKind !== 'adicional' ? null : group.maxPerOption,
+                    minTotalQuantity: nextKind !== 'adicional' ? 0 : group.minTotalQuantity,
+                    maxTotalQuantity: nextKind !== 'adicional' ? null : group.maxTotalQuantity,
                   });
                 }}
                 className={INPUT_CLS}
@@ -642,6 +665,9 @@ function GroupDetail({
                     pricingMode,
                     minSelections: pricingMode === 'substituir' ? Math.min(group.minSelections, 1) : group.minSelections,
                     ...(pricingMode === 'substituir' ? { maxSelections: 1 } : {}),
+                    ...(pricingMode === 'substituir'
+                      ? { allowsQuantity: false, maxPerOption: null, minTotalQuantity: 0, maxTotalQuantity: null }
+                      : {}),
                   });
                 }}
                 className={INPUT_CLS}
@@ -652,7 +678,7 @@ function GroupDetail({
             </label>
 
             <label className="space-y-1.5">
-              <span className={LABEL_CLS}>Mínimo</span>
+              <span className={LABEL_CLS}>Mínimo de opções diferentes</span>
               <input
                 type="number"
                 min={0}
@@ -663,7 +689,7 @@ function GroupDetail({
             </label>
 
             <label className="space-y-1.5">
-              <span className={LABEL_CLS}>Máximo</span>
+              <span className={LABEL_CLS}>Máximo de opções diferentes</span>
               <input
                 type="number"
                 min={1}
@@ -674,6 +700,8 @@ function GroupDetail({
                     maxSelections: next,
                     allowsQuantity: next === 1 ? false : group.allowsQuantity,
                     maxPerOption: next === 1 ? null : group.maxPerOption,
+                    minTotalQuantity: next === 1 ? 0 : group.minTotalQuantity,
+                    maxTotalQuantity: next === 1 ? null : group.maxTotalQuantity,
                   });
                 }}
                 className={INPUT_CLS}
@@ -692,6 +720,8 @@ function GroupDetail({
                   updateGroup({
                     allowsQuantity: on,
                     maxPerOption: on ? group.maxPerOption : null,
+                    minTotalQuantity: on ? group.minTotalQuantity : 0,
+                    maxTotalQuantity: on ? group.maxTotalQuantity : null,
                   });
                 }}
                 className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-40"
@@ -699,23 +729,6 @@ function GroupDetail({
               Permite quantidade por opção (ex.: 2x, 3x)
             </label>
 
-            {group.allowsQuantity && (
-              <label className="space-y-1.5">
-                <span className={LABEL_CLS}>Máximo por opção</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={group.maxPerOption == null ? '' : String(group.maxPerOption)}
-                  onChange={(e) =>
-                    updateGroup({
-                      maxPerOption: e.target.value === '' ? null : Number(e.target.value || 1),
-                    })
-                  }
-                  className={INPUT_CLS}
-                  placeholder="Sem limite"
-                />
-              </label>
-            )}
           </div>
         )}
       </div>

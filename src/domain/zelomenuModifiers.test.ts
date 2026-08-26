@@ -30,6 +30,8 @@ function classicSomarGroup(overrides: Partial<ZeloMenuModifierGroup> = {}): Zelo
     pricingMode: 'somar',
     minSelections: 0,
     maxSelections: 3,
+    minTotalQuantity: 0,
+    maxTotalQuantity: null,
     allowsQuantity: false,
     maxPerOption: null,
     active: true,
@@ -58,6 +60,8 @@ function substituirGroup(options: ZeloMenuModifierOption[]): ZeloMenuModifierGro
     pricingMode: 'substituir',
     minSelections: 1,
     maxSelections: 1,
+    minTotalQuantity: 0,
+    maxTotalQuantity: null,
     allowsQuantity: false,
     maxPerOption: null,
     active: true,
@@ -253,38 +257,96 @@ describe('resolveModifierSelections', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('sanitiza quantidade 0 como não selecionado (filtrado)', () => {
+  it('aceita combinações repetidas dentro do limite total do grupo', () => {
+    const group = classicSomarGroup({
+      allowsQuantity: true,
+      minSelections: 0,
+      maxSelections: 3,
+      minTotalQuantity: 3,
+      maxTotalQuantity: 3,
+      maxPerOption: 2,
+    });
+    const r = resolveModifierSelections(
+      [group],
+      [sel('g1', [
+        { optionId: 'add-1', quantity: 2 },
+        { optionId: 'add-3', quantity: 1 },
+      ])],
+      BASE_PRICE,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.deltaTotal).toBe(7);
+      expect(r.finalUnitPrice).toBe(27);
+    }
+  });
+
+  it('rejeita quantidade total abaixo do mínimo do grupo', () => {
+    const group = classicSomarGroup({ allowsQuantity: true, minTotalQuantity: 3, maxTotalQuantity: 3 });
+    const r = resolveModifierSelections([group], [sel('g1', [{ optionId: 'add-1', quantity: 2 }])], BASE_PRICE);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('group_quantity_required');
+  });
+
+  it('rejeita quantidade total acima do máximo do grupo', () => {
+    const group = classicSomarGroup({ allowsQuantity: true, maxTotalQuantity: 3 });
+    const r = resolveModifierSelections(
+      [group],
+      [sel('g1', [{ optionId: 'add-1', quantity: 2 }, { optionId: 'add-3', quantity: 2 }])],
+      BASE_PRICE,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('group_quantity_exceeded');
+  });
+
+  it('consolida optionId repetido antes de validar o limite por opção', () => {
+    const group = classicSomarGroup({ allowsQuantity: true, maxPerOption: 2, maxTotalQuantity: 3 });
+    const r = resolveModifierSelections(
+      [group],
+      [sel('g1', [
+        { optionId: 'add-1', quantity: 1 },
+        { optionId: 'add-1', quantity: 1 },
+        { optionId: 'add-1', quantity: 1 },
+      ])],
+      BASE_PRICE,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('option_quantity_exceeded');
+  });
+
+  it('rejeita quantidade zero em vez de convertê-la silenciosamente', () => {
     const group = classicSomarGroup({ minSelections: 0 });
     const r = resolveModifierSelections([group], [sel('g1', [{ optionId: 'add-1', quantity: 0 }])], BASE_PRICE);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.selectedGroups).toHaveLength(0);
-      expect(r.finalUnitPrice).toBe(BASE_PRICE);
-    }
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('option_quantity_invalid');
   });
 
-  it('sanitiza quantidade negativa como inválida (filtrada)', () => {
+  it('rejeita quantidade negativa', () => {
     const group = classicSomarGroup({ minSelections: 0 });
     const r = resolveModifierSelections([group], [sel('g1', [{ optionId: 'add-1', quantity: -1 }])], BASE_PRICE);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.selectedGroups).toHaveLength(0);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('option_quantity_invalid');
   });
 
-  it('sanitiza quantidade NaN como inválida (filtrada)', () => {
+  it('rejeita quantidade NaN', () => {
     const group = classicSomarGroup({ minSelections: 0 });
     const r = resolveModifierSelections([group], [sel('g1', [{ optionId: 'add-1', quantity: NaN }])], BASE_PRICE);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.selectedGroups).toHaveLength(0);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('option_quantity_invalid');
   });
 
-  it('sanitiza quantidade fracionária arredondando para baixo', () => {
+  it('rejeita quantidade fracionária', () => {
     const group = classicSomarGroup({ allowsQuantity: true });
     const r = resolveModifierSelections([group], [sel('g1', [{ optionId: 'add-3', quantity: 2.7 }])], BASE_PRICE);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.selectedGroups[0].selectedOptions[0].quantity).toBe(2);
-      expect(r.deltaTotal).toBe(6); // 3 * 2
-    }
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('option_quantity_invalid');
+  });
+
+  it('rejeita quantidade maior que um em grupo sem quantidade', () => {
+    const group = classicSomarGroup({ allowsQuantity: false });
+    const r = resolveModifierSelections([group], [sel('g1', [{ optionId: 'add-1', quantity: 2 }])], BASE_PRICE);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('option_quantity_invalid');
   });
 
   it('minSelections/maxSelections contam opções distintas, não soma de quantidades', () => {
@@ -343,9 +405,9 @@ describe('previewModifierPrice', () => {
     });
 
     expect(previewModifierPrice([sizeGroup, mixGroup], [one('g-sub', ['add-2'])], 0)).toEqual({
-      unitPrice: 22,
+      unitPrice: 23.5,
       hasRequiredGroup: true,
-      hasSelectedRequiredOption: true,
+      hasSelectedRequiredOption: false,
     });
   });
 });
@@ -394,6 +456,8 @@ describe('validateModifierGroupDrafts', () => {
       pricingMode: 'somar',
       minSelections: 0,
       maxSelections: null,
+      minTotalQuantity: 0,
+      maxTotalQuantity: null,
       allowsQuantity: false,
       maxPerOption: null,
       active: true,
@@ -441,6 +505,35 @@ describe('validateModifierGroupDrafts', () => {
     expect(result).toContain('máximo por opção inválido');
   });
 
+  it('considera a quantidade mínima do grupo no preço inicial', () => {
+    const group = classicSomarGroup({
+      name: 'Coberturas',
+      allowsQuantity: true,
+      minTotalQuantity: 3,
+      maxTotalQuantity: 3,
+      maxPerOption: 2,
+      options: [
+        { ...additions()[0], priceDelta: 2 },
+        { ...additions()[1], priceDelta: 3 },
+      ],
+    });
+
+    expect(previewModifierPrice([group], [], 10)).toEqual({
+      unitPrice: 17,
+      hasRequiredGroup: true,
+      hasSelectedRequiredOption: false,
+    });
+  });
+
+  it('rejeita mínimo total maior que máximo total', () => {
+    const result = validateModifierGroupDrafts([draft({
+      allowsQuantity: true,
+      minTotalQuantity: 4,
+      maxTotalQuantity: 3,
+    })]);
+    expect(result).toContain('quantidade total mínima');
+  });
+
   it('rejeita allowsQuantity com kind variacao', () => {
     const result = validateModifierGroupDrafts([draft({ allowsQuantity: true, kind: 'variacao' })]);
     expect(result).toBe('Quantidade só é permitida em grupos do tipo Adicional.');
@@ -483,6 +576,8 @@ describe('validateModifierGroupDrafts', () => {
       pricingMode: 'substituir' as const,
       minSelections: 1,
       maxSelections: 1,
+      minTotalQuantity: 0,
+      maxTotalQuantity: null,
       allowsQuantity: false,
       maxPerOption: null,
       active: true,

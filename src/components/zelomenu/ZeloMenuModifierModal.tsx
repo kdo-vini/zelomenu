@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Minus, Plus, X } from 'lucide-react';
 import { resolveModifierSelections } from '../../domain/zelomenuModifiers';
 import type { ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
 
@@ -12,12 +12,14 @@ export function ModifierModal({
   selections,
   onClose,
   onToggle,
+  onQuantityChange,
   onConfirm,
 }: {
   product: ZeloMenuCatalogProduct;
-  selections: Record<string, string[]>;
+  selections: Record<string, Record<string, number>>;
   onClose: () => void;
   onToggle: (groupId: string, optionId: string) => void;
+  onQuantityChange: (groupId: string, optionId: string, quantity: number) => void;
   onConfirm: () => void;
 }) {
   useEffect(() => {
@@ -27,9 +29,9 @@ export function ModifierModal({
   }, [onClose]);
 
   const selectedOptions = Object.entries(selections)
-    .map(([groupId, optionIds]) => ({
+    .map(([groupId, options]) => ({
       groupId,
-      optionSelections: optionIds.map((optionId) => ({ optionId, quantity: 1 })),
+      optionSelections: Object.entries(options).map(([optionId, quantity]) => ({ optionId, quantity })),
     }))
     .filter((sel) => sel.optionSelections.length > 0);
   const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
@@ -55,21 +57,62 @@ export function ModifierModal({
         {/* Options */}
         <div className="space-y-4 overflow-y-auto px-5 py-4" style={{ maxHeight: 'calc(92vh - 160px)' }}>
           {product.modifierGroups.map((group) => {
-            const selectedIds = selections[group.id] ?? [];
+            const groupSelections = selections[group.id] ?? {};
+            const selectedTotal = group.allowsQuantity
+              ? Object.values(groupSelections).reduce((total, quantity) => total + quantity, 0)
+              : Object.keys(groupSelections).length;
             return (
               <section key={group.id}>
                 <div className="mb-2.5">
                   <p className="text-[14px] font-bold text-[var(--color-ink)]">{group.name}</p>
                   <p className="text-[12px] text-[var(--color-ink-muted)]">
-                    {group.minSelections > 0
-                      ? `Obrigatório · mínimo ${group.minSelections}`
-                      : 'Opcional'}
-                    {group.maxSelections != null ? ` · máximo ${group.maxSelections}` : ''}
+                    {group.allowsQuantity && group.minTotalQuantity > 0
+                      ? group.minTotalQuantity === group.maxTotalQuantity
+                        ? `Escolha ${group.minTotalQuantity} itens · ${selectedTotal} de ${group.maxTotalQuantity}`
+                        : `Escolha pelo menos ${group.minTotalQuantity} itens · ${selectedTotal}${group.maxTotalQuantity != null ? ` de ${group.maxTotalQuantity}` : ''}`
+                      : group.minSelections > 0
+                        ? `Obrigatório · mínimo ${group.minSelections}`
+                        : 'Opcional'}
+                    {group.allowsQuantity && group.maxSelections != null ? ` · até ${group.maxSelections} opções diferentes` : null}
+                    {!group.allowsQuantity && group.maxSelections != null ? ` · máximo ${group.maxSelections}` : null}
                   </p>
                 </div>
                 <div className="space-y-2">
                   {group.options.filter((o) => o.active && o.linkedProduct?.available !== false).map((option) => {
-                    const checked = selectedIds.includes(option.id);
+                    const currentQuantity = groupSelections[option.id] ?? 0;
+                    const checked = currentQuantity > 0;
+                    if (group.allowsQuantity) {
+                      const totalWithoutOption = selectedTotal - currentQuantity;
+                      const max = group.maxPerOption == null && group.maxTotalQuantity == null
+                        ? null
+                        : Math.min(
+                          group.maxPerOption ?? Number.MAX_SAFE_INTEGER,
+                          group.maxTotalQuantity == null
+                            ? Number.MAX_SAFE_INTEGER
+                            : Math.max(0, group.maxTotalQuantity - totalWithoutOption),
+                        );
+                      return (
+                        <div key={option.id} className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-line)] px-4 py-3">
+                          <span className="text-[14px] text-[var(--color-ink)]">{option.linkedProduct ? option.linkedProduct.name : option.name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">
+                              {(option.linkedProduct?.price ?? option.priceDelta) > 0
+                                ? `+ ${toBRL((option.linkedProduct?.price ?? option.priceDelta) * Math.max(1, currentQuantity))}`
+                                : 'incluso'}
+                            </span>
+                            <div className="inline-flex items-center rounded-lg border border-[var(--color-line)]">
+                              <button type="button" onClick={() => onQuantityChange(group.id, option.id, currentQuantity - 1)} disabled={currentQuantity <= 0} className="flex h-8 w-8 items-center justify-center disabled:opacity-30" aria-label={`Diminuir quantidade de ${option.name}`}>
+                                <Minus className="h-3.5 w-3.5" />
+                              </button>
+                              <span className="min-w-7 text-center text-sm font-semibold tabular-nums" aria-live="polite">{currentQuantity}</span>
+                              <button type="button" onClick={() => onQuantityChange(group.id, option.id, currentQuantity + 1)} disabled={max != null && currentQuantity >= max} className="flex h-8 w-8 items-center justify-center disabled:opacity-30" aria-label={`Aumentar quantidade de ${option.name}${max != null ? ` (limite ${max})` : ''}`}>
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
                       <label
                         key={option.id}

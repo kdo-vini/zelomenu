@@ -239,6 +239,8 @@ function normalizeModifierGroupRow(row: unknown): Omit<ZeloMenuModifierGroup, 'o
     modo_preco?: unknown;
     min_selecoes?: unknown;
     max_selecoes?: unknown;
+    minimo_total_quantidade?: unknown;
+    maximo_total_quantidade?: unknown;
     permite_quantidade?: unknown;
     maximo_por_opcao?: unknown;
     ativo?: unknown;
@@ -256,6 +258,10 @@ function normalizeModifierGroupRow(row: unknown): Omit<ZeloMenuModifierGroup, 'o
     pricingMode: group.modo_preco === 'substituir' ? 'substituir' : 'somar',
     minSelections: Math.max(0, Math.trunc(normalizeNumber(group.min_selecoes))),
     maxSelections: group.max_selecoes == null ? null : Math.max(1, Math.trunc(normalizeNumber(group.max_selecoes))),
+    minTotalQuantity: Math.max(0, Math.trunc(normalizeNumber(group.minimo_total_quantidade))),
+    maxTotalQuantity: group.maximo_total_quantidade == null
+      ? null
+      : Math.max(0, Math.trunc(normalizeNumber(group.maximo_total_quantidade))),
     allowsQuantity: group.permite_quantidade === true,
     maxPerOption: group.maximo_por_opcao == null ? null : Math.max(1, Math.trunc(normalizeNumber(group.maximo_por_opcao))),
     active: group.ativo !== false,
@@ -308,6 +314,8 @@ function toPublicCatalogProduct(product: CatalogProductWithPlacement): CatalogPr
       pricingMode: group.pricingMode,
       minSelections: group.minSelections,
       maxSelections: group.maxSelections,
+      minTotalQuantity: group.minTotalQuantity,
+      maxTotalQuantity: group.maxTotalQuantity,
       allowsQuantity: group.allowsQuantity,
       maxPerOption: group.maxPerOption,
       active: group.active,
@@ -445,7 +453,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     supabase.from('subcategorias').select('id, id_categoria, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome'),
     supabase.from('produtos').select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual').eq('id_usuario', userId).order('nome'),
     supabase.from('zelomenu_product_publications').select('id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem').eq('id_usuario', userId).order('ordem').limit(2000),
-    supabase.from('zelomenu_modifier_groups').select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, permite_quantidade, maximo_por_opcao, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(4000),
+    supabase.from('zelomenu_modifier_groups').select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, minimo_total_quantidade, maximo_total_quantidade, permite_quantidade, maximo_por_opcao, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(4000),
     supabase.from('zelomenu_modifier_options').select('id, id_grupo, nome, price_delta, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(8000),
     supabase.from('zelomenu_modifier_option_products').select('id_opcao, id_produto, price_override').eq('id_usuario', userId).limit(4000),
   ]);

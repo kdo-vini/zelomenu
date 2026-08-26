@@ -2,6 +2,14 @@
 
 Data: 2026-07-22
 
+> Atualização 2026-08-26: o limite total de unidades passou a fazer parte do
+> contrato implementado. A migration
+> `supabase/migrations/20260826115934_modifier_total_quantity_limits.sql`
+> adiciona `minimo_total_quantidade` e `maximo_total_quantidade`; esses campos
+> complementam, sem alterar, os limites de opções distintas descritos abaixo.
+> A seção “Fora de escopo” sobre soma de quantidades está supersedida por essa
+> decisão.
+
 Este documento é o contrato de implementação. As decisões de escopo já foram
 aprovadas; o que resta é código. Onde o brainstorming original deixava uma
 lacuna, este documento fecha a lacuna e marca a decisão em **Ambiguidades

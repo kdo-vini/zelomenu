@@ -97,7 +97,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .limit(CATALOG_PUBLICATION_LIMIT),
         supabase
           .from('zelomenu_modifier_groups')
-          .select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, permite_quantidade, maximo_por_opcao, ativo, ordem')
+          .select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, minimo_total_quantidade, maximo_total_quantidade, permite_quantidade, maximo_por_opcao, ativo, ordem')
           .eq('id_usuario', userId)
           .order('ordem')
           .limit(CATALOG_MODIFIER_GROUP_LIMIT),

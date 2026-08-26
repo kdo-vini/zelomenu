@@ -119,6 +119,7 @@ app.post('/api/public/zelomenu/store/:slug/cart', generalPublicLimiter, async (r
     if (message === 'PRODUCT_UNAVAILABLE') return res.status(400).json({ error: 'PRODUCT_UNAVAILABLE' });
     if (message === 'PRODUCT_STOCK_EXCEEDED' || message.startsWith('PRODUCT_STOCK_EXCEEDED:')) return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
+    if (message === 'MODIFIER_QUANTITY_INVALID') return res.status(400).json({ error: 'MODIFIER_QUANTITY_INVALID', detail: 'A quantidade de complemento precisa ser um número inteiro positivo.' });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
     if (message === 'MISSING_TABLE_CONTEXT') return res.status(400).json({ error: 'MISSING_TABLE_CONTEXT' });
     if (message === 'COMANDA_CLOSED') return res.status(409).json({ error: 'COMANDA_CLOSED' });
@@ -161,6 +162,7 @@ app.patch('/api/public/zelomenu/cart/:token', cartTokenLimiter, async (req, res)
     if (message === 'PRODUCT_STOCK_EXCEEDED' || message.startsWith('PRODUCT_STOCK_EXCEEDED:')) return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
     if (message === 'INVALID_QUANTITY' || message === 'CART_LINE_LIMIT_EXCEEDED' || message === 'ORDER_TOTAL_LIMIT_EXCEEDED') return res.status(400).json({ error: message, requestId: res.locals.requestId });
+    if (message === 'MODIFIER_QUANTITY_INVALID') return res.status(400).json({ error: 'MODIFIER_QUANTITY_INVALID', detail: 'A quantidade de complemento precisa ser um número inteiro positivo.', requestId: res.locals.requestId });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
     if (message === 'COUPON_INVALID') return res.status(400).json({ error: 'COUPON_INVALID' });
     if (message === 'COUPON_EXPIRED') return res.status(400).json({ error: 'COUPON_EXPIRED' });

@@ -144,6 +144,8 @@ export function normalizeModifierGroupRow(
     pricingMode: row.modo_preco === 'substituir' ? 'substituir' : 'somar',
     minSelections: Math.max(0, Number(row.min_selecoes ?? 0)),
     maxSelections: row.max_selecoes == null ? null : Math.max(1, Number(row.max_selecoes)),
+    minTotalQuantity: Math.max(0, Number(row.minimo_total_quantidade ?? 0)),
+    maxTotalQuantity: row.maximo_total_quantidade == null ? null : Math.max(0, Number(row.maximo_total_quantidade)),
     allowsQuantity: row.permite_quantidade === true,
     maxPerOption: row.maximo_por_opcao == null ? null : Math.max(1, Number(row.maximo_por_opcao)),
     active: row.ativo !== false,
