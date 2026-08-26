@@ -82,7 +82,6 @@ export function ProductModal({
   const [precoStr, setPrecoStr] = useState('');
   const [idCategoria, setIdCategoria] = useState<number | ''>('');
   const [idSubcategoria, setIdSubcategoria] = useState<number | ''>('');
-  const [ocultar, setOcultar] = useState(false);
   const [groupsDraft, setGroupsDraft] = useState<ZeloMenuModifierGroupDraft[]>([]);
   const [visivelOnline, setVisivelOnline] = useState(false);
   const [nomePublico, setNomePublico] = useState('');
@@ -118,7 +117,6 @@ export function ProductModal({
     setPrecoStr(initial ? formatPrecoInput(initial.preco) : '');
     setIdCategoria(initial?.id_categoria ?? defaultCategoriaId ?? '');
     setIdSubcategoria(initial?.id_subcategoria ?? defaultSubcategoriaId ?? '');
-    setOcultar(initial?.ocultar_no_pdv ?? false);
     setGroupsDraft(toModifierDrafts(modifierGroups, modifierOptionProducts));
     setVisivelOnline(initialPublication?.visivel_online ?? false);
     setNomePublico(initialPublication?.nome_publico ?? '');
@@ -240,7 +238,6 @@ export function ProductModal({
             preco,
             id_categoria: idCategoria ? Number(idCategoria) : null,
             id_subcategoria: idSubcategoria ? Number(idSubcategoria) : null,
-            ocultar_no_pdv: ocultar,
           })
         : initial;
       const productId = savedProduct?.id ?? initial?.id;
@@ -386,15 +383,6 @@ export function ProductModal({
                 </label>
               </div>
 
-              <ToggleCard
-                checked={!ocultar}
-                title="Visível no PDV"
-                description="Desligue para ocultar este produto apenas no ZeloPDV. A publicação online é controlada separadamente."
-                onChange={(checked) => {
-                  setOcultar(!checked);
-                  setProductDirty(true);
-                }}
-              />
             </section>
 
             <section className="space-y-4 border-t border-[var(--color-line)] pt-6">

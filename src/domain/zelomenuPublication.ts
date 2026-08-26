@@ -105,6 +105,15 @@ export function getZeloMenuPublicationStatus(
     };
   }
 
+  if (product.publication.pausado_manualmente) {
+    return {
+      status: 'paused',
+      label: 'Pausado',
+      description: 'Produto pausado temporariamente no cardápio digital.',
+      issue: 'paused',
+    };
+  }
+
   if (product.id_categoria == null) {
     return {
       status: 'missing_category',

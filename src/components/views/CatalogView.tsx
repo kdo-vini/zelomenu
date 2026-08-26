@@ -11,6 +11,7 @@ import {
   MoreVertical,
   Pencil,
   PauseCircle,
+  PlayCircle,
   Plus,
   RefreshCw,
   Search,
@@ -76,7 +77,6 @@ interface Props {
     preco: number;
     id_categoria: number | null;
     id_subcategoria: number | null;
-    ocultar_no_pdv?: boolean;
   }) => Promise<ProdutoRow>;
   updateProduto: (
     id: number,
@@ -85,7 +85,6 @@ interface Props {
       preco?: number;
       id_categoria?: number | null;
       id_subcategoria?: number | null;
-      ocultar_no_pdv?: boolean;
     },
   ) => Promise<void>;
   deleteProduto: (id: number) => Promise<void>;
@@ -168,10 +167,9 @@ export const CatalogView = ({
   const [statusFilter, setStatusFilter] = useState<ZeloMenuPublicationStatus | null>(null);
   const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>('all');
   const [undoAction, setUndoAction] = useState<{
-    type: 'published' | 'paused' | 'resumed' | 'availability';
+    type: 'published' | 'paused' | 'resumed';
     changedIds: number[];
-    previousStates: Record<number, { visivel_online: boolean }>;
-    previousAvailability?: Record<number, boolean>;
+    previousStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }>;
     message: string;
   } | null>(null);
   const actionTokenRef = useRef(0);
@@ -199,12 +197,10 @@ export const CatalogView = ({
             parent: {
               controlar_estoque: container.controlar_estoque,
               estoque_atual: container.estoque_atual,
-              ocultar_no_pdv: container.ocultar_no_pdv,
             },
             linked: {
               controlar_estoque: linkedProduct.controlar_estoque,
               estoque_atual: linkedProduct.estoque_atual,
-              ocultar_no_pdv: linkedProduct.ocultar_no_pdv,
             },
             groupActive: group.active,
             optionActive: option.active,
@@ -318,10 +314,13 @@ export const CatalogView = ({
     });
     if (ids.length === 0) return;
 
-    const prevStates: Record<number, { visivel_online: boolean }> = {};
+    const prevStates: Record<number, { visivel_online: boolean; pausado_manualmente: boolean }> = {};
     for (const id of ids) {
       const pub = productPublications[id];
-      prevStates[id] = { visivel_online: pub?.visivel_online ?? false };
+      prevStates[id] = {
+        visivel_online: pub?.visivel_online ?? false,
+        pausado_manualmente: pub?.pausado_manualmente ?? false,
+      };
     }
 
     const actionToken = ++actionTokenRef.current;
@@ -329,7 +328,7 @@ export const CatalogView = ({
     const failed: Array<{ productId: number; reason: string }> = [];
     for (const id of ids) {
       try {
-        await upsertProductPublication(id, { visivel_online: true });
+        await upsertProductPublication(id, { visivel_online: true, pausado_manualmente: false });
         changed++;
       } catch (e) {
         failed.push({ productId: id, reason: getFriendlyErrorMessage(e) || 'Não foi possível publicar.' });
@@ -368,20 +367,6 @@ export const CatalogView = ({
     const token = ++actionTokenRef.current;
     setUndoAction(null);
     setBulkFeedback(null);
-
-    if (undoAction.type === 'availability') {
-      const id = undoAction.changedIds[0];
-      const previous = undoAction.previousAvailability?.[id];
-      if (id != null && previous != null) {
-        try {
-          await updateProduto(id, { ocultar_no_pdv: previous });
-          setBulkFeedback({ tone: 'success', message: 'Disponibilidade restaurada.' });
-        } catch (error) {
-          setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(error) || 'Não foi possível desfazer.' });
-        }
-      }
-      return;
-    }
 
     let undoneCount = 0;
     const failed: Array<{ productId: number; reason: string }> = [];
@@ -454,27 +439,37 @@ export const CatalogView = ({
     }
   };
 
-  const handleProductAvailabilityToggle = async (produto: ProdutoRow) => {
+  const handleProductPublicationToggle = async (produto: ProdutoRow) => {
     setBulkFeedback(null);
+    setUndoAction(null);
+    const publication = productPublications[produto.id];
+    const previousState = {
+      visivel_online: publication?.visivel_online ?? false,
+      pausado_manualmente: publication?.pausado_manualmente ?? false,
+    };
+    const shouldPublish = !previousState.visivel_online;
+    const shouldResume = previousState.visivel_online && previousState.pausado_manualmente;
+    const nextState = shouldPublish
+      ? { visivel_online: true, pausado_manualmente: false }
+      : { pausado_manualmente: !shouldResume };
+    const actionType = shouldPublish ? 'published' : shouldResume ? 'resumed' : 'paused';
+    const message = shouldPublish
+      ? `${produto.nome} publicado no cardápio.`
+      : shouldResume
+        ? `${produto.nome} retomado no cardápio.`
+        : `${produto.nome} pausado no cardápio.`;
+
     try {
-      await updateProduto(produto.id, { ocultar_no_pdv: !produto.ocultar_no_pdv });
+      await upsertProductPublication(produto.id, nextState);
       setUndoAction({
-        type: 'availability',
+        type: actionType,
         changedIds: [produto.id],
-        previousStates: {},
-        previousAvailability: { [produto.id]: produto.ocultar_no_pdv },
-        message: produto.ocultar_no_pdv
-          ? `${produto.nome} reativado no PDV.`
-          : `${produto.nome} ocultado no PDV.`,
+        previousStates: { [produto.id]: previousState },
+        message,
       });
-      setBulkFeedback({
-        tone: 'success',
-        message: produto.ocultar_no_pdv
-          ? `${produto.nome} reativado no PDV.`
-          : `${produto.nome} ocultado no PDV.`,
-      });
+      setBulkFeedback({ tone: 'success', message });
     } catch (toggleError) {
-      setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(toggleError) || 'Não foi possível atualizar a disponibilidade.' });
+      setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(toggleError) || 'Não foi possível atualizar a publicação.' });
     }
   };
 
@@ -486,7 +481,6 @@ export const CatalogView = ({
       preco,
       id_categoria: null,
       id_subcategoria: null,
-      ocultar_no_pdv: false,
     });
     await upsertProductPublication(created.id, { visivel_online: false });
     return created;
@@ -523,7 +517,7 @@ export const CatalogView = ({
       key={produto.id}
       produto={produto}
       componentUsages={componentUsages[produto.id]}
-      onToggleAvailability={() => void handleProductAvailabilityToggle(produto)}
+      onTogglePublication={() => void handleProductPublicationToggle(produto)}
       selectionMode={bulk.selectionMode}
       selected={bulk.isSelected(produto.id)}
       onToggleSelected={() => {
@@ -851,7 +845,7 @@ export const CatalogView = ({
                     setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
                   }
                   componentUsages={componentUsages}
-                  onToggleProductAvailability={handleProductAvailabilityToggle}
+                  onToggleProductPublication={handleProductPublicationToggle}
                   onDeleteProduto={requestDeleteProduct}
                   productPublications={productPublications}
                   onConfigurePublication={(p) => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
@@ -906,7 +900,7 @@ export const CatalogView = ({
                     setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria })
                   }
                   componentUsages={componentUsages}
-                  onToggleProductAvailability={handleProductAvailabilityToggle}
+                  onToggleProductPublication={handleProductPublicationToggle}
                   onDeleteProduto={requestDeleteProduct}
                   productPublications={productPublications}
                   onConfigurePublication={(p) => setModal({ kind: 'produto', initial: p, defaultCategoriaId: p.id_categoria, defaultSubcategoriaId: p.id_subcategoria, initialTab: 'publicacao' })}
@@ -948,7 +942,7 @@ export const CatalogView = ({
                         key={p.id}
                         produto={p}
                         componentUsages={componentUsages[p.id]}
-                        onToggleAvailability={() => void handleProductAvailabilityToggle(p)}
+                        onTogglePublication={() => void handleProductPublicationToggle(p)}
                         selectionMode={bulk.selectionMode}
                         selected={bulk.isSelected(p.id)}
                         onToggleSelected={() => {
@@ -971,7 +965,7 @@ export const CatalogView = ({
                           key={p.id}
                           produto={p}
                           componentUsages={componentUsages[p.id]}
-                          onToggleAvailability={() => void handleProductAvailabilityToggle(p)}
+                          onTogglePublication={() => void handleProductPublicationToggle(p)}
                           selectionMode={bulk.selectionMode}
                           selected={bulk.isSelected(p.id)}
                           onToggleSelected={() => {
@@ -1284,7 +1278,7 @@ type CategoriaCardProps = {
   onToggleProdutoSelection: (id: number) => void;
   onEditProduto: (p: ProdutoRow) => void;
   componentUsages: Record<number, ComponentUsage[]>;
-  onToggleProductAvailability: (p: ProdutoRow) => void;
+  onToggleProductPublication: (p: ProdutoRow) => void;
   onDeleteProduto: (p: ProdutoRow) => void;
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
   onConfigurePublication: (p: ProdutoRow) => void;
@@ -1313,7 +1307,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
   onToggleProdutoSelection,
   onEditProduto,
   componentUsages,
-  onToggleProductAvailability,
+  onToggleProductPublication,
   onDeleteProduto,
   productPublications,
   onConfigurePublication,
@@ -1391,7 +1385,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                   <ProdutoRowItem
                     produto={p}
                     componentUsages={componentUsages[p.id]}
-                    onToggleAvailability={() => onToggleProductAvailability(p)}
+                    onTogglePublication={() => onToggleProductPublication(p)}
                     publication={productPublications[p.id] ?? null}
                     onEdit={() => onEditProduto(p)}
                     onDelete={() => onDeleteProduto(p)}
@@ -1405,7 +1399,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
               <ProdutoRowItem
                 produto={p}
                 componentUsages={componentUsages[p.id]}
-                onToggleAvailability={() => onToggleProductAvailability(p)}
+                onTogglePublication={() => onToggleProductPublication(p)}
                 selectionMode={selectionMode}
                 selected={selectedIds.has(p.id)}
                 onToggleSelected={() => onToggleProdutoSelection(p.id)}
@@ -1466,7 +1460,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                   <ProdutoRowItem
                     produto={p}
                     componentUsages={componentUsages[p.id]}
-                    onToggleAvailability={() => onToggleProductAvailability(p)}
+                    onTogglePublication={() => onToggleProductPublication(p)}
                     publication={productPublications[p.id] ?? null}
                     onEdit={() => onEditProduto(p)}
                     onDelete={() => onDeleteProduto(p)}
@@ -1481,7 +1475,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
                       key={p.id}
                       produto={p}
                       componentUsages={componentUsages[p.id]}
-                      onToggleAvailability={() => onToggleProductAvailability(p)}
+                      onTogglePublication={() => onToggleProductPublication(p)}
                       selectionMode={selectionMode}
                       selected={selectedIds.has(p.id)}
                       onToggleSelected={() => onToggleProdutoSelection(p.id)}
@@ -1522,7 +1516,7 @@ const CategoriaCard: React.FC<CategoriaCardProps> = ({
 type ProdutoRowItemProps = {
   produto: ProdutoRow;
   componentUsages?: ComponentUsage[];
-  onToggleAvailability?: () => void;
+  onTogglePublication?: () => void;
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelected?: () => void;
@@ -1535,7 +1529,7 @@ type ProdutoRowItemProps = {
 const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
   produto,
   componentUsages,
-  onToggleAvailability,
+  onTogglePublication,
   selectionMode = false,
   selected = false,
   onToggleSelected,
@@ -1634,11 +1628,15 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
         <ActionsMenu
           label={produto.nome}
           actions={[
-            ...(onToggleAvailability
+            ...(onTogglePublication
               ? [{
-                  label: produto.ocultar_no_pdv ? 'Reativar no PDV' : 'Ocultar no PDV',
-                  icon: produto.ocultar_no_pdv ? <CircleCheck className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
-                  onSelect: onToggleAvailability,
+                  label: publication?.visivel_online
+                    ? publication.pausado_manualmente ? 'Retomar no cardápio' : 'Pausar no cardápio'
+                    : 'Publicar no cardápio',
+                  icon: publication?.visivel_online
+                    ? publication.pausado_manualmente ? <PlayCircle className="h-4 w-4" /> : <PauseCircle className="h-4 w-4" />
+                    : <Globe2 className="h-4 w-4" />,
+                  onSelect: onTogglePublication,
                 }]
               : []),
             { label: 'Editar produto', icon: <Pencil className="h-4 w-4" />, onSelect: onEdit },

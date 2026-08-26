@@ -71,4 +71,27 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
       },
     })).toMatchObject({ status: 'published', label: 'Publicado' });
   });
+
+  it('reports a published product as paused when menu pause is enabled', () => {
+    expect(getZeloMenuPublicationStatus({
+      id: 851,
+      nome: 'Bife acebolado',
+      id_categoria: 106,
+      controlar_estoque: false,
+      estoque_atual: 0,
+      ocultar_no_pdv: false,
+      publication: {
+        id_produto: 851,
+        nome_publico: null,
+        descricao_publica: null,
+        foto_url: null,
+        visivel_online: true,
+        pausado_manualmente: true,
+        ordem: 0,
+      },
+    })).toMatchObject({
+      status: 'paused',
+      label: 'Pausado',
+    });
+  });
 });

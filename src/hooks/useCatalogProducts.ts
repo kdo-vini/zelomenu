@@ -106,6 +106,7 @@ export function useCatalogProducts(
       descricao_publica: nextText('descricao_publica'),
       foto_url: nextText('foto_url'),
       visivel_online: patch.visivel_online ?? current?.visivel_online ?? false,
+      pausado_manualmente: patch.pausado_manualmente ?? current?.pausado_manualmente ?? false,
       ordem: Math.max(0, Math.trunc(patch.ordem ?? current?.ordem ?? 0)),
       updated_at: new Date().toISOString(),
     };
@@ -113,7 +114,7 @@ export function useCatalogProducts(
     const { data: row, error: dbError } = await supabase
       .from('zelomenu_product_publications')
       .upsert(payload, { onConflict: 'id_usuario,id_produto' })
-      .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, ordem')
+      .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem')
       .single();
     if (dbError) throw dbError;
 
@@ -156,6 +157,7 @@ export function useCatalogProducts(
           descricao_publica: current?.descricao_publica ?? null,
           foto_url: current?.foto_url ?? null,
           visivel_online: current?.visivel_online ?? false,
+          pausado_manualmente: current?.pausado_manualmente ?? false,
           ordem,
           updated_at: new Date().toISOString(),
         };
@@ -163,7 +165,7 @@ export function useCatalogProducts(
       const { data: rows, error: dbError } = await supabase
         .from('zelomenu_product_publications')
         .upsert(payload, { onConflict: 'id_usuario,id_produto' })
-        .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, ordem');
+        .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem');
       if (dbError) throw dbError;
       const saved = { ...optimistic };
       for (const row of rows ?? []) {
