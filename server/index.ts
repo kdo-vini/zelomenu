@@ -18,6 +18,8 @@ import { listBusinesses } from './zelomenuBusinessDirectory.js';
 import { removePublicPushSubscription, savePublicPushSubscription, startOrderStatusPushDispatcher, type PublicPushSubscriptionPayload } from './zelomenuPushSubscriptions.js';
 import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
+import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
+import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -77,6 +79,53 @@ const cepLookupLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'TOO_MANY_REQUESTS', detail: 'Muitas consultas de CEP. Tente novamente em instantes.' },
+});
+
+const internalCatalogSearchLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({
+    error: 'MUITAS_REQUISICOES',
+    detail: 'Muitas consultas em pouco tempo. Tente novamente em instantes.',
+    requestId: res.locals.requestId,
+  }),
+});
+
+// ─── Internal catalog discovery (ZeloChat) ───────────────────────────────────
+
+app.post('/internal/catalog/search', internalCatalogSearchLimiter, async (req, res) => {
+  if (!hasValidInternalCatalogKey(req.header('x-zelo-internal-key'))) {
+    return res.status(401).json({
+      error: 'NAO_AUTORIZADO',
+      detail: 'Não foi possível autorizar esta consulta.',
+      requestId: res.locals.requestId,
+    });
+  }
+
+  const parsed = parseInternalCatalogSearchRequest(req.body);
+  if (!parsed.ok) {
+    return res.status(400).json({
+      error: 'CONSULTA_INVALIDA',
+      detail: parsed.message,
+      requestId: res.locals.requestId,
+    });
+  }
+
+  try {
+    const result = await CatalogDiscovery.search(parsed.value);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(result);
+  } catch (error) {
+    // Do not log request headers/body: both can contain the internal key.
+    console.error('[ZeloMenu] internal catalog search error:', error);
+    return res.status(500).json({
+      error: 'CONSULTA_INDISPONIVEL',
+      detail: 'Não foi possível consultar o cardápio agora. Tente novamente em instantes.',
+      requestId: res.locals.requestId,
+    });
+  }
 });
 
 // ─── Public store by slug ─────────────────────────────────────────────────────

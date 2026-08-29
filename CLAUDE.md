@@ -111,7 +111,22 @@ Optional:
 ```
 PORT=3101
 OPENAI_API_KEY=   # for AI-generated descriptions/welcome text
+ZELO_INTERNAL_API_KEY= # server-only key for internal catalog discovery
 ```
+
+### Descoberta interna de catálogo
+
+`POST /internal/catalog/search` atende a integração interna do ZeloChat. Exige
+`x-zelo-internal-key` igual a `ZELO_INTERNAL_API_KEY`; sem uma chave configurada
+ou válida, falha fechada. O corpo é `{ empresaId, query, limit? }` e a resposta
+traz no máximo 12 candidatos com produto-pai, categoria, preço vigente,
+complementos válidos e motivo/confiança do match. Todos os erros incluem
+`requestId` e usam texto seguro para consumo.
+
+A descoberta consome apenas `catalogHierarchy`, a projeção pública canônica de
+`configStore`: publicação online, pausa manual, estoque e grupos obrigatórios já
+foram resolvidos ali. `ocultar_no_pdv` nunca entra nessa decisão. Resultados de
+grupo ou opção preservam o produto-pai; opções não são itens avulsos.
 
 ## Important Conventions
 
