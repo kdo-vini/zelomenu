@@ -1,22 +1,26 @@
 import { createServer } from 'node:http';
 import express, { type Express } from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createInternalCatalogCoarseLimiter } from './internalCatalogRateLimit';
+import { createInternalCatalogFailureLimiter, type InternalCatalogFailureLimiterOptions } from './internalCatalogRateLimit';
 
 type RunningServer = { app: Express; server: ReturnType<typeof createServer>; baseUrl: string };
 const runningServers: RunningServer[] = [];
 
-async function startServer(): Promise<RunningServer> {
+async function startServer(options?: InternalCatalogFailureLimiterOptions): Promise<RunningServer> {
   const app = express();
   app.use((req, res, next) => {
     res.locals.requestId = req.header('x-request-id') ?? 'generated-request-id';
     next();
   });
-  app.use('/internal/catalog/search', createInternalCatalogCoarseLimiter());
+  app.use('/internal/catalog/search', createInternalCatalogFailureLimiter(options));
   app.use(express.json({ limit: '1kb' }));
   app.post('/internal/catalog/search', (req, res) => {
-    if (req.header('x-test-fail') === 'true') return res.status(401).json({ error: 'NAO_AUTORIZADO', requestId: res.locals.requestId });
-    return res.status(200).json({ ok: true });
+    const respond = () => {
+      if (req.header('x-test-fail') === 'true') return res.status(401).json({ error: 'NAO_AUTORIZADO', requestId: res.locals.requestId });
+      return res.status(200).json({ ok: true });
+    };
+    if (req.header('x-test-delay') === 'true') return setTimeout(respond, 30);
+    return respond();
   });
   app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
     const status = typeof error === 'object' && error !== null && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
@@ -45,19 +49,18 @@ async function post(running: RunningServer, body: string, headers: Record<string
   });
 }
 
-describe('createInternalCatalogCoarseLimiter', () => {
-  it('não consome a quota coarse com mais de trinta respostas 2xx de empresas no mesmo IP', async () => {
+describe('createInternalCatalogFailureLimiter', () => {
+  it('não reserva quota coarse para mais de trinta respostas 2xx simultâneas e atrasadas do mesmo IP', async () => {
     const running = await startServer();
 
-    const statuses = [] as number[];
-    for (let index = 0; index < 35; index += 1) {
-      statuses.push((await post(running, JSON.stringify({ empresaId: index % 2 === 0 ? 'empresa-a' : 'empresa-b' }))).status);
-    }
+    const statuses = await Promise.all(Array.from({ length: 35 }, async (_value, index) => (
+      (await post(running, JSON.stringify({ empresaId: index % 2 === 0 ? 'empresa-a' : 'empresa-b' }), { 'x-test-delay': 'true' })).status
+    )));
 
     expect(statuses).toEqual(Array(35).fill(200));
   });
 
-  it('conta falhas antes do parser: chave inválida, JSON inválido e payload grande recebem 429 após o limite', async () => {
+  it('acumula falhas antes do parser e bloqueia a trigésima primeira com requestId', async () => {
     const running = await startServer();
 
     const statuses = [] as number[];
@@ -66,10 +69,21 @@ describe('createInternalCatalogCoarseLimiter', () => {
     }
     statuses.push((await post(running, '{', { 'x-request-id': 'invalid-json' })).status);
     statuses.push((await post(running, JSON.stringify({ fill: 'x'.repeat(2_000) }), { 'x-request-id': 'large-payload' })).status);
-    statuses.push((await post(running, '{}', { 'x-test-fail': 'true', 'x-request-id': 'throttled' })).status);
+    const throttled = await post(running, '{}', { 'x-test-fail': 'true', 'x-request-id': 'throttled' });
 
     expect(statuses.slice(0, 28)).toEqual(Array(28).fill(401));
     expect(statuses.slice(28, 30)).toEqual([400, 413]);
-    expect(statuses[30]).toBe(429);
+    expect(throttled.status).toBe(429);
+    await expect(throttled.json()).resolves.toMatchObject({ error: 'MUITAS_REQUISICOES', requestId: 'throttled' });
+  });
+
+  it('expira as falhas da janela sem manter bloqueio indefinidamente', async () => {
+    let now = 1_000;
+    const running = await startServer({ maxFailures: 1, windowMs: 100, now: () => now });
+
+    expect((await post(running, '{}', { 'x-test-fail': 'true' })).status).toBe(401);
+    expect((await post(running, '{}', { 'x-test-fail': 'true' })).status).toBe(429);
+    now += 101;
+    expect((await post(running, '{}', { 'x-test-fail': 'true' })).status).toBe(401);
   });
 });
