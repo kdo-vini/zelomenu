@@ -20,7 +20,7 @@ import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
 import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
-import { makeCoarseInternalCatalogRateLimitKey, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
+import { createInternalCatalogCoarseLimiter, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 import type { Request } from 'express';
 
@@ -32,6 +32,7 @@ const corsOrigins = (process.env.CORS_ORIGINS ?? '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+const internalCatalogCoarseLimiter = createInternalCatalogCoarseLimiter();
 
 app.use((req, res, next) => {
   const requestId = req.header('x-request-id')?.slice(0, 100) || randomUUID();
@@ -39,6 +40,10 @@ app.use((req, res, next) => {
   res.setHeader('x-request-id', requestId);
   next();
 });
+
+// This route-specific guard intentionally runs before JSON parsing. Invalid
+// bodies and oversized requests must be counted without affecting other APIs.
+app.use('/internal/catalog/search', internalCatalogCoarseLimiter);
 
 // Production is same-origin by default. Separate frontend origins must be
 // explicitly allowlisted instead of inheriting a wildcard CORS policy.
@@ -109,19 +114,6 @@ const internalCatalogSearchLimiter = rateLimit({
   }),
 });
 
-const internalCatalogCoarseLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => makeCoarseInternalCatalogRateLimitKey(ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown')),
-  handler: (_req, res) => res.status(429).json({
-    error: 'MUITAS_REQUISICOES',
-    detail: 'Muitas tentativas em pouco tempo. Tente novamente em instantes.',
-    requestId: res.locals.requestId,
-  }),
-});
-
 // ─── Internal catalog discovery (ZeloChat) ───────────────────────────────────
 
 async function executeInternalCatalogSearch(_req: Request, res: Response, parsed: Extract<ReturnType<typeof parseInternalCatalogSearchRequest>, { ok: true }>): Promise<void> {
@@ -140,7 +132,7 @@ async function executeInternalCatalogSearch(_req: Request, res: Response, parsed
   }
 }
 
-app.post('/internal/catalog/search', internalCatalogCoarseLimiter, async (req, res) => {
+app.post('/internal/catalog/search', async (req, res) => {
   if (!hasValidInternalCatalogKey(req.header('x-zelo-internal-key'))) {
     return res.status(401).json({
       error: 'NAO_AUTORIZADO',
