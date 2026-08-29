@@ -11,3 +11,4 @@ skills-lock.json
 supabase/.temp/
 test-results/
 playwright-report/
+.worktrees/
