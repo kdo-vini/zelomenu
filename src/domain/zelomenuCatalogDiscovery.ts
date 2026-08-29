@@ -173,9 +173,9 @@ function bestScore(fields: Array<{ value: string | null | undefined; reason: str
     for (const field of fields) {
       const fieldScore = scoreField(field.value, term.term);
       if (fieldScore === 0) continue;
-      const score = term.reason.startsWith('alias_') ? Math.max(fieldScore, 100) : fieldScore;
+      const score = fieldScore;
       const reason = term.reason.startsWith('alias_') ? term.reason : field.reason;
-      if (!best || score > best.score || (score === best.score && reason.localeCompare(best.reason, 'pt-BR') < 0)) best = { score, reason };
+      if (!best || score > best.score) best = { score, reason };
     }
   }
   return best;
@@ -269,7 +269,15 @@ export function searchCatalogDiscovery({ empresaId, query, limit, catalog }: Cat
   const semanticSenses = new Set<string>();
   for (const [productId, productCandidates] of candidatesByProduct) {
     const optionIds = new Set(productCandidates.filter((candidate) => candidate.entityType === 'modifier_option').map((candidate) => candidate.optionId));
-    if (optionIds.size > 1) {
+    const hasDirectProductMatch = productCandidates.some((candidate) => (
+      candidate.entityType === 'product'
+      && candidate.matchReason !== 'nome_do_grupo'
+      && candidate.matchReason !== 'nome_da_opcao'
+    ));
+    if (hasDirectProductMatch && optionIds.size > 0) {
+      semanticSenses.add(`product:${productId}`);
+      for (const optionId of optionIds) semanticSenses.add(`option:${productId}:${optionId}`);
+    } else if (optionIds.size > 1) {
       for (const optionId of optionIds) semanticSenses.add(`option:${productId}:${optionId}`);
     } else {
       semanticSenses.add(`product:${productId}`);

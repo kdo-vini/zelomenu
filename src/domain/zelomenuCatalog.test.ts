@@ -52,6 +52,23 @@ describe('catalog canonical product rules', () => {
     expect(result).toMatchObject({ available: false, state: 'blocked_by_required_options' });
   });
 
+  it('hides a parent when maxSelections limits the quantity capacity below the required total', () => {
+    const result = resolveCatalogProductAvailability(
+      { controlar_estoque: false, estoque_atual: 0 },
+      [{
+        id: 'selection-cap', productId: 10, name: 'Monte o prato', kind: 'adicional', pricingMode: 'somar',
+        minSelections: 0, maxSelections: 2, minTotalQuantity: 5, maxTotalQuantity: null, allowsQuantity: true, maxPerOption: 2, active: true, order: 0,
+        options: [
+          { id: 'rice', name: 'Arroz', priceDelta: 0, active: true, order: 0 },
+          { id: 'beans', name: 'Feijão', priceDelta: 0, active: true, order: 1 },
+          { id: 'salad', name: 'Salada', priceDelta: 0, active: true, order: 2 },
+        ],
+      }],
+    );
+
+    expect(result).toMatchObject({ available: false, state: 'blocked_by_required_options' });
+  });
+
   it('keeps optional groups from hiding the parent', () => {
     const result = resolveCatalogProductAvailability(
       { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 },

@@ -55,8 +55,12 @@ export function isRequiredModifierGroupSatisfiable(group: ZeloMenuModifierGroup)
 
   const availableOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false);
   if (availableOptions.length < requiredDistinct) return false;
+  const allowedDistinctOptions = group.maxSelections == null
+    ? availableOptions.length
+    : Math.min(availableOptions.length, Math.max(0, group.maxSelections));
+  if (allowedDistinctOptions < requiredDistinct) return false;
   const perOptionCapacity = group.allowsQuantity ? group.maxPerOption ?? Number.MAX_SAFE_INTEGER : 1;
-  const optionsCapacity = availableOptions.reduce((total, _option) => Math.min(Number.MAX_SAFE_INTEGER, total + perOptionCapacity), 0);
+  const optionsCapacity = Math.min(Number.MAX_SAFE_INTEGER, allowedDistinctOptions * perOptionCapacity);
   const totalCapacity = Math.min(optionsCapacity, group.maxTotalQuantity ?? Number.MAX_SAFE_INTEGER);
   return totalCapacity >= requiredTotal;
 }

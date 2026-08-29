@@ -20,7 +20,7 @@ import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
 import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
-import { makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
+import { makeCoarseInternalCatalogRateLimitKey, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 import type { Request } from 'express';
 
@@ -109,6 +109,19 @@ const internalCatalogSearchLimiter = rateLimit({
   }),
 });
 
+const internalCatalogCoarseLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => makeCoarseInternalCatalogRateLimitKey(ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown')),
+  handler: (_req, res) => res.status(429).json({
+    error: 'MUITAS_REQUISICOES',
+    detail: 'Muitas tentativas em pouco tempo. Tente novamente em instantes.',
+    requestId: res.locals.requestId,
+  }),
+});
+
 // ─── Internal catalog discovery (ZeloChat) ───────────────────────────────────
 
 async function executeInternalCatalogSearch(_req: Request, res: Response, parsed: Extract<ReturnType<typeof parseInternalCatalogSearchRequest>, { ok: true }>): Promise<void> {
@@ -127,7 +140,7 @@ async function executeInternalCatalogSearch(_req: Request, res: Response, parsed
   }
 }
 
-app.post('/internal/catalog/search', async (req, res) => {
+app.post('/internal/catalog/search', internalCatalogCoarseLimiter, async (req, res) => {
   if (!hasValidInternalCatalogKey(req.header('x-zelo-internal-key'))) {
     return res.status(401).json({
       error: 'NAO_AUTORIZADO',

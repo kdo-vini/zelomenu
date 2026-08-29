@@ -105,9 +105,24 @@ describe('searchCatalogDiscovery', () => {
 
     const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'oq tem de mistura hoje', catalog: catalogWithDistractors });
 
-    expect(result.results[0]).toMatchObject({ productId: 10, publicName: 'Marmita do dia', confidence: 1 });
+    expect(result.results[0]).toMatchObject({ productId: 10, publicName: 'Marmita do dia', confidence: 0.95 });
     expect(result.results.filter((candidate) => candidate.productId === 50 || candidate.productId === 51)
       .every((candidate) => candidate.confidence < 1)).toBe(true);
+  });
+
+  it('prioriza Marmita do dia exata sobre outra marmita ao expandir o cardápio de hoje', () => {
+    const marmitaAliasCatalog: CatalogCategoriaGroup[] = [{
+      nome: 'Marmitas',
+      produtosDireto: [
+        product({ id: 80, name: 'Marmita de frango' }),
+        product({ id: 81, name: 'Marmita do dia' }),
+      ],
+      subcategorias: [],
+    }];
+
+    const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'cardápio de hoje', catalog: marmitaAliasCatalog });
+
+    expect(result.results[0]).toMatchObject({ productId: 81, publicName: 'Marmita do dia', matchReason: 'alias_marmita_do_dia' });
   });
 
   it('mantém o vínculo com o produto-pai ao encontrar uma opção', () => {
@@ -157,6 +172,29 @@ describe('searchCatalogDiscovery', () => {
     const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'bife acebolado', catalog });
 
     expect(result.ambiguous).toBe(false);
+  });
+
+  it('mantém a ambiguidade quando o nome do produto e uma opção diferente casam de forma independente', () => {
+    const independentMeaningsCatalog: CatalogCategoriaGroup[] = [{
+      nome: 'Pratos',
+      produtosDireto: [product({
+        id: 66,
+        name: 'Frango especial',
+        modifierGroups: [{
+          id: 'protein-choice', productId: 66, name: 'Escolha a proteína', kind: 'variacao', pricingMode: 'somar',
+          minSelections: 1, maxSelections: 1, minTotalQuantity: 0, maxTotalQuantity: null, allowsQuantity: false, maxPerOption: null, active: true, order: 0,
+          options: [{ id: 'grilled-chicken', name: 'Frango grelhado', priceDelta: 0, active: true, order: 0 }],
+        }],
+      })],
+      subcategorias: [],
+    }];
+
+    const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'frango', catalog: independentMeaningsCatalog });
+    expect(result.results.map((candidate) => [candidate.entityType, candidate.matchReason])).toEqual(expect.arrayContaining([
+      ['product', 'nome_publico'],
+      ['modifier_option', 'nome_da_opcao'],
+    ]));
+    expect(result.ambiguous).toBe(true);
   });
 
   it('mantém a ambiguidade quando duas opções distintas do mesmo produto são sentidos plausíveis', () => {
