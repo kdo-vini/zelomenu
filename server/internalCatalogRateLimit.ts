@@ -1,5 +1,6 @@
 import { ipKeyGenerator } from 'express-rate-limit';
 import type { RequestHandler } from 'express';
+import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
 
 export function makeInternalCatalogRateLimitKey(empresaId: string, ip: string): string {
   return `${empresaId}:${ip}`;
@@ -13,17 +14,20 @@ export type InternalCatalogFailureLimiterOptions = {
   maxFailures?: number;
   windowMs?: number;
   now?: () => number;
+  isInternalKeyValid?: (provided: unknown) => boolean;
 };
 
 /**
- * Failure-only coarse guard. It never reserves quota while a valid request is
- * in flight: successful searches do not compete globally, even under bursts.
- * Failures are stored per origin only after the response status is final.
+ * Failure-only coarse guard. Invalid internal keys reserve a failure immediately
+ * so concurrent unauthorized requests cannot evade the limit. Valid requests
+ * only register a failure after their final status, so successful searches never
+ * compete globally, even under bursts.
  */
 export function createInternalCatalogFailureLimiter({
   maxFailures = 30,
   windowMs = 60_000,
   now = Date.now,
+  isInternalKeyValid = hasValidInternalCatalogKey,
 }: InternalCatalogFailureLimiterOptions = {}): RequestHandler {
   const failuresByKey = new Map<string, number[]>();
   let accessCount = 0;
@@ -46,12 +50,25 @@ export function createInternalCatalogFailureLimiter({
     const currentTime = now();
     cleanupExpired(currentTime);
     const key = makeCoarseInternalCatalogRateLimitKey(ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown'));
-    if (activeFailures(key, currentTime).length >= maxFailures) {
+    const failures = activeFailures(key, currentTime);
+    if (failures.length >= maxFailures) {
       res.status(429).json({
         error: 'MUITAS_REQUISICOES',
         detail: 'Muitas tentativas em pouco tempo. Tente novamente em instantes.',
         requestId: res.locals.requestId,
       });
+      return;
+    }
+
+    const keyIsValid = isInternalKeyValid(req.header('x-zelo-internal-key'));
+    res.locals.internalCatalogKeyValid = keyIsValid;
+    if (!keyIsValid) {
+      // Reserve atomically before the 401 handler runs. Concurrent invalid
+      // requests cannot all pass the check, and this branch never double-counts
+      // on finish.
+      failures.push(currentTime);
+      failuresByKey.set(key, failures);
+      next();
       return;
     }
 

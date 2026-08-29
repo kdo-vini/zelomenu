@@ -123,10 +123,11 @@ traz no máximo 12 candidatos com produto-pai, categoria, preço vigente,
 complementos válidos e motivo/confiança do match. Todos os erros incluem
 `requestId` e usam texto seguro para consumo.
 
-Há um guard failure-only por origem antes do parser JSON: ele consulta bloqueios
-existentes, mas só registra uma falha depois que a resposta termina com 4xx/5xx.
-Assim chaves e payloads inválidos são absorvidos sem reservar quota para buscas
-2xx em voo. O limite por empresa e origem continua depois da validação, para que
+Há um guard failure-only por origem antes do parser JSON: chave ausente ou
+inválida reserva a falha imediatamente, impedindo que tentativas concorrentes
+evitem o limite. Para chave válida, ele só registra 4xx/5xx depois que a resposta
+termina; buscas 2xx em voo não consomem quota global. O limite por empresa e
+origem continua depois da validação, para que
 uma única origem do ZeloChat não esgote a cota de outras empresas. O servidor
 instala `requestId` antes do parser JSON: JSON inválido ou grande demais também
 recebe resposta JSON segura e correlacionável.

@@ -19,7 +19,6 @@ import { removePublicPushSubscription, savePublicPushSubscription, startOrderSta
 import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
-import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
 import { createInternalCatalogFailureLimiter, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 import type { Request } from 'express';
@@ -133,7 +132,7 @@ async function executeInternalCatalogSearch(_req: Request, res: Response, parsed
 }
 
 app.post('/internal/catalog/search', async (req, res) => {
-  if (!hasValidInternalCatalogKey(req.header('x-zelo-internal-key'))) {
+  if (res.locals.internalCatalogKeyValid !== true) {
     return res.status(401).json({
       error: 'NAO_AUTORIZADO',
       detail: 'Não foi possível autorizar esta consulta.',

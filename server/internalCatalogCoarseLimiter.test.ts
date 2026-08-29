@@ -12,7 +12,10 @@ async function startServer(options?: InternalCatalogFailureLimiterOptions): Prom
     res.locals.requestId = req.header('x-request-id') ?? 'generated-request-id';
     next();
   });
-  app.use('/internal/catalog/search', createInternalCatalogFailureLimiter(options));
+  app.use('/internal/catalog/search', createInternalCatalogFailureLimiter({
+    ...options,
+    isInternalKeyValid: (provided) => provided === 'valid',
+  }));
   app.use(express.json({ limit: '1kb' }));
   app.post('/internal/catalog/search', (req, res) => {
     const respond = () => {
@@ -54,21 +57,34 @@ describe('createInternalCatalogFailureLimiter', () => {
     const running = await startServer();
 
     const statuses = await Promise.all(Array.from({ length: 35 }, async (_value, index) => (
-      (await post(running, JSON.stringify({ empresaId: index % 2 === 0 ? 'empresa-a' : 'empresa-b' }), { 'x-test-delay': 'true' })).status
+      (await post(running, JSON.stringify({ empresaId: index % 2 === 0 ? 'empresa-a' : 'empresa-b' }), { 'x-test-delay': 'true', 'x-zelo-internal-key': 'valid' })).status
     )));
 
     expect(statuses).toEqual(Array(35).fill(200));
   });
 
-  it('acumula falhas antes do parser e bloqueia a trigésima primeira com requestId', async () => {
+  it('reserva falhas de chave inválida imediatamente e bloqueia concorrência acima de trinta', async () => {
+    const running = await startServer();
+
+    const responses = await Promise.all(Array.from({ length: 35 }, async (_value, index) => (
+      post(running, '{}', { 'x-test-fail': 'true', 'x-test-delay': 'true', 'x-request-id': `invalid-concurrent-${index}` })
+    )));
+    const statuses = responses.map((response) => response.status);
+
+    expect(statuses.filter((status) => status === 401)).toHaveLength(30);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(5);
+    await expect(responses.find((response) => response.status === 429)?.json()).resolves.toMatchObject({ error: 'MUITAS_REQUISICOES' });
+  });
+
+  it('acumula erros autenticados no fim da resposta e bloqueia a trigésima primeira com requestId', async () => {
     const running = await startServer();
 
     const statuses = [] as number[];
     for (let index = 0; index < 28; index += 1) {
       statuses.push((await post(running, '{}', { 'x-test-fail': 'true', 'x-request-id': `invalid-key-${index}` })).status);
     }
-    statuses.push((await post(running, '{', { 'x-request-id': 'invalid-json' })).status);
-    statuses.push((await post(running, JSON.stringify({ fill: 'x'.repeat(2_000) }), { 'x-request-id': 'large-payload' })).status);
+    statuses.push((await post(running, '{', { 'x-zelo-internal-key': 'valid', 'x-request-id': 'invalid-json' })).status);
+    statuses.push((await post(running, JSON.stringify({ fill: 'x'.repeat(2_000) }), { 'x-zelo-internal-key': 'valid', 'x-request-id': 'large-payload' })).status);
     const throttled = await post(running, '{}', { 'x-test-fail': 'true', 'x-request-id': 'throttled' });
 
     expect(statuses.slice(0, 28)).toEqual(Array(28).fill(401));
