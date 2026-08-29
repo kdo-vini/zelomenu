@@ -1,5 +1,5 @@
-import { previewModifierPrice } from './zelomenuModifiers';
-import { normalizeCatalogSearchText } from './zelomenuCatalog';
+import { previewModifierPrice, resolveModifierOptionPrice } from './zelomenuModifiers';
+import { isRequiredModifierGroupSatisfiable, normalizeCatalogSearchText } from './zelomenuCatalog';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption } from './zelomenuModifiers';
 
 export type CatalogDiscoveryEntityType = 'product' | 'modifier_group' | 'modifier_option';
@@ -13,7 +13,9 @@ export type CatalogDiscoveryParent = {
   currentPrice: number;
 };
 
-export type CatalogDiscoveryModifierOption = Pick<ZeloMenuModifierOption, 'id' | 'name' | 'priceDelta' | 'order'>;
+export type CatalogDiscoveryModifierOption = Pick<ZeloMenuModifierOption, 'id' | 'name' | 'priceDelta' | 'order'> & {
+  currentPrice: number;
+};
 
 export type CatalogDiscoveryModifierGroup = Omit<ZeloMenuModifierGroup, 'active' | 'options'> & {
   options: CatalogDiscoveryModifierOption[];
@@ -35,6 +37,7 @@ export type CatalogSearchCandidate = {
   matchReason: string;
   confidence: number;
   ambiguous: boolean;
+  optionCurrentPrice?: number;
 };
 
 export type CatalogSearchResult = {
@@ -86,16 +89,21 @@ const MAX_RESULTS = 12;
  * The aliases deliberately stay deterministic and local. They map recurring
  * WhatsApp phrasing to menu concepts; no external model is involved.
  */
-function expandSearchAliases(normalizedQuery: string): Array<{ term: string; reason: string }> {
+function expandSearchAliases(rawNormalizedQuery: string, normalizedQuery: string): Array<{ term: string; reason: string }> {
   const terms = [{ term: normalizedQuery, reason: 'consulta_normalizada' }];
-  const words = new Set(normalizedQuery.split(' ').filter(Boolean));
-  const hasMarmitaPhrase = normalizedQuery.includes('cardapio de hoje')
-    || normalizedQuery.includes('cardapio hoje')
-    || normalizedQuery.includes('marmita do dia')
+  const words = new Set(rawNormalizedQuery.split(' ').filter(Boolean));
+  const hasMarmitaPhrase = rawNormalizedQuery.includes('cardapio de hoje')
+    || rawNormalizedQuery.includes('cardapio hoje')
+    || rawNormalizedQuery.includes('marmita do dia')
     || (words.has('mistura') && (words.has('hoje') || words.has('tem')))
     || (words.has('proteina') && (words.has('hoje') || words.has('marmita')));
   if (hasMarmitaPhrase) terms.push({ term: 'marmita do dia', reason: 'alias_marmita_do_dia' });
   return terms;
+}
+
+function normalizeDiscoveryQuery(value: string): string {
+  const stopWords = new Set(['a', 'as', 'da', 'de', 'do', 'o', 'os', 'oq', 'que', 'tem']);
+  return normalizeCatalogSearchText(value).split(' ').filter((word) => !stopWords.has(word)).join(' ');
 }
 
 export function sanitizeCatalogSearchLimit(limit: number | undefined): number {
@@ -121,7 +129,7 @@ function activePublicGroups(groups: ZeloMenuModifierGroup[]): CatalogDiscoveryMo
       order: group.order,
       options: group.options
         .filter((option) => option.active && option.linkedProduct?.available !== false)
-        .map((option) => ({ id: option.id, name: option.name, priceDelta: option.priceDelta, order: option.order })),
+        .map((option) => ({ id: option.id, name: option.name, priceDelta: option.priceDelta, currentPrice: resolveModifierOptionPrice(option), order: option.order })),
     }))
     .filter((group) => group.minSelections === 0 || group.options.length >= group.minSelections)
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, 'pt-BR'));
@@ -134,6 +142,7 @@ function flattenPublicCatalog(catalog: CatalogDiscoveryCategory[]): PublicProduc
       // `available` is the canonical public projection: publication, manual
       // pause, stock and required-complement viability are resolved upstream.
       if (!product.available) return;
+      if ((product.modifierGroups ?? []).some((group) => !isRequiredModifierGroupSatisfiable(group))) return;
       const groups = activePublicGroups(product.modifierGroups ?? []);
       const pricePreview = previewModifierPrice(product.modifierGroups ?? [], [], product.basePrice);
       rows.push({ product, category: category.nome, subcategory, groups, currentPrice: pricePreview.unitPrice });
@@ -170,6 +179,15 @@ function bestScore(fields: Array<{ value: string | null | undefined; reason: str
     }
   }
   return best;
+}
+
+function supportsMarmitaAlias(context: PublicProductContext): boolean {
+  if (normalizeCatalogSearchText(context.product.name).includes('marmita')) return true;
+  return context.groups.some((group) => /(?:mistura|proteina)/.test(normalizeCatalogSearchText(group.name)));
+}
+
+function usesMarmitaConcept(group: CatalogDiscoveryModifierGroup): boolean {
+  return /(?:mistura|proteina|marmita)/.test(normalizeCatalogSearchText(group.name));
 }
 
 function parentFor(context: PublicProductContext): CatalogDiscoveryParent {
@@ -211,13 +229,15 @@ function compareCandidates(a: RankedCandidate, b: RankedCandidate): number {
 }
 
 export function searchCatalogDiscovery({ empresaId, query, limit, catalog }: CatalogDiscoverySearchInput): CatalogSearchResult {
-  const normalizedQuery = normalizeCatalogSearchText(query);
+  const rawNormalizedQuery = normalizeCatalogSearchText(query);
+  const normalizedQuery = normalizeDiscoveryQuery(query);
   const safeLimit = sanitizeCatalogSearchLimit(limit);
   if (!normalizedQuery) return { empresaId, query, normalizedQuery, limit: safeLimit, total: 0, ambiguous: false, results: [] };
 
-  const terms = expandSearchAliases(normalizedQuery);
+  const terms = expandSearchAliases(rawNormalizedQuery, normalizedQuery);
   const candidates: RankedCandidate[] = [];
   for (const context of flattenPublicCatalog(catalog)) {
+    const productTerms = supportsMarmitaAlias(context) ? terms : terms.filter((term) => !term.reason.startsWith('alias_'));
     const productMatch = bestScore([
       { value: context.product.name, reason: 'nome_publico' },
       { value: context.product.description, reason: 'descricao' },
@@ -225,21 +245,37 @@ export function searchCatalogDiscovery({ empresaId, query, limit, catalog }: Cat
       { value: context.subcategory, reason: 'subcategoria' },
       ...context.groups.map((group) => ({ value: group.name, reason: 'nome_do_grupo' })),
       ...context.groups.flatMap((group) => group.options.map((option) => ({ value: option.name, reason: 'nome_da_opcao' }))),
-    ], terms);
+    ], productTerms);
     if (productMatch) candidates.push(candidateBase(context, 'product', productMatch.score, productMatch.reason));
 
     for (const group of context.groups) {
-      const groupMatch = bestScore([{ value: group.name, reason: 'nome_do_grupo' }], terms);
+      const groupTerms = usesMarmitaConcept(group) ? terms : terms.filter((term) => !term.reason.startsWith('alias_'));
+      const groupMatch = bestScore([{ value: group.name, reason: 'nome_do_grupo' }], groupTerms);
       if (groupMatch) candidates.push({ ...candidateBase(context, 'modifier_group', groupMatch.score, groupMatch.reason), groupId: group.id });
       for (const option of group.options) {
-        const optionMatch = bestScore([{ value: option.name, reason: 'nome_da_opcao' }], terms);
-        if (optionMatch) candidates.push({ ...candidateBase(context, 'modifier_option', optionMatch.score, optionMatch.reason), groupId: group.id, optionId: option.id });
+        const optionMatch = bestScore([{ value: option.name, reason: 'nome_da_opcao' }], groupTerms);
+        if (optionMatch) candidates.push({ ...candidateBase(context, 'modifier_option', optionMatch.score, optionMatch.reason), groupId: group.id, optionId: option.id, optionCurrentPrice: option.currentPrice });
       }
     }
   }
 
   const ranked = candidates.sort(compareCandidates);
-  const ambiguous = ranked.length > 1;
+  const candidatesByProduct = new Map<number, RankedCandidate[]>();
+  for (const candidate of ranked) {
+    const productCandidates = candidatesByProduct.get(candidate.productId) ?? [];
+    productCandidates.push(candidate);
+    candidatesByProduct.set(candidate.productId, productCandidates);
+  }
+  const semanticSenses = new Set<string>();
+  for (const [productId, productCandidates] of candidatesByProduct) {
+    const optionIds = new Set(productCandidates.filter((candidate) => candidate.entityType === 'modifier_option').map((candidate) => candidate.optionId));
+    if (optionIds.size > 1) {
+      for (const optionId of optionIds) semanticSenses.add(`option:${productId}:${optionId}`);
+    } else {
+      semanticSenses.add(`product:${productId}`);
+    }
+  }
+  const ambiguous = semanticSenses.size > 1;
   return {
     empresaId,
     query,

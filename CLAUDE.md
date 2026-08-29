@@ -123,6 +123,11 @@ traz no máximo 12 candidatos com produto-pai, categoria, preço vigente,
 complementos válidos e motivo/confiança do match. Todos os erros incluem
 `requestId` e usam texto seguro para consumo.
 
+O limite da rota é aplicado depois da autenticação e validação, por empresa e
+origem, para que uma única origem do ZeloChat não esgote a cota de outras
+empresas. O servidor instala `requestId` antes do parser JSON: JSON inválido ou
+grande demais também recebe resposta JSON segura e correlacionável.
+
 A descoberta consome apenas `catalogHierarchy`, a projeção pública canônica de
 `configStore`: publicação online, pausa manual, estoque e grupos obrigatórios já
 foram resolvidos ali. `ocultar_no_pdv` nunca entra nessa decisão. Resultados de

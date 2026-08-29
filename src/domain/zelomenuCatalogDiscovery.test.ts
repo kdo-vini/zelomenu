@@ -90,6 +90,26 @@ describe('searchCatalogDiscovery', () => {
     expect(marmitaResult?.modifierGroups[1].options.map((option) => option.name)).toEqual(['Bife acebolado', 'Frango grelhado']);
   });
 
+  it('não eleva descrições parcialmente parecidas acima da marmita ao aplicar o alias do dia', () => {
+    const catalogWithDistractors: CatalogCategoriaGroup[] = [{
+      ...catalog[0],
+      subcategorias: [{
+        ...catalog[0].subcategorias[0],
+        produtos: [
+          ...catalog[0].subcategorias[0].produtos,
+          product({ id: 50, name: 'Prato caseiro', description: 'Preparado no dia.' }),
+          product({ id: 51, name: 'Doce do chef', description: 'Sobremesa da casa.' }),
+        ],
+      }],
+    }];
+
+    const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'oq tem de mistura hoje', catalog: catalogWithDistractors });
+
+    expect(result.results[0]).toMatchObject({ productId: 10, publicName: 'Marmita do dia', confidence: 1 });
+    expect(result.results.filter((candidate) => candidate.productId === 50 || candidate.productId === 51)
+      .every((candidate) => candidate.confidence < 1)).toBe(true);
+  });
+
   it('mantém o vínculo com o produto-pai ao encontrar uma opção', () => {
     const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'bife acebolado', catalog });
     const option = result.results.find((candidate) => candidate.entityType === 'modifier_option');
@@ -102,6 +122,27 @@ describe('searchCatalogDiscovery', () => {
     });
   });
 
+  it('expõe o preço vigente de uma opção vinculada ao produto, não apenas o delta', () => {
+    const linkedCatalog: CatalogCategoriaGroup[] = [{
+      nome: 'Pratos',
+      produtosDireto: [product({
+        id: 60,
+        name: 'Executivo',
+        modifierGroups: [{
+          id: 'protein', productId: 60, name: 'Proteína', kind: 'variacao', pricingMode: 'substituir',
+          minSelections: 1, maxSelections: 1, minTotalQuantity: 0, maxTotalQuantity: null, allowsQuantity: false, maxPerOption: null, active: true, order: 0,
+          options: [{ id: 'linked', name: 'Filé de frango', priceDelta: 0, active: true, order: 0, linkedProduct: { productId: 61, name: 'Filé de frango', photoUrl: null, price: 7, available: true } }],
+        }],
+      })],
+      subcategorias: [],
+    }];
+
+    const option = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'filé de frango', catalog: linkedCatalog })
+      .results.find((candidate) => candidate.entityType === 'modifier_option') as { optionCurrentPrice?: number } | undefined;
+
+    expect(option?.optionCurrentPrice).toBe(7);
+  });
+
   it('expõe os sentidos distintos de batata sem escolher um candidato silenciosamente', () => {
     const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'batata', limit: 12, catalog });
 
@@ -110,6 +151,51 @@ describe('searchCatalogDiscovery', () => {
       ['product', 20, null],
       ['modifier_option', 40, 'side-batata'],
     ]));
+  });
+
+  it('não chama de ambiguidade as linhas técnicas do mesmo produto para uma única opção', () => {
+    const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'bife acebolado', catalog });
+
+    expect(result.ambiguous).toBe(false);
+  });
+
+  it('mantém a ambiguidade quando duas opções distintas do mesmo produto são sentidos plausíveis', () => {
+    const choicesCatalog: CatalogCategoriaGroup[] = [{
+      nome: 'Pratos',
+      produtosDireto: [product({
+        id: 65,
+        name: 'Prato com acompanhamento',
+        modifierGroups: [{
+          id: 'potato-choice', productId: 65, name: 'Escolha a batata', kind: 'adicional', pricingMode: 'somar',
+          minSelections: 1, maxSelections: 1, minTotalQuantity: 0, maxTotalQuantity: null, allowsQuantity: false, maxPerOption: null, active: true, order: 0,
+          options: [
+            { id: 'fries', name: 'Batata frita', priceDelta: 0, active: true, order: 0 },
+            { id: 'rustic', name: 'Batata rústica', priceDelta: 0, active: true, order: 1 },
+          ],
+        }],
+      })],
+      subcategorias: [],
+    }];
+
+    expect(searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'batata', catalog: choicesCatalog }).ambiguous).toBe(true);
+  });
+
+  it('não oferece um produto marcado como disponível quando sua montagem obrigatória é impossível', () => {
+    const impossibleCatalog: CatalogCategoriaGroup[] = [{
+      nome: 'Pratos',
+      produtosDireto: [product({
+        id: 70,
+        name: 'Prato impossível',
+        modifierGroups: [{
+          id: 'impossible', productId: 70, name: 'Escolha os itens', kind: 'adicional', pricingMode: 'somar',
+          minSelections: 0, maxSelections: null, minTotalQuantity: 2, maxTotalQuantity: null, allowsQuantity: true, maxPerOption: 1, active: true, order: 0,
+          options: [{ id: 'rice', name: 'Arroz', priceDelta: 0, active: true, order: 0 }],
+        }],
+      })],
+      subcategorias: [],
+    }];
+
+    expect(searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'impossível', catalog: impossibleCatalog }).results).toEqual([]);
   });
 
   it('isola a resposta na empresa e limita o resultado de forma sanitizada', () => {

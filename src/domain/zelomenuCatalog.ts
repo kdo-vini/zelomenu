@@ -45,6 +45,22 @@ export type CatalogProductAvailability = {
   blockingGroups: Array<{ id: string; name: string; availableOptions: number; minimum: number }>;
 };
 
+export function isRequiredModifierGroupSatisfiable(group: ZeloMenuModifierGroup): boolean {
+  if (!group.active) return true;
+  const requiredDistinct = Math.max(0, group.minSelections);
+  const requiredTotal = group.allowsQuantity
+    ? Math.max(requiredDistinct, Math.max(0, group.minTotalQuantity ?? 0))
+    : requiredDistinct;
+  if (requiredTotal === 0) return true;
+
+  const availableOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false);
+  if (availableOptions.length < requiredDistinct) return false;
+  const perOptionCapacity = group.allowsQuantity ? group.maxPerOption ?? Number.MAX_SAFE_INTEGER : 1;
+  const optionsCapacity = availableOptions.reduce((total, _option) => Math.min(Number.MAX_SAFE_INTEGER, total + perOptionCapacity), 0);
+  const totalCapacity = Math.min(optionsCapacity, group.maxTotalQuantity ?? Number.MAX_SAFE_INTEGER);
+  return totalCapacity >= requiredTotal;
+}
+
 export type CatalogUsageAvailabilityInput = {
   parent: CatalogOperationalProduct;
   linked: CatalogOperationalProduct;
@@ -115,12 +131,12 @@ export function getUnavailableRequiredModifierGroups(
   groups: ZeloMenuModifierGroup[] | null | undefined,
 ): CatalogProductAvailability['blockingGroups'] {
   return (groups ?? [])
-    .filter((group) => group.active && group.minSelections > 0)
+    .filter((group) => group.active && !isRequiredModifierGroupSatisfiable(group))
     .map((group) => {
       const availableOptions = group.options.filter((option) => option.active && option.linkedProduct?.available !== false).length;
-      return { id: group.id, name: group.name, availableOptions, minimum: group.minSelections };
+      return { id: group.id, name: group.name, availableOptions, minimum: Math.max(group.minSelections, group.allowsQuantity ? group.minTotalQuantity : 0) };
     })
-    .filter((group) => group.availableOptions < group.minimum);
+    ;
 }
 
 export function resolveCatalogProductAvailability(

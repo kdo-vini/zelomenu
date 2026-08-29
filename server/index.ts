@@ -20,7 +20,9 @@ import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
 import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
+import { makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
+import type { Request } from 'express';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,16 +33,26 @@ const corsOrigins = (process.env.CORS_ORIGINS ?? '')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-// Production is same-origin by default. Separate frontend origins must be
-// explicitly allowlisted instead of inheriting a wildcard CORS policy.
-app.use(cors({ origin: corsOrigins.length > 0 ? corsOrigins : false }));
-app.use(express.json({ limit: '1mb' }));
-
 app.use((req, res, next) => {
   const requestId = req.header('x-request-id')?.slice(0, 100) || randomUUID();
   res.locals.requestId = requestId;
   res.setHeader('x-request-id', requestId);
   next();
+});
+
+// Production is same-origin by default. Separate frontend origins must be
+// explicitly allowlisted instead of inheriting a wildcard CORS policy.
+app.use(cors({ origin: corsOrigins.length > 0 ? corsOrigins : false }));
+app.use(express.json({ limit: '1mb' }));
+app.use((error: unknown, _req: Request, res: Response, next: (error: unknown) => void) => {
+  const status = typeof error === 'object' && error !== null && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+  if (error instanceof SyntaxError && status === 400) {
+    return res.status(400).json({ error: 'JSON_INVALIDO', detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
+  }
+  if (status === 413) {
+    return res.status(413).json({ error: 'PAYLOAD_MUITO_GRANDE', detail: 'Os dados enviados são grandes demais.', requestId: res.locals.requestId });
+  }
+  return next(error);
 });
 
 // Trust proxy headers when behind a reverse proxy
@@ -86,6 +98,10 @@ const internalCatalogSearchLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => {
+    const empresaId = (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId;
+    return makeInternalCatalogRateLimitKey(empresaId ?? 'consulta-invalida', ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown'));
+  },
   handler: (_req, res) => res.status(429).json({
     error: 'MUITAS_REQUISICOES',
     detail: 'Muitas consultas em pouco tempo. Tente novamente em instantes.',
@@ -95,7 +111,23 @@ const internalCatalogSearchLimiter = rateLimit({
 
 // ─── Internal catalog discovery (ZeloChat) ───────────────────────────────────
 
-app.post('/internal/catalog/search', internalCatalogSearchLimiter, async (req, res) => {
+async function executeInternalCatalogSearch(_req: Request, res: Response, parsed: Extract<ReturnType<typeof parseInternalCatalogSearchRequest>, { ok: true }>): Promise<void> {
+  try {
+    const result = await CatalogDiscovery.search(parsed.value);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error) {
+    // Do not log request headers/body: both can contain the internal key.
+    console.error('[ZeloMenu] internal catalog search error:', error);
+    res.status(500).json({
+      error: 'CONSULTA_INDISPONIVEL',
+      detail: 'Não foi possível consultar o cardápio agora. Tente novamente em instantes.',
+      requestId: res.locals.requestId,
+    });
+  }
+}
+
+app.post('/internal/catalog/search', async (req, res) => {
   if (!hasValidInternalCatalogKey(req.header('x-zelo-internal-key'))) {
     return res.status(401).json({
       error: 'NAO_AUTORIZADO',
@@ -112,20 +144,8 @@ app.post('/internal/catalog/search', internalCatalogSearchLimiter, async (req, r
       requestId: res.locals.requestId,
     });
   }
-
-  try {
-    const result = await CatalogDiscovery.search(parsed.value);
-    res.setHeader('Cache-Control', 'no-store');
-    return res.json(result);
-  } catch (error) {
-    // Do not log request headers/body: both can contain the internal key.
-    console.error('[ZeloMenu] internal catalog search error:', error);
-    return res.status(500).json({
-      error: 'CONSULTA_INDISPONIVEL',
-      detail: 'Não foi possível consultar o cardápio agora. Tente novamente em instantes.',
-      requestId: res.locals.requestId,
-    });
-  }
+  (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId = parsed.value.empresaId;
+  return internalCatalogSearchLimiter(req, res, () => { void executeInternalCatalogSearch(req, res, parsed); });
 });
 
 // ─── Public store by slug ─────────────────────────────────────────────────────

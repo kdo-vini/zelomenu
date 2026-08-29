@@ -39,6 +39,19 @@ describe('catalog canonical product rules', () => {
     expect(result.blockingGroups[0].name).toBe('Escolha a mistura');
   });
 
+  it('hides a parent when the required quantity cannot fit the active options caps', () => {
+    const result = resolveCatalogProductAvailability(
+      { controlar_estoque: false, estoque_atual: 0 },
+      [{
+        id: 'quantity-group', productId: 10, name: 'Escolha os acompanhamentos', kind: 'adicional', pricingMode: 'somar',
+        minSelections: 0, maxSelections: null, minTotalQuantity: 2, maxTotalQuantity: null, allowsQuantity: true, maxPerOption: 1, active: true, order: 0,
+        options: [{ id: 'only-option', name: 'Arroz', priceDelta: 0, active: true, order: 0 }],
+      }],
+    );
+
+    expect(result).toMatchObject({ available: false, state: 'blocked_by_required_options' });
+  });
+
   it('keeps optional groups from hiding the parent', () => {
     const result = resolveCatalogProductAvailability(
       { ocultar_no_pdv: false, controlar_estoque: false, estoque_atual: 0 },
