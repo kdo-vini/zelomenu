@@ -112,6 +112,7 @@ Optional:
 PORT=3101
 OPENAI_API_KEY=   # for AI-generated descriptions/welcome text
 ZELO_INTERNAL_API_KEY= # server-only key for internal catalog discovery
+ZELO_CONFIRMATION_TOKEN_SECRET= # server-only, mínimo 32 caracteres; confirmação WhatsApp
 ```
 
 ### Descoberta interna de catálogo
@@ -136,6 +137,32 @@ A descoberta consome apenas `catalogHierarchy`, a projeção pública canônica 
 `configStore`: publicação online, pausa manual, estoque e grupos obrigatórios já
 foram resolvidos ali. `ocultar_no_pdv` nunca entra nessa decisão. Resultados de
 grupo ou opção preservam o produto-pai; opções não são itens avulsos.
+
+### Pedidos conversacionais internos
+
+`POST /internal/ordering/commands` e `GET /internal/ordering/:orderingId`
+expõem o módulo profundo `ConversationOrdering` ao ZeloChat. As duas rotas usam
+`x-zelo-internal-key`/`ZELO_INTERNAL_API_KEY`, falham fechadas, devolvem
+`requestId`, aplicam limite coarse de falhas e quota por empresa. Erros para o
+chamador são sempre amigáveis em PT-BR.
+
+A interface pública do módulo é somente `apply(command)` +
+`getSnapshot(orderingId)`. O adapter Supabase é injetável; sessões deste fluxo
+são exclusivamente `context='whatsapp_order'` e `state='cart_open'`. Itens de
+entrada carregam somente IDs, quantidades e observações. Nomes, preços,
+complementos, estoque, taxa/cobertura, horário e totais são reconstruídos pela
+mesma projeção e pelas mesmas invariantes canônicas do checkout público.
+
+Confirmação por texto chama `create_zelo_order`; confirmação por botão chama as
+RPCs server-only de token WhatsApp. Ambas terminam no mesmo pedido canônico,
+levam `pessoa_id` e reaplicam `zelomenu_auto_accept_orders`. O token bruto nunca
+é persistido: o servidor deriva o valor opaco com
+`ZELO_CONFIRMATION_TOKEN_SECRET` sobre empresa/JID/sessão/revisão/expiração e
+envia somente SHA-256 ao banco. A expiração nasce do `updated_at` da revisão,
+então qualquer réplica reconstrói exatamente o mesmo token. A RPC de emissão
+deve ser idempotente quando hash + binding + revisão já estiverem vivos. Este fluxo
+não usa `zelomenu_cart_tokens`, não cria link público e não toca o carrinho
+legado do ZeloChat.
 
 ## Important Conventions
 

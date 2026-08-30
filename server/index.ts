@@ -20,6 +20,8 @@ import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
 import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
 import { createInternalCatalogFailureLimiter, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
+import { createInternalOrderingRouter } from './internalOrdering.js';
+import { ConversationOrdering } from './supabaseConversationOrderingAdapter.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 import type { Request } from 'express';
 
@@ -32,6 +34,7 @@ const corsOrigins = (process.env.CORS_ORIGINS ?? '')
   .map((origin) => origin.trim())
   .filter(Boolean);
 const internalCatalogFailureLimiter = createInternalCatalogFailureLimiter();
+const internalOrderingFailureLimiter = createInternalCatalogFailureLimiter();
 
 app.use((req, res, next) => {
   const requestId = req.header('x-request-id')?.slice(0, 100) || randomUUID();
@@ -43,6 +46,7 @@ app.use((req, res, next) => {
 // This route-specific guard intentionally runs before JSON parsing. Invalid
 // bodies and oversized requests must be counted without affecting other APIs.
 app.use('/internal/catalog/search', internalCatalogFailureLimiter);
+app.use('/internal/ordering', internalOrderingFailureLimiter);
 
 // Production is same-origin by default. Separate frontend origins must be
 // explicitly allowlisted instead of inheriting a wildcard CORS policy.
@@ -151,6 +155,8 @@ app.post('/internal/catalog/search', async (req, res) => {
   (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId = parsed.value.empresaId;
   return internalCatalogSearchLimiter(req, res, () => { void executeInternalCatalogSearch(req, res, parsed); });
 });
+
+app.use('/internal/ordering', createInternalOrderingRouter(ConversationOrdering));
 
 // ─── Public store by slug ─────────────────────────────────────────────────────
 
