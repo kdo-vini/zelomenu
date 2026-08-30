@@ -140,7 +140,8 @@ grupo ou opção preservam o produto-pai; opções não são itens avulsos.
 
 ### Pedidos conversacionais internos
 
-`POST /internal/ordering/commands` e `GET /internal/ordering/:orderingId`
+`POST /internal/ordering/commands` e
+`GET /internal/ordering/:orderingId?empresaId=<uuid>`
 expõem o módulo profundo `ConversationOrdering` ao ZeloChat. As duas rotas usam
 `x-zelo-internal-key`/`ZELO_INTERNAL_API_KEY`, falham fechadas, devolvem
 `requestId`, aplicam limite coarse de falhas e quota por empresa. Erros para o
@@ -153,16 +154,48 @@ entrada carregam somente IDs, quantidades e observações. Nomes, preços,
 complementos, estoque, taxa/cobertura, horário e totais são reconstruídos pela
 mesma projeção e pelas mesmas invariantes canônicas do checkout público.
 
-Confirmação por texto chama `create_zelo_order`; confirmação por botão chama as
-RPCs server-only de token WhatsApp. Ambas terminam no mesmo pedido canônico,
-levam `pessoa_id` e reaplicam `zelomenu_auto_accept_orders`. O token bruto nunca
-é persistido: o servidor deriva o valor opaco com
+Retries são buscados também nas sessões históricas por
+empresa/JID/`metadata.processedMessageIds`; uma mensagem antiga nunca abre um
+segundo draft depois do fechamento, enquanto uma `messageId` nova pode iniciar
+o próximo pedido.
+
+Texto e botão confirmam exclusivamente pela RPC server-only transacional
+`confirm_whatsapp_zelo_order_atomic_v1`. Não existe fallback app-side de
+“revalidar e depois criar”: a RPC deve bloquear a sessão, validar binding,
+revisão e token opcional, rematerializar catálogo/modificadores/estoque,
+entrega/taxa/horário e, na mesma transação, persistir um novo resumo ou chamar o
+write-path canônico `create_zelo_order`. A comparação dos snapshots JSONB é
+semântica (objetos independem da ordem recursiva de chaves; arrays preservam
+ordem). O contrato exato é:
+
+```text
+confirm_whatsapp_zelo_order_atomic_v1(
+  p_empresa_id uuid, p_source_ref text, p_session_id uuid,
+  p_expected_revision bigint, p_message_id text, p_idempotency_key text,
+  p_pessoa_id uuid|null, p_token_hash text|null
+) -> jsonb {
+  outcome: "confirmed" | "requires_review" | "conflict",
+  alreadyConfirmed?: boolean
+}
+```
+
+`confirmed` exige `alreadyConfirmed`, cria/reutiliza um único pedido, fecha a
+sessão e persiste `p_message_id`; `requires_review` persiste snapshots,
+revalidação e `p_message_id`, incrementa a revisão e não cria pedido;
+`conflict` não escreve. Ausência ou resposta fora desse contrato falha fechada.
+Depois de `confirmed`, `pessoa_id` e o valor original de `alreadyConfirmed` são
+preservados durante `zelomenu_auto_accept_orders`.
+
+O token bruto nunca é persistido: o servidor deriva o valor opaco com
 `ZELO_CONFIRMATION_TOKEN_SECRET` sobre empresa/JID/sessão/revisão/expiração e
 envia somente SHA-256 ao banco. A expiração nasce do `updated_at` da revisão,
 então qualquer réplica reconstrói exatamente o mesmo token. A RPC de emissão
-deve ser idempotente quando hash + binding + revisão já estiverem vivos. Este fluxo
-não usa `zelomenu_cart_tokens`, não cria link público e não toca o carrinho
-legado do ZeloChat.
+deve ser idempotente quando hash + binding + revisão já estiverem vivos. Resumo
+expirado não é reemitido/ressuscitado: retorna `RESUMO_EXPIRADO` com snapshot
+`requiresReview` e requer update com nova revisão/`messageId`. Corrida CAS na
+emissão relê e devolve o snapshot atual. Este fluxo não usa
+`zelomenu_cart_tokens`, não cria link público e não toca o carrinho legado do
+ZeloChat.
 
 ## Important Conventions
 

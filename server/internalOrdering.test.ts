@@ -103,7 +103,7 @@ describe('rotas internas de ordering', () => {
     expect(postBody).not.toHaveProperty('link');
     expect(postBody).not.toHaveProperty('menuToken');
 
-    const loaded = await fetch(`${baseUrl}/internal/ordering/${ORDERING}`, { headers: { 'x-zelo-internal-key': 'valid' } });
+    const loaded = await fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${EMPRESA}`, { headers: { 'x-zelo-internal-key': 'valid' } });
     expect(loaded.status).toBe(200);
     expect(ordering.getSnapshot).toHaveBeenCalledWith(ORDERING);
   });
@@ -117,6 +117,20 @@ describe('rotas internas de ordering', () => {
     expect((await post(EMPRESA)).status).toBe(200);
     expect((await post(empresaB)).status).toBe(200);
     const limited = await post(EMPRESA);
+    expect(limited.status).toBe(429);
+    await expect(limited.json()).resolves.toMatchObject({ error: 'MUITAS_REQUISICOES', requestId: 'request-gerado' });
+  });
+
+  it('aplica quota por empresa também na consulta GET', async () => {
+    const { baseUrl } = await start({ quotaMax: 1 });
+    const empresaB = '10000000-0000-4000-8000-000000000002';
+    const get = (empresaId: string) => fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${empresaId}`, {
+      headers: { 'x-zelo-internal-key': 'valid' },
+    });
+
+    expect((await get(EMPRESA)).status).toBe(200);
+    expect((await get(empresaB)).status).not.toBe(429);
+    const limited = await get(EMPRESA);
     expect(limited.status).toBe(429);
     await expect(limited.json()).resolves.toMatchObject({ error: 'MUITAS_REQUISICOES', requestId: 'request-gerado' });
   });

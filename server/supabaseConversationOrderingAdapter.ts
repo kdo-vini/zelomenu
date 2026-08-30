@@ -3,6 +3,7 @@ import {
   ConversationOrderingError,
   createConversationOrdering,
   type CanonicalOrderReference,
+  type AtomicConfirmationResult,
   type ConversationOrderDraft,
   type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
@@ -10,12 +11,7 @@ import {
   type DraftMutationResult,
 } from './conversationOrdering.js';
 import { getServiceSupabase } from './supabaseServer.js';
-import {
-  applyZeloMenuAutoAccept,
-  assertZeloMenuFulfillmentAvailable,
-  materializeWhatsAppOrderDraft,
-  type ZeloMenuCartState,
-} from './zelomenuCartSessions.js';
+import { applyZeloMenuAutoAccept, materializeWhatsAppOrderDraft, type ZeloMenuCartState } from './zelomenuCartSessions.js';
 import { deriveConversationConfirmationToken, hashConversationConfirmationToken } from './conversationConfirmationToken.js';
 
 const SESSION_COLUMNS = 'id, empresa_id, ordering_id, context, state, source_ref, customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation, archived_at, updated_at';
@@ -72,25 +68,6 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     });
   }
 
-  async revalidateDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
-    const materialized = await this.materializeDraft(empresaId, draft);
-    try {
-      await assertZeloMenuFulfillmentAvailable(empresaId, materialized.fulfillment);
-      return materialized;
-    } catch (error) {
-      const raw = error instanceof Error ? error.message : String(error);
-      const [, detail] = raw.split(':', 2);
-      return {
-        ...materialized,
-        revalidation: {
-          checkedAt: new Date().toISOString(),
-          ok: false,
-          issues: [{ code: 'schedule_unavailable', message: detail || 'A loja não está disponível para este horário.' }],
-        },
-      };
-    }
-  }
-
   private async loadOrder(sessionId: string): Promise<CanonicalOrderReference | null> {
     const { data, error } = await this.supabase.from('zelo_orders')
       .select('id, status, revision')
@@ -130,6 +107,20 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       .eq('source_ref', remoteJid)
       .eq('context', 'whatsapp_order')
       .eq('state', 'cart_open')
+      .maybeSingle();
+    if (error) throw error;
+    return data ? this.mapRow(data as SessionRow) : null;
+  }
+
+  async findByMessageId(empresaId: string, remoteJid: string, messageId: string): Promise<ConversationOrderingRecord | null> {
+    const { data, error } = await this.supabase.from('zelomenu_cart_sessions')
+      .select(SESSION_COLUMNS)
+      .eq('empresa_id', empresaId)
+      .eq('source_ref', remoteJid)
+      .eq('context', 'whatsapp_order')
+      .contains('metadata', { processedMessageIds: [messageId] })
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
     if (error) throw error;
     return data ? this.mapRow(data as SessionRow) : null;
@@ -187,12 +178,6 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     });
   }
 
-  async persistRevalidation(input: {
-    current: ConversationOrderingRecord; expectedRevision: number; messageId: string; materialization: DraftMaterialization;
-  }): Promise<DraftMutationResult> {
-    return this.updateOpen({ ...input, pessoaId: input.current.pessoaId });
-  }
-
   async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string }): Promise<DraftMutationResult> {
     return this.mutateOpen(input.current, input.expectedRevision, input.messageId, {
       state: 'cancelled',
@@ -229,53 +214,60 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   }
 
   async issueConfirmationToken(input: {
-    tokenHash: string; empresaId: string; remoteJid: string; sessionId: string; expectedRevision: number; expiresAt: string;
-  }): Promise<void> {
+    current: ConversationOrderingRecord; tokenHash: string; expiresAt: string;
+  }) {
     // Retries e réplicas derivam o mesmo hash/binding/expiry. Esta chamada
     // depende do contrato idempotente da RPC: se o mesmo token ainda estiver
     // vivo, ela deve devolvê-lo sem invalidar/reinserir a linha UNIQUE.
     const { error } = await this.supabase.rpc('issue_whatsapp_zelo_confirmation_token', {
       p_token_hash: input.tokenHash,
-      p_empresa_id: input.empresaId,
-      p_source_ref: input.remoteJid,
-      p_session_id: input.sessionId,
-      p_expected_revision: input.expectedRevision,
-      p_expires_at: input.expiresAt,
-    });
-    if (error) throw this.rpcError(error.message);
-  }
-
-  async confirmDirect(input: {
-    current: ConversationOrderingRecord; expectedRevision: number; idempotencyKey: string; pessoaId: string | null;
-  }): Promise<ConversationOrderingRecord> {
-    const { data, error } = await this.supabase.rpc('create_zelo_order', {
-      p_session_id: input.current.sessionId,
-      p_expected_revision: input.expectedRevision,
-      p_idempotency_key: input.idempotencyKey,
-      p_snapshots: {},
-      p_pessoa_id: input.pessoaId,
-    });
-    if (error) throw this.rpcError(error.message);
-    const record = await this.findRequired(input.current.orderingId);
-    if (record.order) record.order.alreadyConfirmed = (data as { alreadyConfirmed?: boolean } | null)?.alreadyConfirmed === true;
-    return record;
-  }
-
-  async confirmWithToken(input: {
-    current: ConversationOrderingRecord; expectedRevision: number; tokenHash: string; idempotencyKey: string; pessoaId: string | null;
-  }): Promise<ConversationOrderingRecord> {
-    const { data, error } = await this.supabase.rpc('confirm_whatsapp_zelo_order', {
-      p_token_hash: input.tokenHash,
       p_empresa_id: input.current.empresaId,
       p_source_ref: input.current.remoteJid,
+      p_session_id: input.current.sessionId,
+      p_expected_revision: input.current.revision,
+      p_expires_at: input.expiresAt,
+    });
+    if (error) {
+      if (/REVISION|REVISAO/.test(error.message)) {
+        return { kind: 'conflict' as const, record: await this.findRequired(input.current.orderingId) };
+      }
+      throw this.rpcError(error.message);
+    }
+    return { kind: 'issued' as const };
+  }
+
+  async confirmAtomically(input: {
+    current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
+    tokenHash: string | null; idempotencyKey: string; pessoaId: string | null;
+  }): Promise<AtomicConfirmationResult> {
+    // Mandatory companion RPC contract (ZeloPDV migration): one transaction
+    // locks this whatsapp_order/cart_open session, verifies binding/revision and
+    // optional token, rematerializes every catalog/modifier/stock/delivery/store
+    // rule, then either persists a bumped review snapshot or creates exactly one
+    // canonical order. There is deliberately no app-side revalidate/create path.
+    const { data, error } = await this.supabase.rpc('confirm_whatsapp_zelo_order_atomic_v1', {
+      p_empresa_id: input.current.empresaId,
+      p_source_ref: input.current.remoteJid,
+      p_session_id: input.current.sessionId,
       p_expected_revision: input.expectedRevision,
+      p_message_id: input.messageId,
       p_idempotency_key: input.idempotencyKey,
       p_pessoa_id: input.pessoaId,
+      p_token_hash: input.tokenHash,
     });
     if (error) throw this.rpcError(error.message);
+    const result = data as { outcome?: unknown; alreadyConfirmed?: unknown } | null;
+    if (result?.outcome !== 'confirmed' && result?.outcome !== 'requires_review' && result?.outcome !== 'conflict') {
+      throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível concluir o pedido agora. Tente novamente.');
+    }
     const record = await this.findRequired(input.current.orderingId);
-    if (record.order) record.order.alreadyConfirmed = (data as { alreadyConfirmed?: boolean } | null)?.alreadyConfirmed === true;
-    return record;
+    if (result.outcome === 'confirmed') {
+      if (!record.order || typeof result.alreadyConfirmed !== 'boolean') {
+        throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível concluir o pedido agora. Tente novamente.');
+      }
+      record.order.alreadyConfirmed = result.alreadyConfirmed;
+    }
+    return { kind: result.outcome, record };
   }
 
   async applyAutoAccept(record: ConversationOrderingRecord): Promise<ConversationOrderingRecord> {
@@ -287,6 +279,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       revision: record.order.revision,
     });
     const refreshed = await this.findRequired(record.orderingId);
+    const alreadyConfirmed = record.order.alreadyConfirmed;
     if (result.accepted) {
       refreshed.state = 'accepted';
       if (refreshed.order) {
@@ -294,6 +287,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
         refreshed.order.revision = result.revision;
       }
     }
+    if (refreshed.order) refreshed.order.alreadyConfirmed = alreadyConfirmed;
     return refreshed;
   }
 
@@ -304,6 +298,9 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   }
 
   private rpcError(message: string): ConversationOrderingError {
+    if (/confirm_whatsapp_zelo_order_atomic_v1|function .* does not exist|42883/i.test(message)) {
+      return new ConversationOrderingError('CONFIRMACAO_INDISPONIVEL', 'A confirmação de pedidos não está disponível agora.');
+    }
     if (/REVISION|REVISAO/.test(message)) return new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.');
     if (/TOKEN|CONFIRMATION/.test(message)) return new ConversationOrderingError('CONFIRMACAO_INVALIDA', 'Esta confirmação não é mais válida. Peça um novo resumo.');
     if (/CUSTOMER_NOT_FOUND/.test(message)) return new ConversationOrderingError('CLIENTE_INVALIDO', 'Não foi possível vincular o cliente a este pedido.');

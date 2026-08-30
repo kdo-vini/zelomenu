@@ -135,7 +135,7 @@ export function parseInternalOrderingCommand(input: unknown): ParseResult {
 function sendOrderingError(error: unknown, res: Response): void {
   if (error instanceof ConversationOrderingError) {
     const status = error.code === 'PEDIDO_NAO_ENCONTRADO' ? 404
-      : error.code === 'REVISAO_DESATUALIZADA' || error.code === 'PEDIDO_EM_ANDAMENTO' || error.code === 'PEDIDO_FECHADO' || error.code === 'CONFIRMACAO_INVALIDA' ? 409
+      : error.code === 'REVISAO_DESATUALIZADA' || error.code === 'RESUMO_EXPIRADO' || error.code === 'PEDIDO_EM_ANDAMENTO' || error.code === 'PEDIDO_FECHADO' || error.code === 'CONFIRMACAO_INVALIDA' ? 409
       : 400;
     res.status(status).json({ error: error.code, detail: error.message, current: error.currentSnapshot, requestId: res.locals.requestId });
     return;
@@ -155,7 +155,9 @@ export function createInternalOrderingRouter(
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => makeInternalCatalogRateLimitKey(
-      typeof req.body?.empresaId === 'string' ? req.body.empresaId : 'comando-invalido',
+      typeof req.body?.empresaId === 'string'
+        ? req.body.empresaId
+        : typeof req.query.empresaId === 'string' ? req.query.empresaId : 'empresa-invalida',
       ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown'),
     ),
     handler: (_req, res) => res.status(429).json({ error: 'MUITAS_REQUISICOES', detail: 'Muitos pedidos em pouco tempo. Tente novamente em instantes.', requestId: res.locals.requestId }),
@@ -177,11 +179,14 @@ export function createInternalOrderingRouter(
     }
   });
 
-  router.get('/:orderingId', async (req: Request, res: Response) => {
+  router.get('/:orderingId', quota, async (req: Request, res: Response) => {
     if (!UUID.test(req.params.orderingId)) return res.status(400).json({ error: 'PEDIDO_INVALIDO', detail: 'Informe um pedido válido.', requestId: res.locals.requestId });
+    if (typeof req.query.empresaId !== 'string' || !UUID.test(req.query.empresaId)) {
+      return res.status(400).json({ error: 'EMPRESA_INVALIDA', detail: 'Informe uma empresa válida.', requestId: res.locals.requestId });
+    }
     try {
       const snapshot = await ordering.getSnapshot(req.params.orderingId);
-      if (!snapshot) return res.status(404).json({ error: 'PEDIDO_NAO_ENCONTRADO', detail: 'Não encontrei este pedido.', requestId: res.locals.requestId });
+      if (!snapshot || snapshot.empresaId !== req.query.empresaId) return res.status(404).json({ error: 'PEDIDO_NAO_ENCONTRADO', detail: 'Não encontrei este pedido.', requestId: res.locals.requestId });
       res.setHeader('Cache-Control', 'no-store');
       return res.json(snapshot);
     } catch (error) {

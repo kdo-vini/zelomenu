@@ -89,10 +89,19 @@ export type DraftMutationResult =
   | { kind: 'duplicate'; record: ConversationOrderingRecord }
   | { kind: 'conflict'; record: ConversationOrderingRecord };
 
+export type AtomicConfirmationResult =
+  | { kind: 'confirmed'; record: ConversationOrderingRecord }
+  | { kind: 'requires_review'; record: ConversationOrderingRecord }
+  | { kind: 'conflict'; record: ConversationOrderingRecord };
+
+export type TokenIssuanceResult =
+  | { kind: 'issued' }
+  | { kind: 'conflict'; record: ConversationOrderingRecord };
+
 export interface ConversationOrderingAdapter {
   materializeDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization>;
-  revalidateDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization>;
   findOpen(empresaId: string, remoteJid: string): Promise<ConversationOrderingRecord | null>;
+  findByMessageId(empresaId: string, remoteJid: string, messageId: string): Promise<ConversationOrderingRecord | null>;
   findByOrderingId(orderingId: string): Promise<ConversationOrderingRecord | null>;
   createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'>): Promise<ConversationOrderingRecord>;
   updateOpen(input: {
@@ -103,33 +112,19 @@ export interface ConversationOrderingAdapter {
     pessoaId: string | null;
   }): Promise<DraftMutationResult>;
   cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string }): Promise<DraftMutationResult>;
-  persistRevalidation(input: {
+  issueConfirmationToken(input: {
+    current: ConversationOrderingRecord;
+    tokenHash: string;
+    expiresAt: string;
+  }): Promise<TokenIssuanceResult>;
+  confirmAtomically(input: {
     current: ConversationOrderingRecord;
     expectedRevision: number;
     messageId: string;
-    materialization: DraftMaterialization;
-  }): Promise<DraftMutationResult>;
-  issueConfirmationToken(input: {
-    tokenHash: string;
-    empresaId: string;
-    remoteJid: string;
-    sessionId: string;
-    expectedRevision: number;
-    expiresAt: string;
-  }): Promise<void>;
-  confirmDirect(input: {
-    current: ConversationOrderingRecord;
-    expectedRevision: number;
+    tokenHash: string | null;
     idempotencyKey: string;
     pessoaId: string | null;
-  }): Promise<ConversationOrderingRecord>;
-  confirmWithToken(input: {
-    current: ConversationOrderingRecord;
-    expectedRevision: number;
-    tokenHash: string;
-    idempotencyKey: string;
-    pessoaId: string | null;
-  }): Promise<ConversationOrderingRecord>;
+  }): Promise<AtomicConfirmationResult>;
   applyAutoAccept(record: ConversationOrderingRecord): Promise<ConversationOrderingRecord>;
 }
 
@@ -156,39 +151,18 @@ function toSnapshot(record: ConversationOrderingRecord, confirmationAction: Orde
   return { ...publicRecord, confirmationAction, requiresReview };
 }
 
-function recordAsDraft(record: ConversationOrderingRecord): ConversationOrderDraft {
-  return {
-    items: record.cart.items.flatMap((item) => item.productId == null ? [] : [{
-      productId: item.productId,
-      quantity: item.quantity,
-      notes: item.notes ?? null,
-      selectedOptions: item.selectedModifiers.map((group) => ({
-        groupId: group.groupId,
-        optionSelections: group.selectedOptions.map((option) => ({ optionId: option.optionId, quantity: option.quantity ?? 1 })),
-      })),
-    }]),
-    observations: record.cart.observations,
-    customer: record.customer,
-    pessoaId: record.pessoaId,
-    fulfillment: record.fulfillment,
-    paymentMethod: record.payment.declaredMethod,
-  };
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, child]) => [key, canonicalJson(child)]));
+  }
+  return value;
 }
 
-function materializationChanged(current: ConversationOrderingRecord, next: DraftMaterialization): boolean {
-  return JSON.stringify({
-    cart: current.cart,
-    customer: current.customer,
-    fulfillment: current.fulfillment,
-    payment: current.payment,
-    pricing: current.pricing,
-  }) !== JSON.stringify({
-    cart: next.cart,
-    customer: next.customer,
-    fulfillment: next.fulfillment,
-    payment: next.payment,
-    pricing: next.pricing,
-  });
+export function jsonbSemanticallyEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
 }
 
 function materializationFailure(error: unknown): { code: string; message: string } | null {
@@ -217,20 +191,34 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (record.state !== 'cart_open') return toSnapshot(record, null, requiresReview);
     const revisionTime = Date.parse(record.updatedAt);
     const expiresAt = new Date((Number.isFinite(revisionTime) ? revisionTime : now().getTime()) + ttlMs).toISOString();
+    if (Date.parse(expiresAt) <= now().getTime()) {
+      throw new ConversationOrderingError(
+        'RESUMO_EXPIRADO',
+        'Este resumo expirou. Atualize o pedido para receber uma nova confirmação.',
+        toSnapshot(record, null, true),
+      );
+    }
     const token = options.createRawConfirmationToken(record, expiresAt);
-    await adapter.issueConfirmationToken({
+    const issuance = await adapter.issueConfirmationToken({
+      current: record,
       tokenHash: options.hashConfirmationToken(token),
-      empresaId: record.empresaId,
-      remoteJid: record.remoteJid,
-      sessionId: record.sessionId,
-      expectedRevision: record.revision,
       expiresAt,
     });
+    if (issuance.kind === 'conflict') {
+      throw new ConversationOrderingError(
+        'REVISAO_DESATUALIZADA',
+        'O pedido foi atualizado. Use a revisão mais recente.',
+        toSnapshot(issuance.record),
+      );
+    }
     const action = { type: 'confirm_order' as const, token, revision: record.revision, expiresAt };
     return toSnapshot(record, action, requiresReview);
   }
 
   async function applyOnce(command: ConversationOrderCommand): Promise<OrderingSnapshot> {
+    const historical = await adapter.findByMessageId(command.empresaId, command.remoteJid, command.messageId);
+    if (historical) return historical.state === 'cart_open' ? withConfirmationAction(historical) : toSnapshot(historical);
+
     if (command.type === 'open_or_update_draft' && !command.orderingId) {
       const existing = await adapter.findOpen(command.empresaId, command.remoteJid);
       if (existing) {
@@ -296,50 +284,23 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (current.order) return toSnapshot(current);
     if (current.state !== 'cart_open') throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
 
-    let revalidated: DraftMaterialization;
-    try {
-      revalidated = await adapter.revalidateDraft(command.empresaId, recordAsDraft(current));
-    } catch (error) {
-      const issue = materializationFailure(error);
-      if (!issue) throw asFriendlyMaterializationError(error);
-      revalidated = {
-        cart: current.cart,
-        customer: current.customer,
-        fulfillment: current.fulfillment,
-        payment: current.payment,
-        pricing: current.pricing,
-        revalidation: { checkedAt: now().toISOString(), ok: false, issues: [issue] },
-      };
-    }
-    if (!revalidated.revalidation.ok || materializationChanged(current, revalidated)) {
-      const result = await adapter.persistRevalidation({
-        current,
-        expectedRevision: command.expectedRevision,
-        messageId: command.messageId,
-        materialization: revalidated,
-      });
-      if (result.kind === 'conflict') {
-        throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(result.record));
-      }
-      return withConfirmationAction(result.record, true);
-    }
-
     const idempotencyKey = `whatsapp:${current.sessionId}:${command.messageId}`;
-    const confirmed = command.confirmationToken
-      ? await adapter.confirmWithToken({
-        current,
-        expectedRevision: command.expectedRevision,
-        tokenHash: options.hashConfirmationToken(command.confirmationToken),
-        idempotencyKey,
-        pessoaId: command.pessoaId ?? current.pessoaId,
-      })
-      : await adapter.confirmDirect({
-        current,
-        expectedRevision: command.expectedRevision,
-        idempotencyKey,
-        pessoaId: command.pessoaId ?? current.pessoaId,
-      });
-    return toSnapshot(await adapter.applyAutoAccept(confirmed));
+    const result = await adapter.confirmAtomically({
+      current,
+      expectedRevision: command.expectedRevision,
+      messageId: command.messageId,
+      tokenHash: command.confirmationToken ? options.hashConfirmationToken(command.confirmationToken) : null,
+      idempotencyKey,
+      pessoaId: command.pessoaId ?? current.pessoaId,
+    });
+    if (result.kind === 'conflict') {
+      throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(result.record));
+    }
+    if (result.kind === 'requires_review') return withConfirmationAction(result.record, true);
+    const originalAlreadyConfirmed = result.record.order?.alreadyConfirmed;
+    const autoAccepted = await adapter.applyAutoAccept(result.record);
+    if (autoAccepted.order && originalAlreadyConfirmed != null) autoAccepted.order.alreadyConfirmed = originalAlreadyConfirmed;
+    return toSnapshot(autoAccepted);
   }
 
   return {

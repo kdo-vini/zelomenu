@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createConversationOrdering,
   ConversationOrderingError,
+  jsonbSemanticallyEqual,
   type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
   type ConversationOrderDraft,
@@ -45,6 +46,16 @@ function materialization(productId = 10, unitPrice = 20): DraftMaterialization {
   };
 }
 
+function reorderJsonKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reorderJsonKeys);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .reverse()
+      .map(([key, child]) => [key, reorderJsonKeys(child)]));
+  }
+  return value;
+}
+
 class MemoryAdapter implements ConversationOrderingAdapter {
   records: ConversationOrderingRecord[] = [];
   createCalls = 0;
@@ -54,6 +65,20 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   currentPrice = 20;
   currentDeliveryFee = 0;
   nextRevalidationIssues: Array<{ code: string; message: string }> = [];
+  writeTime: string | null = null;
+  reorderEveryRoundTrip = false;
+  changePriceAfterRevalidate: number | null = null;
+  conflictNextIssuance = false;
+  jsonbRoundTrips = 0;
+
+  private roundTrip(record: ConversationOrderingRecord | null): ConversationOrderingRecord | null {
+    if (!record || !this.reorderEveryRoundTrip) return record;
+    const reordered = reorderJsonKeys(record) as ConversationOrderingRecord;
+    const index = this.records.indexOf(record);
+    if (index >= 0) this.records[index] = reordered;
+    this.jsonbRoundTrips += 1;
+    return reordered;
+  }
 
   async materializeDraft(_empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
     const resolved = materialization(draft.items[0]?.productId ?? 10, this.currentPrice);
@@ -82,15 +107,23 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     if (this.nextRevalidationIssues.length > 0) {
       resolved.revalidation = { checkedAt: '2026-08-30T12:01:00.000Z', ok: false, issues: this.nextRevalidationIssues };
     }
-    return resolved;
+    const result = this.reorderEveryRoundTrip ? reorderJsonKeys(resolved) as DraftMaterialization : resolved;
+    if (this.changePriceAfterRevalidate != null) this.currentPrice = this.changePriceAfterRevalidate;
+    return result;
   }
 
   async findOpen(empresaId: string, remoteJid: string): Promise<ConversationOrderingRecord | null> {
-    return this.records.find((record) => record.empresaId === empresaId && record.remoteJid === remoteJid && record.state === 'cart_open') ?? null;
+    return this.roundTrip(this.records.find((record) => record.empresaId === empresaId && record.remoteJid === remoteJid && record.state === 'cart_open') ?? null);
+  }
+
+  async findByMessageId(empresaId: string, remoteJid: string, messageId: string): Promise<ConversationOrderingRecord | null> {
+    return this.roundTrip(this.records.find((record) => record.empresaId === empresaId
+      && record.remoteJid === remoteJid
+      && record.processedMessageIds.includes(messageId)) ?? null);
   }
 
   async findByOrderingId(orderingId: string): Promise<ConversationOrderingRecord | null> {
-    return this.records.find((record) => record.orderingId === orderingId) ?? null;
+    return this.roundTrip(this.records.find((record) => record.orderingId === orderingId) ?? null);
   }
 
   async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'>): Promise<ConversationOrderingRecord> {
@@ -104,7 +137,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
       orderingId: `30000000-0000-4000-8000-${String(this.records.length + 1).padStart(12, '0')}`,
       state: 'cart_open',
       revision: 1,
-      updatedAt: '2026-08-30T12:00:00.000Z',
+      updatedAt: this.writeTime ?? new Date().toISOString(),
       order: null,
     };
     this.records.push(record);
@@ -124,7 +157,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict', record: latest };
     Object.assign(latest, input.materialization, {
       revision: latest.revision + 1,
-      updatedAt: new Date(Date.parse(latest.updatedAt) + 1_000).toISOString(),
+      updatedAt: this.writeTime ?? new Date(Date.parse(latest.updatedAt) + 1_000).toISOString(),
       pessoaId: input.pessoaId,
       processedMessageIds: [...latest.processedMessageIds, input.messageId],
     });
@@ -151,9 +184,16 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   }): Promise<DraftMutationResult> {
     return this.updateOpen({ ...input, pessoaId: input.current.pessoaId });
   }
-  async issueConfirmationToken(input: { sessionId: string; tokenHash: string }): Promise<void> {
-    this.tokenHashes.set(input.sessionId, input.tokenHash);
+  async issueConfirmationToken(input: { current: ConversationOrderingRecord; tokenHash: string }) {
+    if (this.conflictNextIssuance) {
+      this.conflictNextIssuance = false;
+      input.current.revision += 1;
+      input.current.updatedAt = new Date().toISOString();
+      return { kind: 'conflict' as const, record: input.current };
+    }
+    this.tokenHashes.set(input.current.sessionId, input.tokenHash);
     this.issuedHashes.push(input.tokenHash);
+    return { kind: 'issued' as const };
   }
 
   private confirm(current: ConversationOrderingRecord, pessoaId: string | null): ConversationOrderingRecord {
@@ -167,15 +207,50 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     return current;
   }
 
-  async confirmDirect(input: { current: ConversationOrderingRecord; pessoaId: string | null }): Promise<ConversationOrderingRecord> {
-    return this.confirm(input.current, input.pessoaId);
-  }
-
-  async confirmWithToken(input: { current: ConversationOrderingRecord; tokenHash: string; pessoaId: string | null }): Promise<ConversationOrderingRecord> {
-    if (this.tokenHashes.get(input.current.sessionId) !== input.tokenHash) {
+  async confirmAtomically(input: {
+    current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
+    tokenHash: string | null; pessoaId: string | null;
+  }) {
+    const latest = await this.findByOrderingId(input.current.orderingId);
+    if (!latest) throw new Error('missing');
+    if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict' as const, record: latest };
+    if (input.tokenHash && this.tokenHashes.get(input.current.sessionId) !== input.tokenHash) {
       throw new ConversationOrderingError('CONFIRMACAO_INVALIDA', 'Esta confirmação não é mais válida.');
     }
-    return this.confirm(input.current, input.pessoaId);
+    if (this.changePriceAfterRevalidate != null) {
+      this.currentPrice = this.changePriceAfterRevalidate;
+      this.changePriceAfterRevalidate = null;
+    }
+    const draft: ConversationOrderDraft = {
+      items: latest.cart.items.flatMap((item) => item.productId == null ? [] : [{
+        productId: item.productId,
+        quantity: item.quantity,
+        notes: item.notes,
+        selectedOptions: item.selectedModifiers.map((group) => ({
+          groupId: group.groupId,
+          optionSelections: group.selectedOptions.map((option) => ({ optionId: option.optionId, quantity: option.quantity ?? 1 })),
+        })),
+      }]),
+      fulfillment: latest.fulfillment,
+      paymentMethod: latest.payment.declaredMethod,
+      pessoaId: latest.pessoaId,
+      customer: latest.customer,
+      observations: latest.cart.observations,
+    };
+    const revalidated = await this.revalidateDraft(latest.empresaId, draft);
+    const same = jsonbSemanticallyEqual(
+      { cart: latest.cart, customer: latest.customer, fulfillment: latest.fulfillment, payment: latest.payment, pricing: latest.pricing },
+      { cart: revalidated.cart, customer: revalidated.customer, fulfillment: revalidated.fulfillment, payment: revalidated.payment, pricing: revalidated.pricing },
+    );
+    if (!revalidated.revalidation.ok || !same) {
+      const persisted = await this.updateOpen({
+        current: latest, expectedRevision: input.expectedRevision, messageId: input.messageId,
+        materialization: revalidated, pessoaId: input.pessoaId,
+      });
+      return { kind: persisted.kind === 'conflict' ? 'conflict' as const : 'requires_review' as const, record: persisted.record };
+    }
+    latest.processedMessageIds.push(input.messageId);
+    return { kind: 'confirmed' as const, record: this.confirm(latest, input.pessoaId) };
   }
 
   async applyAutoAccept(record: ConversationOrderingRecord): Promise<ConversationOrderingRecord> {
@@ -348,6 +423,142 @@ describe('ConversationOrdering', () => {
     });
     expect(second.orderingId).not.toBe(first.orderingId);
     expect(adapter.records).toHaveLength(2);
+  });
+
+  it('devolve a sessão histórica no retry concorrente após fechamento e aceita mensagem nova', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.autoAccept = false;
+    const firstReplica = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record) => `token-history-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'e').slice(0, 64),
+    });
+    const openCommand = {
+      type: 'open_or_update_draft' as const,
+      empresaId: EMPRESA_A,
+      remoteJid: JID_A,
+      messageId: 'wamid.historical-open-123456',
+      draft: { items: [{ productId: 10, quantity: 1 }] },
+    };
+    const opened = await firstReplica.apply(openCommand);
+    await firstReplica.apply({
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.historical-confirm-123456', orderingId: opened.orderingId, expectedRevision: 1,
+    });
+
+    const replicaA = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'unused-history-a', hashConfirmationToken: () => 'a'.repeat(64),
+    });
+    const replicaB = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'unused-history-b', hashConfirmationToken: () => 'b'.repeat(64),
+    });
+    const [retryA, retryB] = await Promise.all([replicaA.apply(openCommand), replicaB.apply(openCommand)]);
+
+    expect(retryA.orderingId).toBe(opened.orderingId);
+    expect(retryB.orderingId).toBe(opened.orderingId);
+    expect(adapter.records).toHaveLength(1);
+
+    const next = await replicaA.apply({
+      ...openCommand,
+      messageId: 'wamid.new-legitimate-open-123456',
+    });
+    expect(next.orderingId).not.toBe(opened.orderingId);
+    expect(adapter.records).toHaveLength(2);
+  });
+
+  it('não ressuscita token expirado e exige refresh por nova revisão/mensagem', async () => {
+    const adapter = new MemoryAdapter();
+    let currentTime = new Date('2026-08-30T12:00:00.000Z');
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record, expiresAt) => `token-expiry-${record.revision}-${expiresAt}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'f').slice(0, 64),
+      now: () => currentTime,
+    });
+    adapter.writeTime = currentTime.toISOString();
+    const command = {
+      type: 'open_or_update_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.expiring-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+    };
+    const opened = await ordering.apply(command);
+    expect(opened.confirmationAction?.expiresAt).toBe('2026-08-30T12:10:00.000Z');
+
+    currentTime = new Date('2026-08-30T12:11:00.000Z');
+    await expect(ordering.apply(command)).rejects.toMatchObject({
+      code: 'RESUMO_EXPIRADO',
+      currentSnapshot: expect.objectContaining({ requiresReview: true, confirmationAction: null, revision: 1 }),
+    });
+    expect(adapter.issuedHashes).toHaveLength(1);
+
+    adapter.writeTime = currentTime.toISOString();
+    const refreshed = await ordering.apply({
+      ...command,
+      orderingId: opened.orderingId,
+      expectedRevision: 1,
+      messageId: 'wamid.expiry-refresh-123456',
+    });
+    expect(refreshed.revision).toBe(2);
+    expect(Date.parse(refreshed.confirmationAction!.expiresAt)).toBeGreaterThan(currentTime.getTime());
+  });
+
+  it('trata JSONB com chaves recursivamente reordenadas como materialização igual', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.autoAccept = false;
+    adapter.reorderEveryRoundTrip = true;
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record) => `token-jsonb-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, '0').slice(0, 64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.jsonb-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+    });
+
+    const confirmed = await ordering.apply({
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.jsonb-confirm-123456', orderingId: opened.orderingId, expectedRevision: 1,
+    });
+
+    expect(confirmed).toMatchObject({ state: 'confirmed_waiting_review', revision: 1, requiresReview: false });
+    expect(confirmed.order).not.toBeNull();
+    expect(adapter.jsonbRoundTrips).toBeGreaterThanOrEqual(2);
+  });
+
+  it('vincula revalidação e criação em uma única confirmação atômica', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.autoAccept = false;
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record) => `token-atomic-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, '1').slice(0, 64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.atomic-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+    });
+    adapter.changePriceAfterRevalidate = 30;
+
+    const result = await ordering.apply({
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.atomic-confirm-123456', orderingId: opened.orderingId, expectedRevision: 1,
+    });
+
+    expect(result).toMatchObject({ state: 'cart_open', revision: 2, requiresReview: true, order: null });
+    expect(result.pricing.total).toBe(30);
+  });
+
+  it('devolve snapshot e revisão atuais quando a emissão perde o CAS', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.conflictNextIssuance = true;
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-issuance-conflict',
+      hashConfirmationToken: () => '2'.repeat(64),
+    });
+
+    await expect(ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.issue-conflict-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+    })).rejects.toMatchObject({
+      code: 'REVISAO_DESATUALIZADA',
+      currentSnapshot: expect.objectContaining({ revision: 2 }),
+    });
   });
 
   it('isola empresa/JID e cancela somente por comando explícito', async () => {
