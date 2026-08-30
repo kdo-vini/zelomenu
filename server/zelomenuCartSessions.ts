@@ -5,6 +5,7 @@ import { getServiceSupabase, getEmpresaUserId } from './supabaseServer.js';
 import { notifyPushSubscribers } from './zelomenuPushSubscriptions.js';
 import { getMesaContext } from './zelomenuMesaHandler.js';
 import { isReservedZeloMenuSlug, normalizeZeloMenuSlug } from '../src/domain/zelomenuSlug.js';
+import { isValidDeliveryEstimatedMinutes } from '../src/domain/deliverySettings.js';
 import { filterAvailableCatalog } from '../src/domain/zelomenuCatalog.js';
 import {
   resolveModifierSelections,
@@ -349,6 +350,7 @@ export type PublicCartResponse = {
     whatsapp: string | null;
     pixEnabled: boolean;
     deliveryEnabled: boolean;
+    deliveryEstimatedMinutes: number | null;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     logoUrl?: string | null;
     coverUrl?: string | null;
@@ -401,6 +403,7 @@ type ZeloMenuProfileRow = {
   zelomenu_auto_accept_orders?: boolean;
   zelomenu_scheduling_enabled?: boolean | null;
   zelomenu_scheduling_lead_time_minutes?: number | null;
+  zelomenu_delivery_estimated_minutes?: number | null;
 };
 
 // `chave_pix` já existe (compartilhada com o ZeloChat) — entra direto no core.
@@ -417,8 +420,9 @@ const ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS =
 const ZELOMENU_PROFILE_PIX_COLUMNS = 'zelomenu_pix_key_type';
 const ZELOMENU_PROFILE_ORDER_COLUMNS = 'zelomenu_auto_accept_orders';
 const ZELOMENU_PROFILE_SCHEDULING_COLUMNS = 'zelomenu_scheduling_enabled, zelomenu_scheduling_lead_time_minutes';
+const ZELOMENU_PROFILE_DELIVERY_COLUMNS = 'zelomenu_delivery_estimated_minutes';
 const ZELOMENU_PROFILE_ALL_COLUMNS =
-  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_BRANDING_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}, ${ZELOMENU_PROFILE_SCHEDULING_COLUMNS}`;
+  `${ZELOMENU_PROFILE_CORE_COLUMNS}, ${ZELOMENU_PROFILE_BRANDING_COLUMNS}, ${ZELOMENU_PROFILE_RECOMMENDATION_COLUMNS}, ${ZELOMENU_PROFILE_CATEGORY_SUGGESTIONS_COLUMNS}, ${ZELOMENU_PROFILE_PIX_COLUMNS}, ${ZELOMENU_PROFILE_ORDER_COLUMNS}, ${ZELOMENU_PROFILE_SCHEDULING_COLUMNS}, ${ZELOMENU_PROFILE_DELIVERY_COLUMNS}`;
 
 function isMissingZeloMenuOptionalColumn(
   error: { code?: string; message?: string } | null,
@@ -434,7 +438,8 @@ function isMissingZeloMenuOptionalColumn(
     || message.includes('zelomenu_cover_url')
     || message.includes('zelomenu_description')
     || message.includes('zelomenu_scheduling_enabled')
-    || message.includes('zelomenu_scheduling_lead_time_minutes');
+    || message.includes('zelomenu_scheduling_lead_time_minutes')
+    || message.includes('zelomenu_delivery_estimated_minutes');
 }
 
 /**
@@ -485,6 +490,10 @@ function sanitizeText(value: unknown, maxLength: number): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
   return normalized ? normalized.slice(0, maxLength) : null;
+}
+
+function publicDeliveryEstimatedMinutes(value: unknown, deliveryEnabled: boolean): number | null {
+  return deliveryEnabled && isValidDeliveryEstimatedMinutes(value) ? value : null;
 }
 
 function sanitizeObservations(value: unknown): string | null {
@@ -1423,6 +1432,7 @@ async function buildPublicResponse(
       whatsapp: toWhatsAppNumber(config.contato),
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
+      deliveryEstimatedMinutes: publicDeliveryEstimatedMinutes(perfilData?.zelomenu_delivery_estimated_minutes, config.deliveryConfig?.enabled === true),
       deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
       featuredEnabled: perfilData?.zelomenu_featured_enabled ?? false,
       featuredProductIds: Array.isArray(perfilData?.zelomenu_featured_product_ids) ? (perfilData.zelomenu_featured_product_ids as number[]) : [],
@@ -1490,6 +1500,7 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
       whatsapp: toWhatsAppNumber(config.contato),
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
       deliveryEnabled: config.deliveryConfig?.enabled === true,
+      deliveryEstimatedMinutes: publicDeliveryEstimatedMinutes(perfil?.zelomenu_delivery_estimated_minutes, config.deliveryConfig?.enabled === true),
       deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
       logoUrl: perfil?.logo_url ?? null,
       coverUrl: perfil?.zelomenu_cover_url ?? null,

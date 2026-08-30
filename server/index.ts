@@ -230,6 +230,7 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'BUSINESS_HOURS_UNAVAILABLE') return void res.status(503).json({ error: 'BUSINESS_HOURS_UNAVAILABLE' });
   if (message === 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE') return void res.status(503).json({ error: 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE' });
   if (message === 'DELIVERY_CONFIGURATION_INVALID') return void res.status(400).json({ error: 'DELIVERY_CONFIGURATION_INVALID' });
+  if (message === 'DELIVERY_ESTIMATED_MINUTES_INVALID') return void res.status(400).json({ error: 'DELIVERY_ESTIMATED_MINUTES_INVALID' });
   if (message === 'DELIVERY_SETTINGS_SAVE_FAILED') return void res.status(503).json({ error: 'DELIVERY_SETTINGS_SAVE_FAILED' });
   if (message === 'QUOTE_REQUEST_NOT_FOUND') return void res.status(404).json({ error: 'QUOTE_REQUEST_NOT_FOUND' });
   if (message === 'QUOTE_REQUEST_NOT_PENDING') return void res.status(409).json({ error: 'QUOTE_REQUEST_NOT_PENDING' });
@@ -597,6 +598,7 @@ app.get('/api/admin/zelomenu/delivery', async (req, res) => {
         locationVersion: String(address.locationVersion),
       },
       ranges: ranges.map((r) => ({ id: r.id, maxDistanceM: r.maxDistanceM, price: r.price })),
+      estimatedDeliveryMinutes: storeData.estimatedDeliveryMinutes,
       geocodingStatus,
       pricingRules: storeData.pricingRules,
       pricingVersion: storeData.pricingVersion,
@@ -611,7 +613,7 @@ app.get('/api/admin/zelomenu/delivery', async (req, res) => {
 app.patch('/api/admin/zelomenu/delivery', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { enabled, address, ranges, pricingRules } = req.body ?? {};
+    const { enabled, address, ranges, pricingRules, estimatedDeliveryMinutes } = req.body ?? {};
     if (typeof enabled !== 'boolean' || !address || typeof address !== 'object' || !Array.isArray(ranges)) {
       throw new Error('DELIVERY_CONFIGURATION_INVALID');
     }
@@ -620,6 +622,7 @@ app.patch('/api/admin/zelomenu/delivery', async (req, res) => {
       address: address as Record<string, unknown>,
       ranges,
       pricingRules: pricingRules as Array<Record<string, unknown>> | undefined,
+      estimatedDeliveryMinutes: estimatedDeliveryMinutes as number | null | undefined,
     });
     res.json({ ok: true });
   } catch (error) {

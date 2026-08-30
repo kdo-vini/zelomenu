@@ -1,9 +1,10 @@
-import { Building2, Info, Loader2, Plus, Ruler, Trash2 } from 'lucide-react';
+import { Building2, Clock3, Info, Loader2, Plus, Ruler, Trash2 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type {
-  DeliveryDraftValidation,
-  DeliveryRangeDraft,
-  DeliverySettingsDraft,
+import {
+  DELIVERY_ESTIMATED_MINUTES_RANGE,
+  type DeliveryDraftValidation,
+  type DeliveryRangeDraft,
+  type DeliverySettingsDraft,
 } from '../../domain/deliverySettings';
 
 type DeliverySettingsCardProps = {
@@ -12,6 +13,7 @@ type DeliverySettingsCardProps = {
   cepLoading: boolean;
   onLookupCep: () => void;
   onAddressChange: (field: 'postalCode' | 'number' | 'complement', value: string) => void;
+  onEstimatedDeliveryMinutesChange: (value: string) => void;
   onRangeChange: (index: number, field: keyof Pick<DeliveryRangeDraft, 'maxDistanceKm' | 'price'>, value: string) => void;
   onAddRange: () => void;
   onRemoveRange: (index: number) => void;
@@ -23,6 +25,7 @@ export function ZeloMenuDeliverySettingsCard({
   cepLoading,
   onLookupCep,
   onAddressChange,
+  onEstimatedDeliveryMinutesChange,
   onRangeChange,
   onAddRange,
   onRemoveRange,
@@ -105,6 +108,31 @@ export function ZeloMenuDeliverySettingsCard({
           <p id="delivery-derived-fields-help" className="flex items-start gap-2 rounded-xl border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)]/45 px-3 py-3 text-xs leading-relaxed text-[var(--color-brand-deep)]">
             <Info className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
             Este endereço será usado como referência para calcular as distâncias de entrega.
+          </p>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[0_12px_30px_rgba(36,31,54,0.05)]">
+        <CardHeading icon={Clock3} title="Tempo de entrega" description="Defina o prazo único que será mostrado aos clientes no delivery." />
+
+        <div className="space-y-3 p-4 sm:p-5">
+          <Field label="Tempo estimado de entrega (minutos)" error={validation.estimatedDeliveryMinutes}>
+            <input
+              type="number"
+              min={DELIVERY_ESTIMATED_MINUTES_RANGE.min}
+              max={DELIVERY_ESTIMATED_MINUTES_RANGE.max}
+              step="1"
+              value={draft.estimatedDeliveryMinutes}
+              onChange={(event) => onEstimatedDeliveryMinutesChange(event.target.value)}
+              inputMode="numeric"
+              placeholder="Ex.: 50"
+              aria-invalid={!!validation.estimatedDeliveryMinutes}
+              className={inputClass(!!validation.estimatedDeliveryMinutes)}
+            />
+          </Field>
+          <p className="flex items-start gap-2 rounded-xl border border-[var(--color-brand-soft)] bg-[var(--color-brand-soft)]/45 px-3 py-3 text-xs leading-relaxed text-[var(--color-brand-deep)]">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            Use um valor como 50 ou 120. Deixe em branco se não quiser mostrar um prazo no cardápio.
           </p>
         </div>
       </section>

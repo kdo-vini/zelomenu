@@ -21,6 +21,7 @@ export type DeliveryRange = {
 
 export type DeliverySettings = {
   enabled: boolean;
+  estimatedDeliveryMinutes?: number | null;
   address: DeliveryAddress | null;
   ranges: DeliveryRange[];
   geocodingStatus: DeliveryGeocodingStatus;
@@ -67,6 +68,7 @@ export type DeliveryPricingRuleDraft = {
 
 export type DeliverySettingsDraft = {
   enabled: boolean;
+  estimatedDeliveryMinutes: string;
   address: DeliveryAddress;
   ranges: DeliveryRangeDraft[];
   geocodingStatus: DeliveryGeocodingStatus;
@@ -106,6 +108,7 @@ export function createDeliveryDraft(settings: DeliverySettings): DeliverySetting
 
   return {
     enabled: settings.enabled,
+    estimatedDeliveryMinutes: settings.estimatedDeliveryMinutes == null ? '' : String(settings.estimatedDeliveryMinutes),
     address: { ...address },
     ranges: settings.ranges.map((range) => ({
       id: range.id,
@@ -133,6 +136,7 @@ export function deliveryDraftToSettings(draft: DeliverySettingsDraft): DeliveryS
 
   return {
     enabled: draft.enabled,
+    estimatedDeliveryMinutes: parseEstimatedDeliveryMinutes(draft.estimatedDeliveryMinutes),
     address: hasAddress ? address : null,
     ranges: draft.ranges.flatMap((range) => {
       const maxDistanceKm = parseDecimal(range.maxDistanceKm);
@@ -184,6 +188,7 @@ export function formatPostalCode(value: string): string {
 }
 
 export type DeliveryDraftValidation = {
+  estimatedDeliveryMinutes: string | null;
   postalCode: string | null;
   number: string | null;
   street: string | null;
@@ -192,7 +197,13 @@ export type DeliveryDraftValidation = {
   general: string | null;
 };
 
+export const DELIVERY_ESTIMATED_MINUTES_RANGE = {
+  min: 1,
+  max: 1440,
+} as const;
+
 export function validateDeliveryDraft(draft: DeliverySettingsDraft): DeliveryDraftValidation {
+  const estimatedDeliveryMinutes = validateEstimatedDeliveryMinutes(draft.estimatedDeliveryMinutes);
   const postalCode = draft.address.postalCode.replace(/\D/g, '').length === 8
     ? null
     : 'Informe um CEP válido com 8 dígitos.';
@@ -217,18 +228,45 @@ export function validateDeliveryDraft(draft: DeliverySettingsDraft): DeliveryDra
   if (draft.ranges.length === 0) general = 'Adicione pelo menos uma faixa de entrega.';
   else if (duplicateDistance) general = 'Use limites de distância diferentes em cada faixa.';
   else if (ranges.some((error) => error != null)) general = 'Corrija as faixas destacadas antes de salvar.';
+  else if (estimatedDeliveryMinutes) general = 'Corrija o tempo estimado de entrega antes de salvar.';
   else if (postalCode || number || street || city) general = 'Complete o endereço da loja antes de salvar.';
 
-  return { postalCode, number, street, city, ranges, general };
+  return { estimatedDeliveryMinutes, postalCode, number, street, city, ranges, general };
+}
+
+function validateEstimatedDeliveryMinutes(value: string): string | null {
+  const normalized = value.trim();
+  if (!normalized) return null;
+
+  const minutes = Number(normalized);
+  if (!Number.isInteger(minutes)) return 'Informe um número inteiro de minutos.';
+  if (!isValidDeliveryEstimatedMinutes(minutes)) {
+    return `Informe um valor entre ${DELIVERY_ESTIMATED_MINUTES_RANGE.min} e ${DELIVERY_ESTIMATED_MINUTES_RANGE.max} minutos.`;
+  }
+  return null;
+}
+
+function parseEstimatedDeliveryMinutes(value: string): number | null {
+  return validateEstimatedDeliveryMinutes(value) === null && value.trim()
+    ? Number(value.trim())
+    : null;
 }
 
 export function maxDeliveryDistanceKm(ranges: DeliveryRange[]): number {
   return ranges.reduce((max, range) => Math.max(max, range.maxDistanceM / 1000), 0);
 }
 
-export function estimatedDeliveryMinutes(ranges: DeliveryRange[]): number | null {
-  const maxKm = maxDeliveryDistanceKm(ranges);
-  return maxKm > 0 ? Math.max(1, Math.round(maxKm * 3)) : null;
+export function isValidDeliveryEstimatedMinutes(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value >= DELIVERY_ESTIMATED_MINUTES_RANGE.min
+    && value <= DELIVERY_ESTIMATED_MINUTES_RANGE.max;
+}
+
+export function formatEstimatedDeliveryMinutes(minutes: number | null | undefined): string | null {
+  return isValidDeliveryEstimatedMinutes(minutes)
+    ? `${minutes} min`
+    : null;
 }
 
 export function approximateDeliveryAreaKm2(ranges: DeliveryRange[]): number | null {

@@ -6,6 +6,7 @@
 import { recordCacheHit, recordCircuitBreaker, recordLatency, recordProviderCall, recordQuote } from './deliveryMetrics.js';
 import { getServiceSupabase } from './supabaseServer.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isValidDeliveryEstimatedMinutes } from '../src/domain/deliverySettings.js';
 import {
   normalizePostalCode,
   isValidPostalCode,
@@ -840,6 +841,7 @@ export type DeliveryStoreData = {
   locationVersion: number;
   ranges: DeliveryRange[];
   enabledViaConfig: boolean;
+  estimatedDeliveryMinutes: number | null;
   pricingRules: DeliveryPricingRule[];
   pricingVersion: number;
   timezone: string;
@@ -866,7 +868,7 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
   const [perfilRes, rangesRes, rulesRes] = await Promise.all([
     supabase
       .from('empresa_perfil')
-      .select('delivery_latitude, delivery_longitude, delivery_location_version, delivery_config')
+      .select('delivery_latitude, delivery_longitude, delivery_location_version, delivery_config, zelomenu_delivery_estimated_minutes')
       .eq('id', empresaId)
       .maybeSingle(),
     supabase
@@ -899,6 +901,10 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
 
   const dc = perfil?.delivery_config as { enabled?: boolean; pricingVersion?: number; timezone?: string } | null;
   const enabledViaConfig = dc?.enabled === true;
+  const rawEstimatedDeliveryMinutes = perfil?.zelomenu_delivery_estimated_minutes;
+  const estimatedDeliveryMinutes = isValidDeliveryEstimatedMinutes(rawEstimatedDeliveryMinutes)
+    ? rawEstimatedDeliveryMinutes
+    : null;
   const pricingVersion = dc?.pricingVersion ?? 0;
   const timezone = dc?.timezone ?? 'America/Sao_Paulo';
 
@@ -936,6 +942,7 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
     locationVersion: Number(perfil?.delivery_location_version ?? 0),
     ranges,
     enabledViaConfig,
+    estimatedDeliveryMinutes,
     pricingRules,
     pricingVersion,
     timezone,
@@ -1099,13 +1106,25 @@ export async function updateStoreDeliveryAddress(
 
 export async function saveDeliverySettings(
   empresaId: string,
-  input: { enabled: boolean; address: Record<string, unknown>; ranges: Array<{ maxDistanceM: number; price: number }>; pricingRules?: Array<Record<string, unknown>> },
+  input: {
+    enabled: boolean;
+    address: Record<string, unknown>;
+    ranges: Array<{ maxDistanceM: number; price: number }>;
+    pricingRules?: Array<Record<string, unknown>>;
+    estimatedDeliveryMinutes?: number | null;
+  },
 ): Promise<void> {
   const address = input.address;
   const postalCode = normalizePostalCode(String(address.postalCode ?? ''));
   const latitude = Number(address.latitude);
   const longitude = Number(address.longitude);
+  const estimatedDeliveryMinutes = input.estimatedDeliveryMinutes;
   const uniqueDistances = new Set<number>();
+  if (estimatedDeliveryMinutes !== undefined
+    && estimatedDeliveryMinutes !== null
+    && !isValidDeliveryEstimatedMinutes(estimatedDeliveryMinutes)) {
+    throw new Error('DELIVERY_ESTIMATED_MINUTES_INVALID');
+  }
   if (input.enabled && (
     !isValidPostalCode(postalCode)
     || !String(address.number ?? '').trim()
@@ -1136,14 +1155,21 @@ export async function saveDeliverySettings(
     pricesByDistance: (rule.pricesByDistance as Array<{ maxDistanceM: number; price: number }>) ?? [],
   }));
 
-  const { error } = await getDb().rpc('save_zelomenu_delivery_settings', {
+  const rpcInput = {
     p_empresa_id: empresaId,
     p_enabled: Boolean(input.enabled),
     p_address: input.address,
     p_ranges: ranges,
     p_pricing_rules: pricingRules,
-  });
+  };
+  const { error } = estimatedDeliveryMinutes === undefined
+    ? await getDb().rpc('save_zelomenu_delivery_settings', rpcInput)
+    : await getDb().rpc('save_zelomenu_delivery_settings', {
+      ...rpcInput,
+      p_estimated_delivery_minutes: estimatedDeliveryMinutes,
+    });
   if (error) throw new Error(error.message.includes('DELIVERY_CONFIGURATION_INVALID') ? 'DELIVERY_CONFIGURATION_INVALID'
+    : error.message.includes('DELIVERY_ESTIMATED_MINUTES_INVALID') ? 'DELIVERY_ESTIMATED_MINUTES_INVALID'
     : error.message.includes('DELIVERY_PRICING_RULE_INVALID') ? 'DELIVERY_PRICING_RULE_INVALID'
     : error.message.includes('DELIVERY_PRICING_RULE_OVERLAP') ? 'DELIVERY_PRICING_RULE_OVERLAP'
     : error.message.includes('DELIVERY_PRICING_RANGE_PRICE_MISSING') ? 'DELIVERY_PRICING_RANGE_PRICE_MISSING'

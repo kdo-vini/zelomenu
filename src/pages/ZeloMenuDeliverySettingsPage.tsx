@@ -156,6 +156,12 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
     }));
   }
 
+  function updateEstimatedDeliveryMinutes(value: string) {
+    setSaved(false);
+    setSaveError(null);
+    setDraft((current) => ({ ...current, estimatedDeliveryMinutes: value }));
+  }
+
   function addRange() {
     setSaved(false);
     setDraft((current) => ({
@@ -272,6 +278,7 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
             cepLoading={cepLoading}
             onLookupCep={() => void handleLookupCep()}
             onAddressChange={updateAddress}
+            onEstimatedDeliveryMinutesChange={updateEstimatedDeliveryMinutes}
             onRangeChange={updateRange}
             onAddRange={addRange}
             onRemoveRange={removeRange}
@@ -293,7 +300,12 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
         </div>
 
         <div className="lg:sticky lg:top-5">
-          <DeliveryCoveragePreview ranges={deliverySettings.ranges} address={deliverySettings.address} loading={loading || geocoding} />
+          <DeliveryCoveragePreview
+            ranges={deliverySettings.ranges}
+            address={deliverySettings.address}
+            estimatedDeliveryMinutes={deliverySettings.estimatedDeliveryMinutes}
+            loading={loading || geocoding}
+          />
         </div>
       </div>
 

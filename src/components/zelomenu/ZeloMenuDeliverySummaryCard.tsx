@@ -54,6 +54,7 @@ export function ZeloMenuDeliverySummaryCard({ onConfigure }: { onConfigure: () =
         <DeliveryCoveragePreview
           ranges={settings.ranges}
           address={settings.address}
+          estimatedDeliveryMinutes={settings.estimatedDeliveryMinutes}
           variant="summary"
           loading={loading}
           showHeader={false}

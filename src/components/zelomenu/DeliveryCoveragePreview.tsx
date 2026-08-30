@@ -4,7 +4,7 @@ import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   approximateDeliveryAreaKm2,
-  estimatedDeliveryMinutes,
+  formatEstimatedDeliveryMinutes,
   maxDeliveryDistanceKm,
   type DeliveryAddress,
   type DeliveryRange,
@@ -15,6 +15,7 @@ type PreviewVariant = 'summary' | 'detail';
 type DeliveryCoveragePreviewProps = {
   ranges: DeliveryRange[];
   address?: DeliveryAddress | null;
+  estimatedDeliveryMinutes?: number | null;
   variant?: PreviewVariant;
   loading?: boolean;
   showHeader?: boolean;
@@ -67,12 +68,13 @@ function mapTileAttribution(): string {
 export function DeliveryCoveragePreview({
   ranges,
   address,
+  estimatedDeliveryMinutes,
   variant = 'detail',
   loading = false,
   showHeader = true,
 }: DeliveryCoveragePreviewProps) {
   const maxDistanceKm = maxDeliveryDistanceKm(ranges);
-  const estimatedMinutes = estimatedDeliveryMinutes(ranges);
+  const estimatedDeliveryLabel = formatEstimatedDeliveryMinutes(estimatedDeliveryMinutes);
   const areaKm2 = approximateDeliveryAreaKm2(ranges);
   const sortedRanges = useMemo(
     () => [...ranges].sort((a, b) => a.maxDistanceM - b.maxDistanceM),
@@ -250,7 +252,7 @@ export function DeliveryCoveragePreview({
 
         <div className="grid grid-cols-1 divide-y divide-[var(--color-line)] sm:grid-cols-3 sm:divide-x sm:divide-y-0" aria-label="Resumo da área de entrega">
           <Metric icon={Ruler} label="Distância máxima" value={metricValue(maxDistanceKm || null, 'km')} />
-          <Metric icon={Clock3} label="Tempo estimado (máx.)" value={estimatedMinutes == null ? '—' : `~ ${estimatedMinutes} min`} />
+          <Metric icon={Clock3} label="Tempo estimado" value={estimatedDeliveryLabel ?? 'Não informado'} />
           <Metric icon={Maximize2} label="Área aproximada" value={metricValue(areaKm2, 'km²')} />
         </div>
       </div>

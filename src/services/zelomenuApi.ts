@@ -129,6 +129,7 @@ export type ZeloMenuPublicCartResponse = {
     address: string;
     pixEnabled: boolean;
     deliveryEnabled: boolean;
+    deliveryEstimatedMinutes: number | null;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     whatsapp?: string | null;
     featuredEnabled?: boolean;
@@ -193,6 +194,7 @@ export type ZeloMenuPublicStoreResponse = {
     address: string;
     pixEnabled: boolean;
     deliveryEnabled: boolean;
+    deliveryEstimatedMinutes: number | null;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
     logoUrl?: string | null;
     coverUrl?: string | null;

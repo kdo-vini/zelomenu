@@ -57,6 +57,7 @@ import {
   firstZeloMenuCheckoutError,
   validateZeloMenuCheckoutDetails,
 } from '../domain/zelomenuCheckout';
+import { formatEstimatedDeliveryMinutes } from '../domain/deliverySettings';
 import type { ZeloMenuCartSnapshot } from '../domain/zelomenuCartSchema';
 import { syncZeloMenuStoreCartCache } from '../domain/zelomenuStoreCartCache';
 import { buildPublicStorePath } from '../domain/zelomenuSlug';
@@ -1181,6 +1182,9 @@ function ZeloMenuCartPageContent() {
   const STEP_TITLES = ['Sua sacola', 'Entrega ou retirada', 'Revisar e confirmar'] as const;
   const isDelivery = draft.fulfillmentType === 'delivery';
   const deliveryEnabled = payload.business.deliveryEnabled;
+  const deliveryEstimateLabel = isDelivery
+    ? formatEstimatedDeliveryMinutes(payload.business.deliveryEstimatedMinutes)
+    : null;
   const fee = estimated.deliveryFee;
   const feeToConfirm = estimated.deliveryFeeToConfirm;
   const stepLabel1 = isDelivery ? 'Entrega' : 'Retirada';
@@ -1920,6 +1924,11 @@ function ZeloMenuCartPageContent() {
                     <div className={`grid transition-[grid-template-rows,opacity,margin-top] duration-[380ms] ease-[cubic-bezier(.22,.61,.36,1)] motion-reduce:transition-none ${isDelivery ? 'mt-4 grid-rows-[1fr] opacity-100' : 'mt-0 grid-rows-[0fr] opacity-0'}`}>
                       <div className="min-h-0 overflow-hidden">
                         <div className="flex flex-col gap-4">
+                          {deliveryEstimateLabel ? (
+                            <p className="rounded-xl border border-[var(--zm-brand-soft)] bg-[var(--zm-brand-soft)]/45 px-3 py-2.5 text-sm leading-relaxed text-[var(--zm-brand-deep)]">
+                              Tempo estimado de entrega: <strong>{deliveryEstimateLabel}</strong>
+                            </p>
+                          ) : null}
                           <label className="flex flex-col gap-1.5">
                             <span className={labelCls}>CEP *</span>
                             <input

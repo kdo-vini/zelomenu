@@ -3,7 +3,9 @@ import {
   createDeliveryDraft,
   deliveryDraftToSettings,
   EMPTY_DELIVERY_SETTINGS,
+  formatEstimatedDeliveryMinutes,
   formatPostalCode,
+  isValidDeliveryEstimatedMinutes,
   validateDeliveryDraft,
 } from './deliverySettings';
 
@@ -54,5 +56,47 @@ describe('deliverySettings', () => {
 
   it('formata o CEP sem aceitar caracteres além do limite', () => {
     expect(formatPostalCode('16.370-000abc')).toBe('16370-000');
+  });
+
+  it('preserva o prazo manual de entrega no contrato do formulário', () => {
+    const draft = createDeliveryDraft({
+      ...EMPTY_DELIVERY_SETTINGS,
+      estimatedDeliveryMinutes: 50,
+    });
+
+    expect(draft.estimatedDeliveryMinutes).toBe('50');
+
+    draft.estimatedDeliveryMinutes = '120';
+
+    expect(deliveryDraftToSettings(draft).estimatedDeliveryMinutes).toBe(120);
+  });
+
+  it('aceita prazo vazio e rejeita minutos fora do intervalo permitido', () => {
+    const draft = createDeliveryDraft(EMPTY_DELIVERY_SETTINGS);
+
+    expect(validateDeliveryDraft(draft).estimatedDeliveryMinutes).toBeNull();
+
+    draft.estimatedDeliveryMinutes = '0';
+    expect(validateDeliveryDraft(draft).estimatedDeliveryMinutes).toContain('entre 1 e 1440');
+
+    draft.estimatedDeliveryMinutes = '50,5';
+    expect(validateDeliveryDraft(draft).estimatedDeliveryMinutes).toContain('inteiro');
+
+    draft.estimatedDeliveryMinutes = '1441';
+    expect(validateDeliveryDraft(draft).estimatedDeliveryMinutes).toContain('entre 1 e 1440');
+  });
+
+  it('formata somente a estimativa manual válida para o cliente', () => {
+    expect(formatEstimatedDeliveryMinutes(50)).toBe('50 min');
+    expect(formatEstimatedDeliveryMinutes(null)).toBeNull();
+    expect(formatEstimatedDeliveryMinutes(0)).toBeNull();
+  });
+
+  it('centraliza os limites aceitos pelo painel e pela API', () => {
+    expect(isValidDeliveryEstimatedMinutes(1)).toBe(true);
+    expect(isValidDeliveryEstimatedMinutes(1440)).toBe(true);
+    expect(isValidDeliveryEstimatedMinutes(0)).toBe(false);
+    expect(isValidDeliveryEstimatedMinutes(1441)).toBe(false);
+    expect(isValidDeliveryEstimatedMinutes('50')).toBe(false);
   });
 });
