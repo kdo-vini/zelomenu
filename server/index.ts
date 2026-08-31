@@ -18,7 +18,12 @@ import { listBusinesses } from './zelomenuBusinessDirectory.js';
 import { removePublicPushSubscription, savePublicPushSubscription, startOrderStatusPushDispatcher, type PublicPushSubscriptionPayload } from './zelomenuPushSubscriptions.js';
 import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
+import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
+import { createInternalCatalogFailureLimiter, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
+import { createInternalOrderingRouter } from './internalOrdering.js';
+import { ConversationOrdering } from './supabaseConversationOrderingAdapter.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
+import type { Request } from 'express';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,17 +33,34 @@ const corsOrigins = (process.env.CORS_ORIGINS ?? '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
-
-// Production is same-origin by default. Separate frontend origins must be
-// explicitly allowlisted instead of inheriting a wildcard CORS policy.
-app.use(cors({ origin: corsOrigins.length > 0 ? corsOrigins : false }));
-app.use(express.json({ limit: '1mb' }));
+const internalCatalogFailureLimiter = createInternalCatalogFailureLimiter();
+const internalOrderingFailureLimiter = createInternalCatalogFailureLimiter();
 
 app.use((req, res, next) => {
   const requestId = req.header('x-request-id')?.slice(0, 100) || randomUUID();
   res.locals.requestId = requestId;
   res.setHeader('x-request-id', requestId);
   next();
+});
+
+// This route-specific guard intentionally runs before JSON parsing. Invalid
+// bodies and oversized requests must be counted without affecting other APIs.
+app.use('/internal/catalog/search', internalCatalogFailureLimiter);
+app.use('/internal/ordering', internalOrderingFailureLimiter);
+
+// Production is same-origin by default. Separate frontend origins must be
+// explicitly allowlisted instead of inheriting a wildcard CORS policy.
+app.use(cors({ origin: corsOrigins.length > 0 ? corsOrigins : false }));
+app.use(express.json({ limit: '1mb' }));
+app.use((error: unknown, _req: Request, res: Response, next: (error: unknown) => void) => {
+  const status = typeof error === 'object' && error !== null && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+  if (error instanceof SyntaxError && status === 400) {
+    return res.status(400).json({ error: 'JSON_INVALIDO', detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
+  }
+  if (status === 413) {
+    return res.status(413).json({ error: 'PAYLOAD_MUITO_GRANDE', detail: 'Os dados enviados são grandes demais.', requestId: res.locals.requestId });
+  }
+  return next(error);
 });
 
 // Trust proxy headers when behind a reverse proxy
@@ -78,6 +100,63 @@ const cepLookupLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'TOO_MANY_REQUESTS', detail: 'Muitas consultas de CEP. Tente novamente em instantes.' },
 });
+
+const internalCatalogSearchLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const empresaId = (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId;
+    return makeInternalCatalogRateLimitKey(empresaId ?? 'consulta-invalida', ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown'));
+  },
+  handler: (_req, res) => res.status(429).json({
+    error: 'MUITAS_REQUISICOES',
+    detail: 'Muitas consultas em pouco tempo. Tente novamente em instantes.',
+    requestId: res.locals.requestId,
+  }),
+});
+
+// ─── Internal catalog discovery (ZeloChat) ───────────────────────────────────
+
+async function executeInternalCatalogSearch(_req: Request, res: Response, parsed: Extract<ReturnType<typeof parseInternalCatalogSearchRequest>, { ok: true }>): Promise<void> {
+  try {
+    const result = await CatalogDiscovery.search(parsed.value);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error) {
+    // Do not log request headers/body: both can contain the internal key.
+    console.error('[ZeloMenu] internal catalog search error:', error);
+    res.status(500).json({
+      error: 'CONSULTA_INDISPONIVEL',
+      detail: 'Não foi possível consultar o cardápio agora. Tente novamente em instantes.',
+      requestId: res.locals.requestId,
+    });
+  }
+}
+
+app.post('/internal/catalog/search', async (req, res) => {
+  if (res.locals.internalCatalogKeyValid !== true) {
+    return res.status(401).json({
+      error: 'NAO_AUTORIZADO',
+      detail: 'Não foi possível autorizar esta consulta.',
+      requestId: res.locals.requestId,
+    });
+  }
+
+  const parsed = parseInternalCatalogSearchRequest(req.body);
+  if (!parsed.ok) {
+    return res.status(400).json({
+      error: 'CONSULTA_INVALIDA',
+      detail: parsed.message,
+      requestId: res.locals.requestId,
+    });
+  }
+  (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId = parsed.value.empresaId;
+  return internalCatalogSearchLimiter(req, res, () => { void executeInternalCatalogSearch(req, res, parsed); });
+});
+
+app.use('/internal/ordering', createInternalOrderingRouter(ConversationOrdering));
 
 // ─── Public store by slug ─────────────────────────────────────────────────────
 

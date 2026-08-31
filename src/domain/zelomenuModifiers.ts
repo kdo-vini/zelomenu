@@ -124,7 +124,7 @@ export function sortModifierGroups(groups: ZeloMenuModifierGroup[]): ZeloMenuMod
 
 export { buildModifierSignature as buildModifierSelectionKey } from './zelomenuCartItemKey';
 
-function resolveOptionPrice(
+export function resolveModifierOptionPrice(
   option: ZeloMenuModifierOption,
 ): number {
   if (option.linkedProduct) {
@@ -215,7 +215,7 @@ export function resolveModifierSelections(
       selectedOptions.push({
         optionId: option.id,
         optionName: option.linkedProduct ? option.linkedProduct.name : option.name,
-        priceDelta: resolveOptionPrice(option),
+        priceDelta: resolveModifierOptionPrice(option),
         quantity,
       });
     }
@@ -349,10 +349,10 @@ export function previewModifierPrice(
     if (group.pricingMode === 'substituir') {
       const selectedOption = selectedOptions[0]?.option;
       if (selectedOption) {
-        baseOverride = resolveOptionPrice(selectedOption);
+        baseOverride = resolveModifierOptionPrice(selectedOption);
       } else if (hasRequired) {
         const lowestPrice = activeOptions
-          .map(resolveOptionPrice)
+          .map(resolveModifierOptionPrice)
           .sort((a, b) => a - b)[0];
         if (lowestPrice != null) lowestSubstitutionPrice = lowestPrice;
       }
@@ -360,7 +360,7 @@ export function previewModifierPrice(
     }
 
     for (const selection of selectedOptions) {
-      additionsTotal += resolveOptionPrice(selection.option!) * selection.quantity;
+      additionsTotal += resolveModifierOptionPrice(selection.option!) * selection.quantity;
     }
     if (hasRequired) {
       const missingPrice = minimumMissingQuantityPrice(group, activeOptions, validQuantitiesByOption);
@@ -478,7 +478,7 @@ function minimumMissingQuantityPrice(
     : requiredDistinct;
   if (requiredTotal === 0) return 0;
 
-  const options = [...activeOptions].sort((a, b) => resolveOptionPrice(a) - resolveOptionPrice(b) || a.order - b.order);
+  const options = [...activeOptions].sort((a, b) => resolveModifierOptionPrice(a) - resolveModifierOptionPrice(b) || a.order - b.order);
   const added = new Map<string, number>();
   let missingDistinct = Math.max(0, requiredDistinct - selectedQuantities.size);
   let missingTotal = Math.max(0, requiredTotal - [...selectedQuantities.values()].reduce((total, quantity) => total + quantity, 0));
@@ -488,7 +488,7 @@ function minimumMissingQuantityPrice(
     for (const option of options) {
       if (missingDistinct <= 0) break;
       if (selectedQuantities.has(option.id)) continue;
-      total += resolveOptionPrice(option);
+      total += resolveModifierOptionPrice(option);
       missingDistinct -= 1;
     }
     return roundCurrency(total);
@@ -504,7 +504,7 @@ function minimumMissingQuantityPrice(
     const current = selectedQuantities.get(option.id) ?? 0;
     if (current + (added.get(option.id) ?? 0) >= cap) continue;
     added.set(option.id, 1);
-    total += resolveOptionPrice(option);
+    total += resolveModifierOptionPrice(option);
     missingDistinct -= 1;
     missingTotal = Math.max(0, missingTotal - 1);
   }
@@ -517,7 +517,7 @@ function minimumMissingQuantityPrice(
     const available = Math.max(0, cap - current - alreadyAdded);
     const take = Math.min(available, missingTotal);
     if (take <= 0) continue;
-    total += resolveOptionPrice(option) * take;
+    total += resolveModifierOptionPrice(option) * take;
     added.set(option.id, alreadyAdded + take);
     missingTotal -= take;
   }

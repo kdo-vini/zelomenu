@@ -1133,6 +1133,61 @@ async function resolveSnapshots(
   return { cart: { items: resolvedItems, observations: sanitizeObservations(params.observations) }, fulfillment, pricing, payment };
 }
 
+/**
+ * Materialização server-side exclusiva do fluxo conversacional. A interface
+ * aceita somente IDs, quantidades e observações; nomes, preços, disponibilidade,
+ * complementos, frete e totais são sempre reconstruídos do catálogo público.
+ */
+export async function materializeWhatsAppOrderDraft(input: {
+  empresaId: string;
+  items: Array<{
+    productId: number;
+    quantity: number;
+    notes?: string | null;
+    selectedOptions?: ZeloMenuModifierSelectionInput[];
+  }>;
+  observations?: string | null;
+  customer?: { name?: string | null; phone?: string | null };
+  fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
+  paymentMethod?: string | null;
+}): Promise<ResolvedCart & { customer: ZeloMenuCustomerSnapshot; revalidation: ZeloMenuCartRevalidation }> {
+  if (!Array.isArray(input.items) || input.items.length < 1) throw new Error('EMPTY_CART');
+  if (input.items.length > 50) throw new Error('CART_LINE_LIMIT_EXCEEDED');
+  const items = input.items.map((item): ZeloMenuCartItemInput => {
+    if (!Number.isSafeInteger(item.productId) || item.productId <= 0) throw new Error('PRODUCT_NOT_FOUND');
+    if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 999) throw new Error('INVALID_QUANTITY');
+    return {
+      productId: item.productId,
+      // Sentinela deliberadamente não pesquisável: esta camada jamais resolve
+      // ambiguidade por nome se o ID canônico deixar de existir.
+      productName: '',
+      quantity: item.quantity,
+      notes: sanitizeText(item.notes, 200),
+      selectedOptions: item.selectedOptions ?? [],
+    };
+  });
+  const fulfillment: Partial<ZeloMenuFulfillmentSnapshot> = {
+    type: input.fulfillment?.type === 'delivery' ? 'delivery' : 'pickup',
+    ...input.fulfillment,
+    asap: input.fulfillment?.asap !== false,
+  };
+  const resolved = await resolveSnapshots(input.empresaId, {
+    items,
+    fulfillment,
+    paymentMethod: input.paymentMethod,
+    observations: input.observations,
+    context: 'whatsapp_order',
+  });
+  return {
+    ...resolved,
+    customer: {
+      name: sanitizeText(input.customer?.name, 120),
+      phone: sanitizeText(input.customer?.phone, 40),
+    },
+    revalidation: revalidationFromResolved(resolved),
+  };
+}
+
 // ─── Token management ─────────────────────────────────────────────────────────
 
 async function findTokenRowByHash(token: string): Promise<TokenRow | null> {
@@ -1953,6 +2008,69 @@ async function tryAutoAcceptPublicOrder(input: {
   };
 }
 
+export const applyZeloMenuAutoAccept = tryAutoAcceptPublicOrder;
+
+/** Shared store-hours invariant for public and conversational confirmation. */
+export async function assertZeloMenuFulfillmentAvailable(
+  empresaId: string,
+  fulfillment: ZeloMenuFulfillmentSnapshot,
+): Promise<void> {
+  await loadCatalogFromDb(empresaId);
+  const config = getConfig(empresaId);
+  const openMinutes = parseBusinessTime(config.openTime);
+  const closeMinutes = parseBusinessTime(config.closeTime);
+  const useWeekly = hasAnyOpenWindow(config.weeklyHours);
+  if (!useWeekly && (openMinutes === null || closeMinutes === null)) return;
+
+  const closedDays = Array.isArray(config.closedDays) ? config.closedDays : [];
+  const timezone = config.timezone || 'America/Sao_Paulo';
+  if (fulfillment.asap === true) {
+    if (buildPublicBusinessHoursStatus(config).openNow === false) {
+      throw new Error('STORE_CLOSED_ASAP:Loja fechada agora. Você pode montar o pedido e agendar para um horário de funcionamento disponível.');
+    }
+    return;
+  }
+
+  if (config.schedulingEnabled === false) {
+    throw new Error('SCHEDULING_DISABLED:Agendamento não está disponível para esta loja.');
+  }
+  const pickupTime = fulfillment.pickupTime;
+  const pickupDate = fulfillment.pickupDate;
+  const pickupMinutes = parseBusinessTime(pickupTime);
+  if (pickupMinutes === null) throw new Error('PICKUP_TIME_INVALID:Horário de retirada inválido.');
+  if (typeof pickupDate === 'string' && pickupTime && isPickupInPast(pickupDate, pickupTime, timezone)) {
+    throw new Error('PICKUP_IN_PAST:Horário de retirada já passou. Escolha um horário futuro.');
+  }
+  if (config.schedulingLeadTimeMinutes > 0 && typeof pickupDate === 'string' && pickupTime) {
+    const leadBoundary = new Date(Date.now() + config.schedulingLeadTimeMinutes * 60_000);
+    if (isPickupInPast(pickupDate, pickupTime, timezone, leadBoundary)) {
+      const leadHours = Math.floor(config.schedulingLeadTimeMinutes / 60);
+      const leadMins = config.schedulingLeadTimeMinutes % 60;
+      const leadStr = leadHours > 0 ? (leadMins > 0 ? `${leadHours}h${leadMins}` : `${leadHours}h`) : `${leadMins} min`;
+      throw new Error(`PICKUP_LEAD_TIME:Este horário precisa ter pelo menos ${leadStr} de antecedência. Escolha um horário mais tarde.`);
+    }
+  }
+  if (useWeekly) {
+    const dayKey = typeof pickupDate === 'string' ? pickupDayKey(pickupDate) : null;
+    if (dayKey && config.weeklyHours[dayKey].length === 0) {
+      throw new Error('PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.');
+    }
+    if (dayKey && !isMinuteWithinDay(config.weeklyHours, dayKey, pickupMinutes)) {
+      throw new Error('PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.');
+    }
+    return;
+  }
+  if (!isBusinessWindowOpen(pickupMinutes, openMinutes!, closeMinutes!)) {
+    throw new Error('PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.');
+  }
+  if (typeof pickupDate === 'string') {
+    const mapped = businessDayLabel(pickupDate);
+    if (mapped && closedDays.includes(mapped)) {
+      throw new Error('PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.');
+    }
+  }
+}
+
 export async function confirmPublicCartSession(token: string, expectedRevision: number, idempotencyKey: string, pushClientId?: string): Promise<PublicCartConfirmResponse | null> {
   const normalized = normalizePublicCartToken(token);
   if (!normalized) return null;
@@ -1997,105 +2115,7 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     if (detailError) throw new Error('CUSTOMER_DETAILS_REQUIRED');
   }
 
-  // ── Business hours validation ──────────────────────────────────────────────
-  await loadCatalogFromDb(sessionRow.empresa_id);
-  const config = getConfig(sessionRow.empresa_id);
-  const openMinutes = parseBusinessTime(config.openTime);
-  const closeMinutes = parseBusinessTime(config.closeTime);
-  // Fonte multi-janela quando `horario_semanal` está configurado (ou derivado do
-  // legado). `useWeekly=false` só quando não há nenhuma janela — aí caímos no
-  // check legado exato (idêntico ao comportamento atual). Lojas single-window
-  // continuam batendo com hoje; só multi-janela ganha o bloqueio do vão.
-  const useWeekly = hasAnyOpenWindow(config.weeklyHours);
-  if (useWeekly || (openMinutes !== null && closeMinutes !== null)) {
-    const closedDays = Array.isArray(config.closedDays) ? config.closedDays : [];
-    const timezone = config.timezone || 'America/Sao_Paulo';
-
-    if (current.fulfillment.asap === true) {
-      // "Pra já" — check if store is currently open (multi-janela via isOpenAt
-      // quando há janelas; senão a lógica single-window legada).
-      const hoursStatus = buildPublicBusinessHoursStatus(config);
-      if (hoursStatus.openNow === false) {
-        throw new Error(
-          'STORE_CLOSED_ASAP:Loja fechada agora. Você pode montar o pedido e agendar para um horário de funcionamento disponível.'
-        );
-      }
-    } else {
-      // Agendado — validate scheduling toggle, lead time, and windows
-      if (config.schedulingEnabled === false) {
-        throw new Error('SCHEDULING_DISABLED:Agendamento não está disponível para esta loja.');
-      }
-
-      const pickupTime = current.fulfillment.pickupTime;
-      const pickupDate = current.fulfillment.pickupDate;
-      const pickupMinutes = parseBusinessTime(pickupTime);
-
-      if (pickupMinutes === null) {
-        throw new Error('PICKUP_TIME_INVALID:Horário de retirada inválido.');
-      }
-
-      // Check if pickup date+time is in the past (in the store's timezone)
-      if (typeof pickupDate === 'string' && pickupTime) {
-        if (isPickupInPast(pickupDate, pickupTime, timezone)) {
-          throw new Error(
-            'PICKUP_IN_PAST:Horário de retirada já passou. Escolha um horário futuro.'
-          );
-        }
-      }
-
-      // Check lead time: pickup must be at least leadTimeMinutes from now
-      if (config.schedulingLeadTimeMinutes > 0 && typeof pickupDate === 'string' && pickupTime) {
-        const leadMs = config.schedulingLeadTimeMinutes * 60_000;
-        const leadBoundary = new Date(Date.now() + leadMs);
-        if (isPickupInPast(pickupDate, pickupTime, timezone, leadBoundary)) {
-          const leadHours = Math.floor(config.schedulingLeadTimeMinutes / 60);
-          const leadMins = config.schedulingLeadTimeMinutes % 60;
-          const leadStr = leadHours > 0
-            ? (leadMins > 0 ? `${leadHours}h${leadMins}` : `${leadHours}h`)
-            : `${leadMins} min`;
-          throw new Error(
-            `PICKUP_LEAD_TIME:Este horário precisa ter pelo menos ${leadStr} de antecedência. Escolha um horário mais tarde.`
-          );
-        }
-      }
-
-  if (useWeekly) {
-        // O horário de retirada precisa cair numa das janelas do DIA escolhido.
-        // Isso rejeita corretamente um horário que caia no vão almoço→jantar
-        // (o check single-window legado permitiria por engano).
-        const dayKey = typeof pickupDate === 'string' ? pickupDayKey(pickupDate) : null;
-        if (dayKey) {
-          if (config.weeklyHours[dayKey].length === 0) {
-            throw new Error(
-              'PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.'
-            );
-          }
-          if (!isMinuteWithinDay(config.weeklyHours, dayKey, pickupMinutes)) {
-            throw new Error(
-              'PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.'
-            );
-          }
-        }
-      } else {
-        // Legado single-window (comportamento idêntico ao anterior).
-        if (!isBusinessWindowOpen(pickupMinutes, openMinutes!, closeMinutes!)) {
-          throw new Error(
-            'PICKUP_OUTSIDE_HOURS:Horário escolhido fora do horário de funcionamento da loja. Escolha um horário entre os disponíveis.'
-          );
-        }
-
-        // Weekly closed days apply to the selected civil date.
-        if (typeof pickupDate === 'string') {
-          const mapped = businessDayLabel(pickupDate);
-          if (mapped && closedDays.includes(mapped)) {
-            throw new Error(
-              'PICKUP_CLOSED_DAY:A loja não funciona no dia selecionado. Escolha outro dia.'
-            );
-          }
-        }
-      }
-    }
-  }
+  await assertZeloMenuFulfillmentAvailable(sessionRow.empresa_id, current.fulfillment);
 
   const revalidation = await runRevalidation({ ...current, metadata: { ...current.metadata, empresaId: sessionRow.empresa_id } });
 
