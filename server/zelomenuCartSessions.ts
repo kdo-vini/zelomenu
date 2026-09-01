@@ -971,10 +971,13 @@ async function resolveSnapshots(
           if (!modifierGroup) continue;
           const modifierOption = modifierGroup.options.find((o) => o.id === opt.optionId);
           if (!modifierOption?.linkedProduct) continue;
-          const linkedProductInCatalog = config.products.find((p) => p.id === modifierOption.linkedProduct!.productId);
+          const linkedProductId = modifierOption.linkedProduct.productId;
+          const linkedProductInCatalog = linkedProductId == null
+            ? null
+            : config.products.find((p) => p.id === linkedProductId);
           if (linkedProductInCatalog?.stockControlled) {
             const stockQuantity = Number(linkedProductInCatalog.stockQuantity ?? 0);
-            const linkedAgg = aggregated.get(modifierOption.linkedProduct.productId) ?? item.quantity;
+            const linkedAgg = aggregated.get(linkedProductId!) ?? item.quantity;
             if (linkedAgg > stockQuantity) throw stockExceededError(linkedProductInCatalog.name, stockQuantity, linkedAgg);
           }
           if (modifierOption.linkedProduct.available === false) throw new Error('MODIFIER_INVALID:Uma opção vinculada não está mais disponível.');

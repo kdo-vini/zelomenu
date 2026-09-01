@@ -8,6 +8,7 @@ import type {
   ProdutoRow,
   Subcategoria,
   ZeloMenuModifierGroupRow,
+  ZeloMenuModifierOptionProductLink,
   ZeloMenuProductPublicationInput,
   ZeloMenuProductPublicationRow,
 } from '../../../hooks/useCatalog';
@@ -38,8 +39,7 @@ type ProductEditorModalProps = {
   products: ProdutoRow[];
   productUsageCounts?: Record<number, number>;
   modifierGroups: ZeloMenuModifierGroupRow[];
-  modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
-  onCreateComponentProduct?: (input: { nome: string; preco: number }) => Promise<ProdutoRow>;
+  modifierOptionProducts: Record<string, ZeloMenuModifierOptionProductLink>;
   uploadImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
   deleteImage: (url: string | null | undefined) => Promise<void>;
   onClose: () => void;
@@ -68,7 +68,6 @@ export function ProductModal({
   productUsageCounts,
   modifierGroups,
   modifierOptionProducts,
-  onCreateComponentProduct,
   uploadImage,
   deleteImage,
   onClose,
@@ -392,7 +391,6 @@ export function ProductModal({
                 groups={groupsDraft}
                 products={products}
                 productUsageCounts={productUsageCounts}
-                onCreateProduct={onCreateComponentProduct}
                 excludeProductId={initial?.id}
                 productName={nome.trim() || initial?.nome || 'seu produto'}
                 onChange={(index, group) => {

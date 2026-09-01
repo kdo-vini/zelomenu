@@ -47,6 +47,19 @@ export type ZeloMenuModifierOptionRow = ZeloMenuModifierOption & {
   groupId: string;
 };
 
+export type ZeloMenuModifierComponentRow = {
+  id: string;
+  nome: string;
+  nome_chave: string;
+  pausado_manualmente: boolean;
+};
+
+export type ZeloMenuModifierOptionProductLink = {
+  productId: number | null;
+  componentId: string | null;
+  priceOverride: number | null;
+};
+
 // ─── Input types ──────────────────────────────────────────────────────────────
 
 export type ProdutoInput = {
@@ -80,7 +93,8 @@ export type CatalogState = {
   produtos: ProdutoRow[];
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
   productModifierGroups: Record<number, ZeloMenuModifierGroupRow[]>;
-  modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
+  modifierComponents: ZeloMenuModifierComponentRow[];
+  modifierOptionProducts: Record<string, ZeloMenuModifierOptionProductLink>;
 };
 
 export const EMPTY: CatalogState = {
@@ -89,6 +103,7 @@ export const EMPTY: CatalogState = {
   produtos: [],
   productPublications: {},
   productModifierGroups: {},
+  modifierComponents: [],
   modifierOptionProducts: {},
 };
 

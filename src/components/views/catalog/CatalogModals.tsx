@@ -277,7 +277,7 @@ export function SubcategoriaModal({
 
 export function toModifierDrafts(
   groups: ZeloMenuModifierGroupRow[],
-  optionProducts: Record<string, { productId: number; priceOverride: number | null }>,
+  optionProducts: Record<string, { productId: number | null; componentId: string | null; priceOverride: number | null }>,
 ): ZeloMenuModifierGroupDraft[] {
   return groups.map((group) => ({
     id: group.id,

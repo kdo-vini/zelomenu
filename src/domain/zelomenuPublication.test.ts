@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
+  resolveZeloMenuModifierComponentAvailability,
   resolveZeloMenuLinkedOptionAvailability,
   getZeloMenuPublicationStatus,
   type ZeloMenuPublicationProduct,
 } from './zelomenuPublication';
 
 describe('resolveZeloMenuLinkedOptionAvailability', () => {
+  it('uses the canonical component pause globally', () => {
+    expect(resolveZeloMenuModifierComponentAvailability({ pausado_manualmente: true })).toBe(false);
+    expect(resolveZeloMenuModifierComponentAvailability({ pausado_manualmente: false })).toBe(true);
+  });
+
   it('stock-controlled product with stock is available', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({ controlar_estoque: true, estoque_atual: 5 })).toBe(true);
   });
@@ -40,7 +46,7 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
         ordem: 0,
       },
     };
-    expect(getZeloMenuPublicationStatus(unpublished).status).not.toBe('published');
+    expect(getZeloMenuPublicationStatus(unpublished).status).toBe('paused');
     expect(resolveZeloMenuLinkedOptionAvailability(unpublished)).toBe(false);
   });
 

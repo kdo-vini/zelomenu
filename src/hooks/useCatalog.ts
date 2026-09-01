@@ -8,7 +8,13 @@ import {
   normalizeModifierOptionRow,
   normalizeProductPublicationRow,
 } from './useCatalogTypes';
-import type { CatalogState, ZeloMenuModifierGroupRow, ZeloMenuModifierOptionRow } from './useCatalogTypes';
+import type {
+  CatalogState,
+  ZeloMenuModifierComponentRow,
+  ZeloMenuModifierGroupRow,
+  ZeloMenuModifierOptionProductLink,
+  ZeloMenuModifierOptionRow,
+} from './useCatalogTypes';
 import { useCatalogCategories } from './useCatalogCategories';
 import { useCatalogProducts } from './useCatalogProducts';
 import { useCatalogModifiers } from './useCatalogModifiers';
@@ -23,6 +29,7 @@ export type {
   ZeloMenuProductPublicationInput,
 } from './useCatalogProducts';
 export type { ZeloMenuModifierGroupRow, ZeloMenuModifierOptionRow } from './useCatalogModifiers';
+export type { ZeloMenuModifierComponentRow, ZeloMenuModifierOptionProductLink } from './useCatalogTypes';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -68,7 +75,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     setLoading(true);
     setError(null);
     try {
-      const [catsRes, subsRes, prodsRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierOptionProductsRes] = await Promise.all([
+      const [catsRes, subsRes, prodsRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierComponentsRes, modifierOptionProductsRes] = await Promise.all([
         supabase
           .from('categorias')
           .select('id, nome, ordem')
@@ -108,8 +115,14 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .order('ordem')
           .limit(CATALOG_MODIFIER_OPTION_LIMIT),
         supabase
+          .from('zelomenu_modifier_components')
+          .select('id, nome, nome_chave, pausado_manualmente')
+          .eq('id_usuario', userId)
+          .order('nome')
+          .limit(CATALOG_MODIFIER_OPTION_LIMIT),
+        supabase
           .from('zelomenu_modifier_option_products')
-          .select('id_opcao, id_produto, price_override')
+          .select('id_opcao, id_produto, id_componente, price_override')
           .eq('id_usuario', userId)
           .limit(CATALOG_MODIFIER_OPTION_LIMIT),
       ]);
@@ -119,6 +132,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
       if (publicationsRes.error) throw publicationsRes.error;
       if (modifierGroupsRes.error) throw modifierGroupsRes.error;
       if (modifierOptionsRes.error) throw modifierOptionsRes.error;
+      if (modifierComponentsRes.error) throw modifierComponentsRes.error;
       if (modifierOptionProductsRes.error) throw modifierOptionProductsRes.error;
       const optionsByGroupId = new Map<string, ZeloMenuModifierOptionRow[]>();
       for (const row of modifierOptionsRes.data ?? []) {
@@ -127,13 +141,15 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
         existing.push(option);
         optionsByGroupId.set(option.groupId, existing);
       }
-      const modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }> = {};
+      const modifierOptionProducts: Record<string, ZeloMenuModifierOptionProductLink> = {};
       for (const row of modifierOptionProductsRes.data ?? []) {
         const optionId = String(row.id_opcao ?? '');
-        const productId = Number(row.id_produto ?? 0);
-        if (!optionId || !productId) continue;
+        const productId = row.id_produto == null ? null : Number(row.id_produto);
+        const componentId = row.id_componente == null ? null : String(row.id_componente);
+        if (!optionId || (!productId && !componentId)) continue;
         modifierOptionProducts[optionId] = {
           productId,
+          componentId,
           priceOverride: row.price_override == null ? null : Number(row.price_override),
         };
       }
@@ -178,6 +194,12 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           }),
         ),
         productModifierGroups,
+        modifierComponents: (modifierComponentsRes.data ?? []).map((row: any): ZeloMenuModifierComponentRow => ({
+          id: String(row.id),
+          nome: String(row.nome ?? '').trim(),
+          nome_chave: String(row.nome_chave ?? '').trim(),
+          pausado_manualmente: row.pausado_manualmente === true,
+        })).filter((component) => component.id && component.nome && component.nome_chave),
         modifierOptionProducts,
       };
       dataRef.current = nextData;

@@ -2,9 +2,11 @@ import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
 import { supabase } from '../services/supabaseClient';
 import type { ZeloMenuModifierGroupDraft } from '../domain/zelomenuModifiers';
-import { setModifierOptionActive, sortModifierGroups } from '../domain/zelomenuModifiers';
+import { sortModifierGroups } from '../domain/zelomenuModifiers';
+import { normalizeCatalogSearchText } from '../domain/zelomenuCatalog';
 import type {
   CatalogState,
+  ZeloMenuModifierComponentRow,
   CommitFn,
   ZeloMenuModifierGroupRow,
   ZeloMenuModifierOptionRow,
@@ -43,7 +45,7 @@ export function useCatalogModifiers(
           id: option.id ?? globalThis.crypto.randomUUID(),
           name: option.name.trim(),
           priceDelta: Number(option.priceDelta ?? 0),
-          active: option.active,
+          active: true,
           order: Math.max(0, Math.trunc(option.order ?? optionIndex)),
           linkedProduct: option.linkedProductId
             ? {
@@ -91,7 +93,7 @@ export function useCatalogModifiers(
       id_grupo: group.id,
       nome: option.name,
       price_delta: option.priceDelta,
-      ativo: option.active,
+      ativo: true,
       ordem: option.order,
       updated_at: new Date().toISOString(),
     })));
@@ -138,22 +140,71 @@ export function useCatalogModifiers(
         .filter((optId) => currentOptionIds.has(optId)),
     );
 
-    // Collect next sidecar entries from the original drafts (have linkedProductId/priceOverride)
+    // Every option points to one canonical identity. Existing products stay
+    // products; an option without a selected product receives/reuses one
+    // internal component keyed by its normalized name.
     const nextSidecarOptionIds = new Set<string>();
     const sidecarUpsertPayload: Array<{
       id_opcao: string;
       id_usuario: string;
-      id_produto: number;
+      id_produto: number | null;
+      id_componente: string | null;
       price_override: number | null;
     }> = [];
 
-    // Build a map of draft groupId -> group for quick lookup by option ID
-    const allOptionLinks = new Map<string, { productId: number; priceOverride: number | null }>();
-    for (const group of groups) {
+    const componentByKey = new Map<string, ZeloMenuModifierComponentRow>();
+    const componentNamesByKey = new Map<string, string>();
+    for (const group of nextGroups) {
       for (const option of group.options) {
-        if (option.id && option.linkedProductId) {
-          allOptionLinks.set(option.id, { productId: option.linkedProductId, priceOverride: option.priceOverride ?? null });
+        if (option.linkedProduct || !option.name.trim()) continue;
+        componentNamesByKey.set(normalizeCatalogSearchText(option.name), option.name.trim());
+      }
+    }
+    for (const [nameKey, name] of componentNamesByKey) {
+      if (!nameKey) continue;
+      const existing = dataRef.current.modifierComponents.find((component) => component.nome_chave === nameKey);
+      if (existing) {
+        componentByKey.set(nameKey, existing);
+        continue;
+      }
+      const { data: component, error: componentError } = await supabase
+        .from('zelomenu_modifier_components')
+        .upsert({ id_usuario: userId, nome: name, nome_chave: nameKey }, { onConflict: 'id_usuario,nome_chave' })
+        .select('id, nome, nome_chave, pausado_manualmente')
+        .single();
+      if (componentError) throw componentError;
+      componentByKey.set(nameKey, {
+        id: String(component.id),
+        nome: String(component.nome),
+        nome_chave: String(component.nome_chave),
+        pausado_manualmente: component.pausado_manualmente === true,
+      });
+    }
+
+    const allOptionLinks = new Map<string, { productId: number | null; componentId: string | null; priceOverride: number | null }>();
+    const draftLinksByOptionId = new Map(
+      groups.flatMap((group) => group.options)
+        .filter((option): option is typeof option & { id: string } => Boolean(option.id))
+        .map((option) => [option.id, option]),
+    );
+    for (const group of nextGroups) {
+      for (const option of group.options) {
+        if (!option.id) continue;
+        if (option.linkedProduct) {
+          allOptionLinks.set(option.id, {
+            productId: option.linkedProduct.productId,
+            componentId: null,
+            priceOverride: draftLinksByOptionId.get(option.id)?.priceOverride ?? null,
+          });
+          continue;
         }
+        const component = componentByKey.get(normalizeCatalogSearchText(option.name));
+        if (!component) throw new Error(`Não foi possível criar o item canônico “${option.name}”.`);
+        allOptionLinks.set(option.id, {
+          productId: null,
+          componentId: component.id,
+          priceOverride: option.priceDelta,
+        });
       }
     }
     for (const [optId, link] of allOptionLinks) {
@@ -162,6 +213,7 @@ export function useCatalogModifiers(
         id_opcao: optId,
         id_usuario: userId,
         id_produto: link.productId,
+        id_componente: link.componentId,
         price_override: link.priceOverride,
       });
     }
@@ -198,6 +250,7 @@ export function useCatalogModifiers(
     for (const entry of sidecarUpsertPayload) {
       newModifierOptionProducts[entry.id_opcao] = {
         productId: entry.id_produto,
+        componentId: entry.id_componente,
         priceOverride: entry.price_override,
       };
     }
@@ -209,33 +262,34 @@ export function useCatalogModifiers(
         ...prev.productModifierGroups,
         [productId]: saved,
       },
+      modifierComponents: [
+        ...prev.modifierComponents.filter((component) => !componentByKey.has(component.nome_chave)),
+        ...componentByKey.values(),
+      ].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
       modifierOptionProducts: newModifierOptionProducts,
     }));
     return saved;
   }, [userId, dataRef, commitData]);
 
-  const setModifierOptionAvailability = useCallback(async (optionId: string, active: boolean): Promise<void> => {
+  const setModifierComponentAvailability = useCallback(async (componentId: string, active: boolean): Promise<void> => {
     if (!userId) throw new Error('Faça login para continuar.');
 
     const { error } = await supabase
-      .from('zelomenu_modifier_options')
-      .update({ ativo: active, updated_at: new Date().toISOString() })
+      .from('zelomenu_modifier_components')
+      .update({ pausado_manualmente: !active, updated_at: new Date().toISOString() })
       .eq('id_usuario', userId)
-      .eq('id', optionId);
+      .eq('id', componentId);
     if (error) throw error;
 
     commitData((previous) => ({
       ...previous,
-      productModifierGroups: Object.fromEntries(
-        Object.entries(previous.productModifierGroups).map(([productId, groups]) => [
-          Number(productId),
-          setModifierOptionActive(groups, optionId, active),
-        ]),
-      ),
+      modifierComponents: previous.modifierComponents.map((component) => (
+        component.id === componentId ? { ...component, pausado_manualmente: !active } : component
+      )),
     }));
   }, [userId, commitData]);
 
-  return { replaceProductModifierGroups, setModifierOptionAvailability };
+  return { replaceProductModifierGroups, setModifierComponentAvailability };
 }
 
 export type { ZeloMenuModifierGroupRow, ZeloMenuModifierOptionRow };

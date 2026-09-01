@@ -204,6 +204,7 @@ function AdminPageContent() {
       produtos={catalog.produtos}
       productPublications={catalog.productPublications}
       productModifierGroups={catalog.productModifierGroups}
+      modifierComponents={catalog.modifierComponents}
       modifierOptionProducts={catalog.modifierOptionProducts}
       refresh={catalog.refresh}
       createCategoria={catalog.createCategoria}
@@ -219,7 +220,7 @@ function AdminPageContent() {
       upsertProductPublication={catalog.upsertProductPublication}
       reorderProductPublications={catalog.reorderProductPublications}
       replaceProductModifierGroups={catalog.replaceProductModifierGroups}
-      setModifierOptionAvailability={catalog.setModifierOptionAvailability}
+      setModifierComponentAvailability={catalog.setModifierComponentAvailability}
       uploadProductPublicationImage={catalog.uploadProductPublicationImage}
       deleteProductPublicationImage={catalog.deleteProductPublicationImage}
     />

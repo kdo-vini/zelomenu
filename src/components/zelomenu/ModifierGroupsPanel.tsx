@@ -793,16 +793,6 @@ function GroupDetail({
               </label>
 
               <div className="flex items-end justify-between gap-2">
-                <label className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
-                  <input
-                    type="checkbox"
-                    checked={option.active && linkedProductAvailable}
-                    disabled={linkedProductUnavailable}
-                    onChange={(e) => updateOption(optionIndex, { active: e.target.checked })}
-                    className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                  {linkedProductUnavailable ? 'Indisponível pelo produto' : 'Incluída neste grupo'}
-                </label>
                 <button
                   type="button"
                   onClick={() =>
@@ -834,7 +824,7 @@ function GroupDetail({
                   }}
                   className="h-4 w-4 rounded border-[var(--color-line-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]/30"
                 />
-                Vincular a um produto canônico do catálogo
+                Usar um produto já cadastrado como item canônico
               </label>
 
               {(option.linkedProductId || productPickerIndex === optionIndex) && (

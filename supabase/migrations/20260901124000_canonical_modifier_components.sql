@@ -57,9 +57,9 @@ with unlinked as (
     o.id,
     o.id_usuario,
     o.price_delta,
-    lower(regexp_replace(btrim(translate(o.nome,
+    btrim(regexp_replace(lower(translate(o.nome,
       'ÀÁÂÃÄÅàáâãäåÈÉÊËèéêëÌÍÎÏìíîïÒÓÔÕÖòóôõöÙÚÛÜùúûüÇç',
-      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '\\s+', ' ', 'g')) as nome_chave
+      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '[^a-z0-9]+', ' ', 'g')) as nome_chave
   from public.zelomenu_modifier_options o
   left join public.zelomenu_modifier_option_products link
     on link.id_opcao = o.id
@@ -69,9 +69,9 @@ with unlinked as (
   from unlinked u
   left join public.produtos p
     on p.id_usuario = u.id_usuario
-   and lower(regexp_replace(btrim(translate(p.nome,
+   and btrim(regexp_replace(lower(translate(p.nome,
       'ÀÁÂÃÄÅàáâãäåÈÉÊËèéêëÌÍÎÏìíîïÒÓÔÕÖòóôõöÙÚÛÜùúûüÇç',
-      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '\\s+', ' ', 'g')) = u.nome_chave
+      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '[^a-z0-9]+', ' ', 'g')) = u.nome_chave
   group by u.id, u.id_usuario, u.price_delta
 )
 insert into public.zelomenu_modifier_option_products (id_opcao, id_usuario, id_produto, price_override)
@@ -83,9 +83,9 @@ with remaining as (
   select
     o.id_usuario,
     o.nome,
-    lower(regexp_replace(btrim(translate(o.nome,
+    btrim(regexp_replace(lower(translate(o.nome,
       'ÀÁÂÃÄÅàáâãäåÈÉÊËèéêëÌÍÎÏìíîïÒÓÔÕÖòóôõöÙÚÛÜùúûüÇç',
-      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '\\s+', ' ', 'g')) as nome_chave
+      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '[^a-z0-9]+', ' ', 'g')) as nome_chave
   from public.zelomenu_modifier_options o
   left join public.zelomenu_modifier_option_products link
     on link.id_opcao = o.id
@@ -102,9 +102,9 @@ select o.id, o.id_usuario, component.id, o.price_delta
 from public.zelomenu_modifier_options o
 join public.zelomenu_modifier_components component
   on component.id_usuario = o.id_usuario
- and component.nome_chave = lower(regexp_replace(btrim(translate(o.nome,
+ and component.nome_chave = btrim(regexp_replace(lower(translate(o.nome,
       'ÀÁÂÃÄÅàáâãäåÈÉÊËèéêëÌÍÎÏìíîïÒÓÔÕÖòóôõöÙÚÛÜùúûüÇç',
-      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '\\s+', ' ', 'g'))
+      'AAAAAAaaaaaaEEEEeeeeIIIIiiiiOOOOoooooUUUUuuuuCc')), '[^a-z0-9]+', ' ', 'g'))
 left join public.zelomenu_modifier_option_products link
   on link.id_opcao = o.id
 where link.id_opcao is null;

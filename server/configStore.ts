@@ -1,6 +1,7 @@
 import { getServiceSupabase } from './supabaseServer.js';
 import {
   resolveZeloMenuPublicationCatalogProduct,
+  resolveZeloMenuModifierComponentAvailability,
   resolveZeloMenuLinkedOptionAvailability,
   summarizeZeloMenuPublication,
 } from '../src/domain/zelomenuPublication.js';
@@ -448,14 +449,15 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
   const userId = normalizeText(row.user_id);
   if (!userId) throw new Error(`empresa_perfil.user_id missing for ${empresaId}`);
 
-  const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierOptionProductsRes] = await Promise.all([
+  const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierComponentsRes, modifierOptionProductsRes] = await Promise.all([
     supabase.from('categorias').select('id, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome'),
     supabase.from('subcategorias').select('id, id_categoria, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome'),
     supabase.from('produtos').select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual').eq('id_usuario', userId).order('nome'),
     supabase.from('zelomenu_product_publications').select('id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem').eq('id_usuario', userId).order('ordem').limit(2000),
     supabase.from('zelomenu_modifier_groups').select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, minimo_total_quantidade, maximo_total_quantidade, permite_quantidade, maximo_por_opcao, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(4000),
     supabase.from('zelomenu_modifier_options').select('id, id_grupo, nome, price_delta, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(8000),
-    supabase.from('zelomenu_modifier_option_products').select('id_opcao, id_produto, price_override').eq('id_usuario', userId).limit(4000),
+    supabase.from('zelomenu_modifier_components').select('id, nome, pausado_manualmente').eq('id_usuario', userId).limit(4000),
+    supabase.from('zelomenu_modifier_option_products').select('id_opcao, id_produto, id_componente, price_override').eq('id_usuario', userId).limit(4000),
   ]);
 
   if (categoriasRes.error) throw categoriasRes.error;
@@ -464,6 +466,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
   if (publicationsRes.error) throw publicationsRes.error;
   if (modifierGroupsRes.error) throw modifierGroupsRes.error;
   if (modifierOptionsRes.error) throw modifierOptionsRes.error;
+  if (modifierComponentsRes.error) throw modifierComponentsRes.error;
   if (modifierOptionProductsRes.error) throw modifierOptionProductsRes.error;
 
   const publicationsByProductId = new Map<number, ZeloMenuProductPublication>();
@@ -481,16 +484,27 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     optionsByGroupId.set(option.groupId, existing);
   }
 
-  // 5th batch: sidecar links (option → product)
-  const optionProductsByOptionId = new Map<string, { productId: number; priceOverride: number | null }>();
+  const componentsById = new Map<string, { id: string; name: string; paused: boolean }>();
+  for (const componentRow of modifierComponentsRes.data ?? []) {
+    if (!componentRow || typeof componentRow !== 'object') continue;
+    const component = componentRow as { id?: unknown; nome?: unknown; pausado_manualmente?: unknown };
+    const id = normalizeText(component.id);
+    const name = normalizeText(component.nome);
+    if (!id || !name) continue;
+    componentsById.set(id, { id, name, paused: component.pausado_manualmente === true });
+  }
+
+  // Sidecar links point to exactly one canonical identity: product or component.
+  const optionProductsByOptionId = new Map<string, { productId: number | null; componentId: string | null; priceOverride: number | null }>();
   for (const linkRow of modifierOptionProductsRes.data ?? []) {
     if (!linkRow || typeof linkRow !== 'object') continue;
-    const r = linkRow as { id_opcao?: unknown; id_produto?: unknown; price_override?: unknown };
+    const r = linkRow as { id_opcao?: unknown; id_produto?: unknown; id_componente?: unknown; price_override?: unknown };
     const optionId = normalizeText(r.id_opcao);
-    const productId = normalizeNumber(r.id_produto);
-    if (!optionId || !productId) continue;
+    const productId = r.id_produto == null ? null : normalizeNumber(r.id_produto);
+    const componentId = normalizeText(r.id_componente) || null;
+    if (!optionId || (!productId && !componentId)) continue;
     const priceOverride = r.price_override == null ? null : normalizeNumber(r.price_override);
-    optionProductsByOptionId.set(optionId, { productId, priceOverride });
+    optionProductsByOptionId.set(optionId, { productId, componentId, priceOverride });
   }
 
   // Build a product lookup map for linked product resolution (name, price, photo, availability)
@@ -544,6 +558,23 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     const options = (optionsByGroupId.get(group.id) ?? []).map((option) => {
       const link = optionProductsByOptionId.get(option.id);
       if (!link) return option;
+      if (link.componentId) {
+        const component = componentsById.get(link.componentId) ?? null;
+        return {
+          ...option,
+          linkedProduct: {
+            productId: null,
+            componentId: link.componentId,
+            name: component?.name ?? option.name,
+            photoUrl: null,
+            price: link.priceOverride != null ? normalizeNumber(link.priceOverride) : option.priceDelta,
+            available: component != null && resolveZeloMenuModifierComponentAvailability({
+              pausado_manualmente: component.paused,
+            }),
+          } satisfies ZeloMenuLinkedModifierProduct,
+        };
+      }
+      if (link.productId == null) return option;
       const linkedCatalogProduct = rawProductMap.get(link.productId) ?? null;
       if (!linkedCatalogProduct) {
         // Linked product was deleted — option becomes available: false until admin reconfigures
@@ -563,11 +594,13 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
         controlar_estoque: linkedCatalogProduct.stockControlled === true,
         estoque_atual: linkedCatalogProduct.stockQuantity ?? 0,
         ocultar_no_pdv: linkedCatalogProduct.ocultarNoPdv,
+        publication: publicationsByProductId.get(link.productId) ?? null,
       });
       return {
         ...option,
         linkedProduct: {
           productId: link.productId,
+          componentId: null,
           name: linkedCatalogProduct.name,
           photoUrl: linkedCatalogProduct.photoUrl ?? null,
           price: overridePrice,

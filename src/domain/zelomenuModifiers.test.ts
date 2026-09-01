@@ -4,7 +4,6 @@ import {
   resolveModifierSelections,
   validateModifierGroupDrafts,
   formatSelectedModifierGroups,
-  setModifierOptionActive,
   type ZeloMenuModifierGroup,
   type ZeloMenuModifierGroupDraft,
   type ZeloMenuModifierOption,
@@ -80,21 +79,6 @@ function one(groupId: string, optionIds: string[]): ZeloMenuModifierSelectionInp
 }
 
 const BASE_PRICE = 20;
-
-describe('setModifierOptionActive', () => {
-  it('pauses only the selected modifier option', () => {
-    const groups = [classicSomarGroup()];
-
-    const updated = setModifierOptionActive(groups, 'add-2', false);
-
-    expect(updated[0].options.map((option) => ({ id: option.id, active: option.active }))).toEqual([
-      { id: 'add-1', active: true },
-      { id: 'add-2', active: false },
-      { id: 'add-3', active: true },
-    ]);
-    expect(groups[0].options[1].active).toBe(true);
-  });
-});
 
 // ─── resolveModifierSelections ────────────────────────────────────────────────
 

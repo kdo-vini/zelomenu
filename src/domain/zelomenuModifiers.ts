@@ -1,7 +1,8 @@
 export type ZeloMenuModifierGroupKind = 'adicional' | 'variacao';
 
 export type ZeloMenuLinkedModifierProduct = {
-  productId: number;
+  productId: number | null;
+  componentId?: string | null;
   name: string;
   photoUrl: string | null;
   price: number;
@@ -120,22 +121,6 @@ export function sortModifierGroups(groups: ZeloMenuModifierGroup[]): ZeloMenuMod
       ...group,
       options: [...group.options].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
     }));
-}
-
-export function setModifierOptionActive<T extends ZeloMenuModifierGroup>(
-  groups: T[],
-  optionId: string,
-  active: boolean,
-): T[] {
-  return groups.map((group) => {
-    const options = group.options.map((option) => (
-      option.id === optionId ? { ...option, active } : option
-    ));
-
-    return options.some((option, index) => option !== group.options[index])
-      ? { ...group, options } as T
-      : group;
-  });
 }
 
 export { buildModifierSignature as buildModifierSelectionKey } from './zelomenuCartItemKey';

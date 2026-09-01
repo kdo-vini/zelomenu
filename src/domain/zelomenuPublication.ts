@@ -96,21 +96,21 @@ export function getZeloMenuPublicationStatus(
     };
   }
 
+  if (product.publication?.pausado_manualmente) {
+    return {
+      status: 'paused',
+      label: 'Pausado',
+      description: 'Produto pausado temporariamente no cardápio digital.',
+      issue: 'paused',
+    };
+  }
+
   if (!product.publication?.visivel_online) {
     return {
       status: 'unpublished',
       label: 'Somente complemento',
       description: 'Produto salvo para uso como complemento; não é vendido separadamente.',
       issue: 'unpublished',
-    };
-  }
-
-  if (product.publication.pausado_manualmente) {
-    return {
-      status: 'paused',
-      label: 'Pausado',
-      description: 'Produto pausado temporariamente no cardápio digital.',
-      issue: 'paused',
     };
   }
 
@@ -166,17 +166,23 @@ export function summarizeZeloMenuPublication(
 /**
  * Whether a product can be used as a modifier-option ingredient inside a
  * combo (e.g. "Penne" inside "Monte sua Massa"). A product intentionally
- * unpublished from its own online listing may still be a component, but an
- * item hidden in the PDV remains eligible here because PDV visibility is an
- * internal sales-channel setting. Stock-out is still a hard availability
- * boundary.
+ * unpublished from its own online listing may still be a component. Its manual
+ * menu pause remains global, while PDV visibility is an internal sales-channel
+ * setting and does not affect this decision. Stock-out is also a hard boundary.
  */
 export function resolveZeloMenuLinkedOptionAvailability(
   product: Pick<ZeloMenuPublicationCatalogProduct, 'controlar_estoque' | 'estoque_atual'>
-    & Partial<Pick<ZeloMenuPublicationCatalogProduct, 'ocultar_no_pdv' | 'publication'>>,
+    & Partial<Pick<ZeloMenuPublicationCatalogProduct, 'ocultar_no_pdv'>>
+    & { publication?: Pick<ZeloMenuProductPublication, 'pausado_manualmente'> | null },
 ): boolean {
   if (product.publication?.pausado_manualmente) return false;
   return resolveCatalogProductAvailability(product, []).available;
+}
+
+export function resolveZeloMenuModifierComponentAvailability(
+  component: Pick<{ pausado_manualmente: boolean }, 'pausado_manualmente'>,
+): boolean {
+  return component.pausado_manualmente !== true;
 }
 
 export function resolveZeloMenuPublicationCatalogProduct(

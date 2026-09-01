@@ -27,7 +27,9 @@ import type {
   Categoria,
   ProdutoRow,
   Subcategoria,
+  ZeloMenuModifierComponentRow,
   ZeloMenuModifierGroupRow,
+  ZeloMenuModifierOptionProductLink,
   ZeloMenuProductPublicationInput,
   ZeloMenuProductPublicationRow,
 } from '../../hooks/useCatalog';
@@ -47,7 +49,6 @@ import {
 import { ProductModal, formatPrecoInput, parsePrecoInput, type ProductModalTab } from './catalog/ProductEditorModal';
 import {
   getCatalogProductRole,
-  isExactCatalogProductNameDuplicate,
   normalizeCatalogSearchText,
   resolveCatalogUsageAvailability,
   searchCatalogModifierOptions,
@@ -65,7 +66,8 @@ interface Props {
   produtos: ProdutoRow[];
   productPublications: Record<number, ZeloMenuProductPublicationRow>;
   productModifierGroups: Record<number, ZeloMenuModifierGroupRow[]>;
-  modifierOptionProducts: Record<string, { productId: number; priceOverride: number | null }>;
+  modifierComponents: ZeloMenuModifierComponentRow[];
+  modifierOptionProducts: Record<string, ZeloMenuModifierOptionProductLink>;
   refresh: () => Promise<void>;
   createCategoria: (input: { nome: string; ordem?: number }) => Promise<Categoria>;
   updateCategoria: (id: number, patch: { nome?: string; ordem?: number }) => Promise<void>;
@@ -93,7 +95,7 @@ interface Props {
   upsertProductPublication: (productId: number, patch: ZeloMenuProductPublicationInput) => Promise<ZeloMenuProductPublicationRow>;
   reorderProductPublications: (orderedProductIds: number[]) => Promise<void>;
   replaceProductModifierGroups: (productId: number, groups: ZeloMenuModifierGroupDraft[]) => Promise<ZeloMenuModifierGroupRow[]>;
-  setModifierOptionAvailability: (optionId: string, active: boolean) => Promise<void>;
+  setModifierComponentAvailability: (componentId: string, active: boolean) => Promise<void>;
   uploadProductPublicationImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
   deleteProductPublicationImage: (url: string | null | undefined) => Promise<void>;
 }
@@ -141,6 +143,7 @@ export const CatalogView = ({
   produtos,
   productPublications,
   productModifierGroups,
+  modifierComponents,
   modifierOptionProducts,
   refresh,
   createCategoria,
@@ -156,7 +159,7 @@ export const CatalogView = ({
   upsertProductPublication,
   reorderProductPublications,
   replaceProductModifierGroups,
-  setModifierOptionAvailability,
+  setModifierComponentAvailability,
   uploadProductPublicationImage,
   deleteProductPublicationImage,
 }: Props) => {
@@ -194,7 +197,7 @@ export const CatalogView = ({
         if (!container) continue;
         for (const option of group.options) {
           const link = modifierOptionProducts[option.id];
-          if (!link) continue;
+          if (!link || link.productId == null) continue;
           const linkedProduct = productsById.get(link.productId);
           if (!linkedProduct) continue;
           const active = resolveCatalogUsageAvailability({
@@ -208,7 +211,7 @@ export const CatalogView = ({
             },
             groupActive: group.active,
             optionActive: option.active,
-          });
+          }) && productPublications[link.productId]?.pausado_manualmente !== true;
           const usages = usagesByProductId[link.productId] ?? [];
           usages.push({ containerName: container.nome, groupName: group.name, active });
           usagesByProductId[link.productId] = usages;
@@ -217,7 +220,7 @@ export const CatalogView = ({
     }
 
     return usagesByProductId;
-  }, [modifierOptionProducts, productModifierGroups, produtos]);
+  }, [modifierOptionProducts, productModifierGroups, productPublications, produtos]);
   const productUsageCounts = useMemo(
     () => Object.fromEntries(Object.entries(componentUsages).map(([productId, usages]) => [Number(productId), usages.length])),
     [componentUsages],
@@ -229,7 +232,7 @@ export const CatalogView = ({
       for (const group of groups) {
         for (const option of group.options) {
           const link = modifierOptionProducts[option.id];
-          if (!link || !option.name.trim()) continue;
+          if (!link || link.productId == null || !option.name.trim()) continue;
           const names = optionNamesByProductId.get(link.productId) ?? [];
           names.push(option.name);
           optionNamesByProductId.set(link.productId, names);
@@ -244,9 +247,9 @@ export const CatalogView = ({
 
   const searchModifierOptions = useMemo(() => {
     const parentProductsById = new Map(produtos.map((produto) => [produto.id, produto]));
-    return searchCatalogModifierOptions(produtos, productModifierGroups, modifierOptionProducts, query)
+    return searchCatalogModifierOptions(produtos, productModifierGroups, modifierOptionProducts, query, modifierComponents)
       .filter((option) => {
-        const parent = parentProductsById.get(option.parentProductId);
+        const parent = parentProductsById.get(option.usages[0]?.parentProductId ?? 0);
         if (!parent) return false;
         const pub = productPublications[parent.id] ?? null;
         const role = getCatalogProductRole(Boolean(pub?.visivel_online), componentUsages[parent.id]?.length ?? 0);
@@ -258,7 +261,7 @@ export const CatalogView = ({
         if (catalogFilter === 'draft' && role !== 'draft') return false;
         return !statusFilter || details.status === statusFilter;
       });
-  }, [catalogFilter, componentUsages, modifierOptionProducts, productModifierGroups, productPublications, produtos, query, statusFilter]);
+  }, [catalogFilter, componentUsages, modifierComponents, modifierOptionProducts, productModifierGroups, productPublications, produtos, query, statusFilter]);
 
   const displayProducts = useMemo(() => {
     const roleFiltered = catalogFilter === 'all' ? filtered : filtered.filter((p) => {
@@ -469,8 +472,9 @@ export const CatalogView = ({
       visivel_online: publication?.visivel_online ?? false,
       pausado_manualmente: publication?.pausado_manualmente ?? false,
     };
-    const shouldPublish = !previousState.visivel_online;
-    const shouldResume = previousState.visivel_online && previousState.pausado_manualmente;
+    const controlsComponent = (componentUsages[produto.id]?.length ?? 0) > 0;
+    const shouldPublish = !previousState.visivel_online && !controlsComponent;
+    const shouldResume = !shouldPublish && previousState.pausado_manualmente;
     const nextState = shouldPublish
       ? { visivel_online: true, pausado_manualmente: false }
       : { pausado_manualmente: !shouldResume };
@@ -503,24 +507,11 @@ export const CatalogView = ({
       : `${option.name} pausado no cardápio.`;
 
     try {
-      await setModifierOptionAvailability(option.id, active);
+      await setModifierComponentAvailability(option.id, active);
       setBulkFeedback({ tone: 'success', message });
     } catch (toggleError) {
       setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(toggleError) || 'Não foi possível atualizar a opção.' });
     }
-  };
-
-  const createComponentProduct = async ({ nome, preco }: { nome: string; preco: number }) => {
-    const duplicate = isExactCatalogProductNameDuplicate(nome, produtos);
-    if (duplicate) throw new Error(`Já existe um produto chamado “${duplicate.nome}”. Selecione o existente para evitar duplicatas.`);
-    const created = await createProduto({
-      nome,
-      preco,
-      id_categoria: null,
-      id_subcategoria: null,
-    });
-    await upsertProductPublication(created.id, { visivel_online: false });
-    return created;
   };
 
   const requestDeleteProduct = (produto: ProdutoRow) => {
@@ -569,7 +560,8 @@ export const CatalogView = ({
   );
 
   const renderSearchModifierOption = (option: CatalogSearchModifierOption) => {
-    const parent = produtos.find((produto) => produto.id === option.parentProductId);
+    const usage = option.usages[0];
+    const parent = produtos.find((produto) => produto.id === usage?.parentProductId);
     if (!parent) return null;
 
     return (
@@ -585,10 +577,10 @@ export const CatalogView = ({
                 ? 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
                 : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'
             }`}>
-              {option.active ? 'Opção ativa' : 'Opção inativa'}
+              {option.active ? 'Disponível' : 'Pausado'}
             </span>
             <span className="text-[11px] text-[var(--color-ink-muted)]">
-              {option.groupName} · em {option.parentProductName}
+              Usado em {option.usageCount} {option.usageCount === 1 ? 'grupo' : 'grupos'}
             </span>
           </div>
         </div>
@@ -601,7 +593,7 @@ export const CatalogView = ({
               onSelect: () => void handleModifierOptionAvailabilityToggle(option),
             },
             {
-              label: 'Editar opções',
+              label: 'Editar um grupo',
               icon: <Pencil className="h-4 w-4" />,
               onSelect: () => setModal({
                 kind: 'produto',
@@ -1137,7 +1129,6 @@ export const CatalogView = ({
             : []
         }
         modifierOptionProducts={modifierOptionProducts}
-        onCreateComponentProduct={createComponentProduct}
         onClose={() => setModal(null)}
         onSubmit={async (input) => {
           if (modal?.kind === 'produto' && modal.initial) {
@@ -1718,11 +1709,11 @@ const ProdutoRowItem: React.FC<ProdutoRowItemProps> = ({
           actions={[
             ...(onTogglePublication
               ? [{
-                  label: publication?.visivel_online
-                    ? publication.pausado_manualmente ? 'Retomar no cardápio' : 'Pausar no cardápio'
+                  label: publication?.visivel_online || (componentUsages?.length ?? 0) > 0
+                    ? publication?.pausado_manualmente ? 'Retomar no cardápio' : 'Pausar no cardápio'
                     : 'Publicar no cardápio',
-                  icon: publication?.visivel_online
-                    ? publication.pausado_manualmente ? <PlayCircle className="h-4 w-4" /> : <PauseCircle className="h-4 w-4" />
+                  icon: publication?.visivel_online || (componentUsages?.length ?? 0) > 0
+                    ? publication?.pausado_manualmente ? <PlayCircle className="h-4 w-4" /> : <PauseCircle className="h-4 w-4" />
                     : <Globe2 className="h-4 w-4" />,
                   onSelect: onTogglePublication,
                 }]

@@ -247,7 +247,7 @@ export function buildCatalogProductUsages(
       if (!container) continue;
       for (const option of group.options) {
         const linkedProduct = option.linkedProduct;
-        if (!linkedProduct) continue;
+        if (!linkedProduct || linkedProduct.productId == null) continue;
         const active = group.active && option.active && linkedProduct.available !== false;
         const list = usages[linkedProduct.productId] ?? [];
         list.push({
