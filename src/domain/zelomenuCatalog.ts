@@ -38,6 +38,17 @@ export type CatalogProductUsage = {
   active: boolean;
 };
 
+export type CatalogSearchModifierOption = {
+  id: string;
+  name: string;
+  active: boolean;
+  parentProductId: number;
+  parentProductName: string;
+  groupName: string;
+};
+
+type CatalogSearchModifierGroup = Pick<ZeloMenuModifierGroup, 'productId' | 'name' | 'options'>;
+
 export type CatalogProductAvailability = {
   available: boolean;
   state: OperationalAvailability;
@@ -74,6 +85,35 @@ export type CatalogUsageAvailabilityInput = {
 
 export function normalizeCatalogSearchText(value: string): string {
   return normalizeText(value).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+export function searchCatalogModifierOptions<T extends { id: number; nome: string }>(
+  products: T[],
+  productModifierGroups: Record<number, CatalogSearchModifierGroup[]>,
+  modifierOptionProducts: Record<string, { productId: number }>,
+  query: string,
+): CatalogSearchModifierOption[] {
+  const normalized = normalizeCatalogSearchText(query);
+  if (!normalized) return [];
+
+  const results: CatalogSearchModifierOption[] = [];
+  for (const product of products) {
+    for (const group of productModifierGroups[product.id] ?? []) {
+      for (const option of group.options) {
+        if (modifierOptionProducts[option.id] || !option.name.trim()) continue;
+        if (!normalizeCatalogSearchText(option.name).includes(normalized)) continue;
+        results.push({
+          id: option.id,
+          name: option.name,
+          active: option.active,
+          parentProductId: product.id,
+          parentProductName: product.nome,
+          groupName: group.name,
+        });
+      }
+    }
+  }
+  return results;
 }
 
 export function getCatalogProductRole(

@@ -50,6 +50,8 @@ import {
   isExactCatalogProductNameDuplicate,
   normalizeCatalogSearchText,
   resolveCatalogUsageAvailability,
+  searchCatalogModifierOptions,
+  type CatalogSearchModifierOption,
 } from '../../domain/zelomenuCatalog';
 
 interface Props {
@@ -237,6 +239,24 @@ export const CatalogView = ({
       || (optionNamesByProductId.get(p.id) ?? []).some((name) => normalizeCatalogSearchText(name).includes(normalized))
     ));
   }, [modifierOptionProducts, productModifierGroups, produtos, normalized]);
+
+  const searchModifierOptions = useMemo(() => {
+    const parentProductsById = new Map(produtos.map((produto) => [produto.id, produto]));
+    return searchCatalogModifierOptions(produtos, productModifierGroups, modifierOptionProducts, query)
+      .filter((option) => {
+        const parent = parentProductsById.get(option.parentProductId);
+        if (!parent) return false;
+        const pub = productPublications[parent.id] ?? null;
+        const role = getCatalogProductRole(Boolean(pub?.visivel_online), componentUsages[parent.id]?.length ?? 0);
+        const details = getZeloMenuPublicationStatus({ ...parent, publication: pub });
+        if (catalogFilter === 'standalone' && role !== 'standalone' && role !== 'standalone_and_component') return false;
+        if (catalogFilter === 'component' && role !== 'component' && role !== 'standalone_and_component') return false;
+        if (catalogFilter === 'paused' && details.status !== 'paused') return false;
+        if (catalogFilter === 'out_of_stock' && details.status !== 'out_of_stock') return false;
+        if (catalogFilter === 'draft' && role !== 'draft') return false;
+        return !statusFilter || details.status === statusFilter;
+      });
+  }, [catalogFilter, componentUsages, modifierOptionProducts, productModifierGroups, productPublications, produtos, query, statusFilter]);
 
   const displayProducts = useMemo(() => {
     const roleFiltered = catalogFilter === 'all' ? filtered : filtered.filter((p) => {
@@ -531,6 +551,48 @@ export const CatalogView = ({
     />
   );
 
+  const renderSearchModifierOption = (option: CatalogSearchModifierOption) => {
+    const parent = produtos.find((produto) => produto.id === option.parentProductId);
+    if (!parent) return null;
+
+    return (
+      <div
+        key={`modifier-option-${option.id}`}
+        className="flex min-h-[44px] items-start gap-3 rounded-lg px-2 py-2 hover:bg-[var(--color-surface-muted)] sm:items-center"
+      >
+        <div className="min-w-0 flex-1">
+          <p className="break-words text-sm font-medium leading-5 text-[var(--color-ink)] sm:truncate">{option.name}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+              option.active
+                ? 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
+                : 'bg-[var(--color-surface-muted)] text-[var(--color-ink-muted)]'
+            }`}>
+              {option.active ? 'Opção ativa' : 'Opção inativa'}
+            </span>
+            <span className="text-[11px] text-[var(--color-ink-muted)]">
+              {option.groupName} · em {option.parentProductName}
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setModal({
+            kind: 'produto',
+            initial: parent,
+            defaultCategoriaId: parent.id_categoria,
+            defaultSubcategoriaId: parent.id_subcategoria,
+          })}
+          className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-line)] px-2.5 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
+          aria-label={`Editar opções de ${option.parentProductName}`}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Editar opções</span>
+        </button>
+      </div>
+    );
+  };
+
   return (
     <>
     <div className="flex flex-1 flex-col overflow-y-auto p-4 sm:p-6 lg:p-8">
@@ -787,11 +849,14 @@ export const CatalogView = ({
                   <div className="mb-2 flex items-center justify-between gap-3 px-1">
                     <p className="text-sm font-bold text-[var(--color-ink)]">{flatResultHeading}</p>
                     <span className="text-xs font-medium text-[var(--color-ink-muted)]">
-                      {displayProducts.length} produto{displayProducts.length === 1 ? '' : 's'}
+                      {displayProducts.length + searchModifierOptions.length} resultado{displayProducts.length + searchModifierOptions.length === 1 ? '' : 's'}
                     </span>
                   </div>
-                  {displayProducts.length > 0 ? (
-                    <div className="divide-y divide-[var(--color-line)]">{displayProducts.map(renderSearchProduct)}</div>
+                  {displayProducts.length > 0 || searchModifierOptions.length > 0 ? (
+                    <div className="divide-y divide-[var(--color-line)]">
+                      {displayProducts.map(renderSearchProduct)}
+                      {searchModifierOptions.map(renderSearchModifierOption)}
+                    </div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-[var(--color-line)] p-6 text-center text-sm text-[var(--color-ink-muted)]">
                       {normalized ? `Nenhum produto encontrado para “${query.trim()}”.` : 'Nenhum produto corresponde a este filtro.'}

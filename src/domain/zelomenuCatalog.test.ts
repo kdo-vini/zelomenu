@@ -7,6 +7,7 @@ import {
   resolveCatalogProductAvailability,
   isExactCatalogProductNameDuplicate,
   isSimilarCatalogProductName,
+  searchCatalogModifierOptions,
 } from './zelomenuCatalog';
 
 describe('catalog canonical product rules', () => {
@@ -14,6 +15,33 @@ describe('catalog canonical product rules', () => {
     expect(normalizeCatalogSearchText(' Bife à rolê ')).toBe('bife a role');
     expect(isExactCatalogProductNameDuplicate('bife a role', [{ id: 1, nome: 'Bife à rolê' }])?.id).toBe(1);
     expect(isSimilarCatalogProductName('bife role', { nome: 'Bife à rolê' })).toBe(true);
+  });
+
+  it('finds active unlinked modifier options by their own name and parent context', () => {
+    const results = searchCatalogModifierOptions(
+      [{ id: 878, nome: 'Marmita executiva 700 ml' }],
+      {
+        878: [{
+          productId: 878,
+          name: 'Escolha 1 mistura',
+          options: [
+            { id: 'linguica', name: 'Bife de linguiça toscana temperada', priceDelta: 0, active: true, order: 1 },
+            { id: 'linked', name: 'Bife acebolado', priceDelta: 0, active: true, order: 2 },
+          ],
+        }],
+      },
+      { linked: { productId: 853 } },
+      'bife de linguica',
+    );
+
+    expect(results).toEqual([{
+      id: 'linguica',
+      name: 'Bife de linguiça toscana temperada',
+      active: true,
+      parentProductId: 878,
+      parentProductName: 'Marmita executiva 700 ml',
+      groupName: 'Escolha 1 mistura',
+    }]);
   });
 
   it.each([
