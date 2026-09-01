@@ -122,6 +122,22 @@ export function sortModifierGroups(groups: ZeloMenuModifierGroup[]): ZeloMenuMod
     }));
 }
 
+export function setModifierOptionActive<T extends ZeloMenuModifierGroup>(
+  groups: T[],
+  optionId: string,
+  active: boolean,
+): T[] {
+  return groups.map((group) => {
+    const options = group.options.map((option) => (
+      option.id === optionId ? { ...option, active } : option
+    ));
+
+    return options.some((option, index) => option !== group.options[index])
+      ? { ...group, options } as T
+      : group;
+  });
+}
+
 export { buildModifierSignature as buildModifierSelectionKey } from './zelomenuCartItemKey';
 
 export function resolveModifierOptionPrice(

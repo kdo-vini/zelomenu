@@ -219,6 +219,7 @@ function AdminPageContent() {
       upsertProductPublication={catalog.upsertProductPublication}
       reorderProductPublications={catalog.reorderProductPublications}
       replaceProductModifierGroups={catalog.replaceProductModifierGroups}
+      setModifierOptionAvailability={catalog.setModifierOptionAvailability}
       uploadProductPublicationImage={catalog.uploadProductPublicationImage}
       deleteProductPublicationImage={catalog.deleteProductPublicationImage}
     />

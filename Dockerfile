@@ -22,9 +22,10 @@ ARG PUBLIC_APP_VERSION
 RUN case "$PUBLIC_APP_VERSION" in \
       ''|'${'*) PUBLIC_APP_VERSION=$(git rev-parse --short=12 HEAD 2>/dev/null || echo dev) ;; \
     esac; \
+    printf '%s' "$PUBLIC_APP_VERSION" > /app/APP_VERSION; \
     echo "[build] PUBLIC_APP_VERSION=$PUBLIC_APP_VERSION"; \
     echo "[build] VITE_SUPABASE_URL=$VITE_SUPABASE_URL"; \
-    npm run build
+    VITE_APP_VERSION="$PUBLIC_APP_VERSION" npm run build
 
 # ─── runtime stage: Express server serving API + static frontend ──────────────
 FROM node:20-alpine
@@ -40,6 +41,7 @@ COPY server ./server
 COPY src/domain ./src/domain
 COPY src/utils ./src/utils
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/APP_VERSION ./APP_VERSION
 
 # Copy tsconfig so tsx can resolve path aliases
 COPY tsconfig*.json ./

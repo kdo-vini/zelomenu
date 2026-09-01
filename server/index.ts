@@ -566,7 +566,12 @@ app.get('/api/admin/zelomenu/mesas', async (req, res) => {
 // ─── Health check ─────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: process.env.PUBLIC_APP_VERSION?.trim() || undefined,
+  });
 });
 
 // ─── Public business directory ───────────────────────────────────────────

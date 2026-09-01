@@ -93,6 +93,7 @@ interface Props {
   upsertProductPublication: (productId: number, patch: ZeloMenuProductPublicationInput) => Promise<ZeloMenuProductPublicationRow>;
   reorderProductPublications: (orderedProductIds: number[]) => Promise<void>;
   replaceProductModifierGroups: (productId: number, groups: ZeloMenuModifierGroupDraft[]) => Promise<ZeloMenuModifierGroupRow[]>;
+  setModifierOptionAvailability: (optionId: string, active: boolean) => Promise<void>;
   uploadProductPublicationImage: (productId: number, file: File, previousUrl?: string | null) => Promise<string>;
   deleteProductPublicationImage: (url: string | null | undefined) => Promise<void>;
 }
@@ -155,6 +156,7 @@ export const CatalogView = ({
   upsertProductPublication,
   reorderProductPublications,
   replaceProductModifierGroups,
+  setModifierOptionAvailability,
   uploadProductPublicationImage,
   deleteProductPublicationImage,
 }: Props) => {
@@ -493,6 +495,21 @@ export const CatalogView = ({
     }
   };
 
+  const handleModifierOptionAvailabilityToggle = async (option: CatalogSearchModifierOption) => {
+    setBulkFeedback(null);
+    const active = !option.active;
+    const message = active
+      ? `${option.name} retomado no cardápio.`
+      : `${option.name} pausado no cardápio.`;
+
+    try {
+      await setModifierOptionAvailability(option.id, active);
+      setBulkFeedback({ tone: 'success', message });
+    } catch (toggleError) {
+      setBulkFeedback({ tone: 'error', message: getFriendlyErrorMessage(toggleError) || 'Não foi possível atualizar a opção.' });
+    }
+  };
+
   const createComponentProduct = async ({ nome, preco }: { nome: string; preco: number }) => {
     const duplicate = isExactCatalogProductNameDuplicate(nome, produtos);
     if (duplicate) throw new Error(`Já existe um produto chamado “${duplicate.nome}”. Selecione o existente para evitar duplicatas.`);
@@ -575,20 +592,26 @@ export const CatalogView = ({
             </span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setModal({
-            kind: 'produto',
-            initial: parent,
-            defaultCategoriaId: parent.id_categoria,
-            defaultSubcategoriaId: parent.id_subcategoria,
-          })}
-          className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-line)] px-2.5 text-xs font-semibold text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)]"
-          aria-label={`Editar opções de ${option.parentProductName}`}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Editar opções</span>
-        </button>
+        <ActionsMenu
+          label={option.name}
+          actions={[
+            {
+              label: option.active ? 'Pausar no cardápio' : 'Retomar no cardápio',
+              icon: option.active ? <PauseCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />,
+              onSelect: () => void handleModifierOptionAvailabilityToggle(option),
+            },
+            {
+              label: 'Editar opções',
+              icon: <Pencil className="h-4 w-4" />,
+              onSelect: () => setModal({
+                kind: 'produto',
+                initial: parent,
+                defaultCategoriaId: parent.id_categoria,
+                defaultSubcategoriaId: parent.id_subcategoria,
+              }),
+            },
+          ]}
+        />
       </div>
     );
   };

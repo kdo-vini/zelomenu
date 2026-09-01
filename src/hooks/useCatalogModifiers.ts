@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
 import { supabase } from '../services/supabaseClient';
 import type { ZeloMenuModifierGroupDraft } from '../domain/zelomenuModifiers';
-import { sortModifierGroups } from '../domain/zelomenuModifiers';
+import { setModifierOptionActive, sortModifierGroups } from '../domain/zelomenuModifiers';
 import type {
   CatalogState,
   CommitFn,
@@ -214,7 +214,28 @@ export function useCatalogModifiers(
     return saved;
   }, [userId, dataRef, commitData]);
 
-  return { replaceProductModifierGroups };
+  const setModifierOptionAvailability = useCallback(async (optionId: string, active: boolean): Promise<void> => {
+    if (!userId) throw new Error('Faça login para continuar.');
+
+    const { error } = await supabase
+      .from('zelomenu_modifier_options')
+      .update({ ativo: active, updated_at: new Date().toISOString() })
+      .eq('id_usuario', userId)
+      .eq('id', optionId);
+    if (error) throw error;
+
+    commitData((previous) => ({
+      ...previous,
+      productModifierGroups: Object.fromEntries(
+        Object.entries(previous.productModifierGroups).map(([productId, groups]) => [
+          Number(productId),
+          setModifierOptionActive(groups, optionId, active),
+        ]),
+      ),
+    }));
+  }, [userId, commitData]);
+
+  return { replaceProductModifierGroups, setModifierOptionAvailability };
 }
 
 export type { ZeloMenuModifierGroupRow, ZeloMenuModifierOptionRow };
