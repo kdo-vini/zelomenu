@@ -173,8 +173,9 @@ export function summarizeZeloMenuPublication(
  */
 export function resolveZeloMenuLinkedOptionAvailability(
   product: Pick<ZeloMenuPublicationCatalogProduct, 'controlar_estoque' | 'estoque_atual'>
-    & Partial<Pick<ZeloMenuPublicationCatalogProduct, 'ocultar_no_pdv'>>,
+    & Partial<Pick<ZeloMenuPublicationCatalogProduct, 'ocultar_no_pdv' | 'publication'>>,
 ): boolean {
+  if (product.publication?.pausado_manualmente) return false;
   return resolveCatalogProductAvailability(product, []).available;
 }
 

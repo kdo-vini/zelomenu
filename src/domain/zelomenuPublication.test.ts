@@ -22,7 +22,7 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
     expect(resolveZeloMenuLinkedOptionAvailability({ controlar_estoque: false, estoque_atual: 0 })).toBe(true);
   });
 
-  it('keeps an unpublished product available as a component regardless of PDV visibility', () => {
+  it('pauses every component usage when an unpublished canonical product is paused', () => {
     const unpublished: ZeloMenuPublicationProduct = {
       id: 196,
       nome: 'Penne',
@@ -41,7 +41,15 @@ describe('resolveZeloMenuLinkedOptionAvailability', () => {
       },
     };
     expect(getZeloMenuPublicationStatus(unpublished).status).not.toBe('published');
-    expect(resolveZeloMenuLinkedOptionAvailability(unpublished)).toBe(true);
+    expect(resolveZeloMenuLinkedOptionAvailability(unpublished)).toBe(false);
+  });
+
+  it('keeps an unpublished but unpaused product available as a component', () => {
+    expect(resolveZeloMenuLinkedOptionAvailability({
+      controlar_estoque: false,
+      estoque_atual: 0,
+      publication: { pausado_manualmente: false },
+    })).toBe(true);
   });
 
   it('keeps linked components available when they are hidden only in the PDV', () => {

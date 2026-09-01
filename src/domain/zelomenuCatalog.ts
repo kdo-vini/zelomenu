@@ -38,13 +38,30 @@ export type CatalogProductUsage = {
   active: boolean;
 };
 
+export type CatalogSearchModifierOptionUsage = {
+  parentProductId: number;
+  parentProductName: string;
+  groupName: string;
+};
+
 export type CatalogSearchModifierOption = {
   id: string;
   name: string;
   active: boolean;
-  parentProductId: number;
-  parentProductName: string;
-  groupName: string;
+  usageCount: number;
+  usages: CatalogSearchModifierOptionUsage[];
+};
+
+export type CatalogModifierComponent = {
+  id: string;
+  nome: string;
+  pausado_manualmente: boolean;
+};
+
+export type CatalogModifierOptionLink = {
+  productId?: number | null;
+  componentId?: string | null;
+  priceOverride: number | null;
 };
 
 type CatalogSearchModifierGroup = Pick<ZeloMenuModifierGroup, 'productId' | 'name' | 'options'>;
@@ -90,30 +107,44 @@ export function normalizeCatalogSearchText(value: string): string {
 export function searchCatalogModifierOptions<T extends { id: number; nome: string }>(
   products: T[],
   productModifierGroups: Record<number, CatalogSearchModifierGroup[]>,
-  modifierOptionProducts: Record<string, { productId: number }>,
+  modifierOptionProducts: Record<string, CatalogModifierOptionLink>,
   query: string,
+  modifierComponents: CatalogModifierComponent[] = [],
 ): CatalogSearchModifierOption[] {
   const normalized = normalizeCatalogSearchText(query);
   if (!normalized) return [];
 
-  const results: CatalogSearchModifierOption[] = [];
+  const componentsById = new Map(modifierComponents.map((component) => [component.id, component]));
+  const results = new Map<string, CatalogSearchModifierOption>();
   for (const product of products) {
     for (const group of productModifierGroups[product.id] ?? []) {
       for (const option of group.options) {
-        if (modifierOptionProducts[option.id] || !option.name.trim()) continue;
-        if (!normalizeCatalogSearchText(option.name).includes(normalized)) continue;
-        results.push({
-          id: option.id,
-          name: option.name,
-          active: option.active,
+        const componentId = modifierOptionProducts[option.id]?.componentId;
+        if (!componentId) continue;
+        const component = componentsById.get(componentId);
+        if (!component || !normalizeCatalogSearchText(component.nome).includes(normalized)) continue;
+        const existing = results.get(componentId);
+        const usage = {
           parentProductId: product.id,
           parentProductName: product.nome,
           groupName: group.name,
+        };
+        if (existing) {
+          existing.usages.push(usage);
+          existing.usageCount += 1;
+          continue;
+        }
+        results.set(componentId, {
+          id: component.id,
+          name: component.nome,
+          active: !component.pausado_manualmente,
+          usageCount: 1,
+          usages: [usage],
         });
       }
     }
   }
-  return results;
+  return [...results.values()].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 }
 
 export function getCatalogProductRole(

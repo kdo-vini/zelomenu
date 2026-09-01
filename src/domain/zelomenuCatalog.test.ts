@@ -17,30 +17,53 @@ describe('catalog canonical product rules', () => {
     expect(isSimilarCatalogProductName('bife role', { nome: 'Bife à rolê' })).toBe(true);
   });
 
-  it('finds active unlinked modifier options by their own name and parent context', () => {
+  it('returns one canonical component result for repeated group occurrences', () => {
     const results = searchCatalogModifierOptions(
-      [{ id: 878, nome: 'Marmita executiva 700 ml' }],
+      [
+        { id: 878, nome: 'Marmita executiva 700 ml' },
+        { id: 879, nome: 'Marmita executiva 500 ml' },
+      ],
       {
         878: [{
           productId: 878,
           name: 'Escolha 1 mistura',
           options: [
-            { id: 'linguica', name: 'Bife de linguiça toscana temperada', priceDelta: 0, active: true, order: 1 },
-            { id: 'linked', name: 'Bife acebolado', priceDelta: 0, active: true, order: 2 },
+            { id: 'egg-first', name: 'Ovo frito', priceDelta: 0, active: true, order: 1 },
+          ],
+        }],
+        879: [{
+          productId: 879,
+          name: 'Escolha 2 acompanhamentos',
+          options: [
+            { id: 'egg-second', name: 'Ovo frito', priceDelta: 2, active: true, order: 1 },
           ],
         }],
       },
-      { linked: { productId: 853 } },
-      'bife de linguica',
+      {
+        'egg-first': { componentId: 'ovo-frito', priceOverride: 0 },
+        'egg-second': { componentId: 'ovo-frito', priceOverride: 2 },
+      } as any,
+      'ovo frito',
+      [{ id: 'ovo-frito', nome: 'Ovo frito', pausado_manualmente: false }],
     );
 
     expect(results).toEqual([{
-      id: 'linguica',
-      name: 'Bife de linguiça toscana temperada',
+      id: 'ovo-frito',
+      name: 'Ovo frito',
       active: true,
-      parentProductId: 878,
-      parentProductName: 'Marmita executiva 700 ml',
-      groupName: 'Escolha 1 mistura',
+      usageCount: 2,
+      usages: [
+        {
+          parentProductId: 878,
+          parentProductName: 'Marmita executiva 700 ml',
+          groupName: 'Escolha 1 mistura',
+        },
+        {
+          parentProductId: 879,
+          parentProductName: 'Marmita executiva 500 ml',
+          groupName: 'Escolha 2 acompanhamentos',
+        },
+      ],
     }]);
   });
 
