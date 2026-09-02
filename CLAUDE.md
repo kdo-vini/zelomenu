@@ -186,6 +186,20 @@ revalidação e `p_message_id`, incrementa a revisão e não cria pedido;
 Depois de `confirmed`, `pessoa_id` e o valor original de `alreadyConfirmed` são
 preservados durante `zelomenu_auto_accept_orders`.
 
+A fronteira materializador/confirmação é crítica: o wrapper cercado por epoch
+deve somente validar o permit e delegar para
+`confirm_whatsapp_zelo_order_atomic_v1`; ele não pode copiar nem simplificar a
+rematerialização. A função efetiva
+`zelomenu_whatsapp_materialize_cart_v1` resolve exatamente um destino por
+opção (`id_produto` ou `id_componente`), respeita pausa de componente,
+considera componentes na viabilidade de grupo obrigatório e reserva estoque
+somente para produtos vinculados. Demanda de produto vinculado é agregada
+entre todas as linhas antes da comparação com estoque. As migrations
+`20260902120000_whatsapp_materializer_component_parity.sql` e
+`20260902130000_fence_conversation_ordering_with_ai_epoch.sql` devem ser
+validadas juntas em Postgres/Supabase local antes de qualquer deploy; nunca
+substituir esse gate por execução no projeto linked.
+
 O token bruto nunca é persistido: o servidor deriva o valor opaco com
 `ZELO_CONFIRMATION_TOKEN_SECRET` sobre empresa/JID/sessão/revisão/expiração e
 envia somente SHA-256 ao banco. A expiração nasce do `updated_at` da revisão,

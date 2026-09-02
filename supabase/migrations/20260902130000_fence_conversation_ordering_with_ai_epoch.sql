@@ -367,6 +367,7 @@ begin
     raise exception using errcode = 'ZL503', message = 'CONFIRMATION_RPC_UNAVAILABLE';
   end if;
 
+  -- FIX 2026-09-02: o materializador SQL ignorava id_componente e divergia da prévia Node → a confirmação cercada preserva o materializador canônico com componentes.
   -- Preserve the Task 6 canonical, component-aware materializer and every
   -- existing token/idempotency/review semantic inside its original RPC.
   execute $sql$

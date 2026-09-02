@@ -2,6 +2,43 @@
 
 Runbook curto para diagnosticar rapidamente problemas de preço, deploy e roteamento do cardápio público.
 
+## 2026-09-02 — confirmação conversacional ignorava componentes canônicos (P1)
+
+### Sintoma
+
+A prévia Node aceitava uma opção vinculada a componente, mas a confirmação
+transacional podia rejeitar o mesmo pedido ou deixar de perceber que o
+componente tinha sido pausado.
+
+### Impacto
+
+Pedidos por conversa podiam divergir entre resumo e confirmação na fronteira
+crítica de preço/disponibilidade. O risco foi contido antes do rollout deste
+novo fluxo; não há aplicação de migration ou deploy registrada nesta entrega.
+
+### Causa raiz
+
+O materializador SQL efetivo resolvia apenas
+`zelomenu_modifier_option_products.id_produto`; `id_componente` não entrava na
+resolução de nome/preço/pausa nem na viabilidade dos grupos obrigatórios.
+
+### Correção
+
+O materializador agora trava e resolve componentes canônicos, respeita pausa e
+`price_override`, conta componentes ativos na viabilidade e exclui componentes
+da reserva de estoque de produto. O wrapper cercado por epoch delega para essa
+mesma confirmação atômica, sem manter uma segunda materialização —
+`supabase/migrations/20260902120000_whatsapp_materializer_component_parity.sql:3`,
+`supabase/migrations/20260902130000_fence_conversation_ordering_with_ai_epoch.sql:370`.
+
+### Validação e prevenção
+
+- Vitest congela o contrato da migration e a paridade de componentes/estoque.
+- O fixture pgTAP versionado cobre componente ativo, pausa antes da confirmação
+  e fence revogado; sua execução local continua sendo gate pré-deploy.
+- Antes do deploy, executar todas as migrations/testes/lint em Supabase local;
+  banco linked não é substituto autorizado para esse gate.
+
 ## 0. Visibilidade do PDV não é publicação online
 
 `produtos.ocultar_no_pdv` é somente o controle interno de venda manual do
@@ -10,7 +47,7 @@ ZeloPDV. Para o cliente, a fonte de verdade é o overlay
 `pausado_manualmente` pausa. Se um produto estiver oculto no PDV, isso não deve
 alterar a publicação no storefront. Não corrigir esse caso com backfill de
 dados sem instrução explícita do produto; a correção de 2026-08-24 foi somente
-de contrato/código e preservou o catálogo da Bem Servido.
+de contrato/código e preservou o catálogo da loja validada.
 
 ## 1. Preço `R$0,00` em produto com grupo `substituir`
 
@@ -45,7 +82,8 @@ Não corrigir esse caso mudando o preço do produto para `18`. Isso quebra M/G e
 ### Verificação da API pública
 
 ```powershell
-$api = Invoke-RestMethod 'https://menu.zelopdv.com.br/api/public/zelomenu/store/bemservido'
+if (-not $env:ZELOMENU_SMOKE_SLUG) { throw 'Defina ZELOMENU_SMOKE_SLUG com um slug autorizado para o smoke test.' }
+$api = Invoke-RestMethod "https://menu.zelopdv.com.br/api/public/zelomenu/store/$env:ZELOMENU_SMOKE_SLUG"
 $p = @($api.catalog | ForEach-Object {
   $_.produtosDireto
   $_.subcategorias | ForEach-Object { $_.produtos }
@@ -138,8 +176,9 @@ Para um arquivo legado sem rotas, usar `{}`. `http: {}` foi rejeitado pelo Traef
 ### Smoke test do domínio
 
 ```powershell
+if (-not $env:ZELOMENU_SMOKE_SLUG) { throw 'Defina ZELOMENU_SMOKE_SLUG com um slug autorizado para o smoke test.' }
 curl.exe -sS -i --max-time 20 `
-  https://menu.zelopdv.com.br/api/public/zelomenu/store/bemservido
+  "https://menu.zelopdv.com.br/api/public/zelomenu/store/$env:ZELOMENU_SMOKE_SLUG"
 ```
 
 Esperado: `HTTP/1.1 200 OK`, `Cache-Control` do endpoint público e `pricingMode: "substituir"` no JSON.

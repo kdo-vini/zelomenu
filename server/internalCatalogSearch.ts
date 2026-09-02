@@ -1,3 +1,4 @@
+import type { Request, RequestHandler, Response } from 'express';
 import {
   getConfig,
   loadCatalogFromDb,
@@ -83,3 +84,54 @@ export const CatalogDiscovery = {
     };
   },
 };
+
+type InternalCatalogSearchHandlerOptions = {
+  rateLimit: RequestHandler;
+  search?: typeof CatalogDiscovery.search;
+};
+
+async function executeInternalCatalogSearch(
+  res: Response,
+  parsed: Extract<ParsedCatalogSearchRequest, { ok: true }>,
+  search: typeof CatalogDiscovery.search,
+): Promise<void> {
+  try {
+    const result = await search(parsed.value);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error) {
+    // Do not log request headers/body: both can contain the internal key.
+    console.error('[ZeloMenu] internal catalog search error:', error);
+    res.status(500).json({
+      error: 'CONSULTA_INDISPONIVEL',
+      detail: 'Não foi possível consultar o cardápio agora. Tente novamente em instantes.',
+      requestId: res.locals.requestId,
+    });
+  }
+}
+
+export function createInternalCatalogSearchHandler({
+  rateLimit,
+  search = CatalogDiscovery.search,
+}: InternalCatalogSearchHandlerOptions): RequestHandler {
+  return async (req, res) => {
+    if (res.locals.internalCatalogKeyValid !== true) {
+      return res.status(401).json({
+        error: 'NAO_AUTORIZADO',
+        detail: 'Não foi possível autorizar esta consulta.',
+        requestId: res.locals.requestId,
+      });
+    }
+
+    const parsed = parseInternalCatalogSearchRequest(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({
+        error: 'CONSULTA_INVALIDA',
+        detail: parsed.message,
+        requestId: res.locals.requestId,
+      });
+    }
+    (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId = parsed.value.empresaId;
+    return rateLimit(req, res, () => { void executeInternalCatalogSearch(res, parsed, search); });
+  };
+}

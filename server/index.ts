@@ -18,7 +18,7 @@ import { listBusinesses } from './zelomenuBusinessDirectory.js';
 import { removePublicPushSubscription, savePublicPushSubscription, startOrderStatusPushDispatcher, type PublicPushSubscriptionPayload } from './zelomenuPushSubscriptions.js';
 import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
-import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
+import { createInternalCatalogSearchHandler } from './internalCatalogSearch.js';
 import { createInternalCatalogFailureLimiter, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
 import { createInternalOrderingRouter } from './internalOrdering.js';
 import { ConversationOrdering } from './supabaseConversationOrderingAdapter.js';
@@ -119,42 +119,7 @@ const internalCatalogSearchLimiter = rateLimit({
 
 // ─── Internal catalog discovery (ZeloChat) ───────────────────────────────────
 
-async function executeInternalCatalogSearch(_req: Request, res: Response, parsed: Extract<ReturnType<typeof parseInternalCatalogSearchRequest>, { ok: true }>): Promise<void> {
-  try {
-    const result = await CatalogDiscovery.search(parsed.value);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json(result);
-  } catch (error) {
-    // Do not log request headers/body: both can contain the internal key.
-    console.error('[ZeloMenu] internal catalog search error:', error);
-    res.status(500).json({
-      error: 'CONSULTA_INDISPONIVEL',
-      detail: 'Não foi possível consultar o cardápio agora. Tente novamente em instantes.',
-      requestId: res.locals.requestId,
-    });
-  }
-}
-
-app.post('/internal/catalog/search', async (req, res) => {
-  if (res.locals.internalCatalogKeyValid !== true) {
-    return res.status(401).json({
-      error: 'NAO_AUTORIZADO',
-      detail: 'Não foi possível autorizar esta consulta.',
-      requestId: res.locals.requestId,
-    });
-  }
-
-  const parsed = parseInternalCatalogSearchRequest(req.body);
-  if (!parsed.ok) {
-    return res.status(400).json({
-      error: 'CONSULTA_INVALIDA',
-      detail: parsed.message,
-      requestId: res.locals.requestId,
-    });
-  }
-  (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId = parsed.value.empresaId;
-  return internalCatalogSearchLimiter(req, res, () => { void executeInternalCatalogSearch(req, res, parsed); });
-});
+app.post('/internal/catalog/search', createInternalCatalogSearchHandler({ rateLimit: internalCatalogSearchLimiter }));
 
 app.use('/internal/ordering', createInternalOrderingRouter(ConversationOrdering));
 
