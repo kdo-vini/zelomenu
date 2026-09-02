@@ -1,9 +1,18 @@
-import { getConfig, loadCatalogFromDb } from './configStore.js';
+import {
+  getConfig,
+  loadCatalogFromDb,
+  resolveConversationCatalogDisplayPrice,
+  toConversationModifierGroups,
+  type CatalogProduct,
+  type ConversationCatalogDisplayPrice,
+} from './configStore.js';
 import {
   sanitizeCatalogSearchLimit,
   searchCatalogDiscovery,
+  type CatalogSearchCandidate,
   type CatalogSearchResult,
 } from '../src/domain/zelomenuCatalogDiscovery.js';
+import type { ConversationModifierGroupDefinition } from './conversationOrderRequirements.js';
 
 export type CatalogDiscoverySearchRequest = {
   empresaId: string;
@@ -14,6 +23,15 @@ export type CatalogDiscoverySearchRequest = {
 export type ParsedCatalogSearchRequest =
   | { ok: true; value: Required<CatalogDiscoverySearchRequest> }
   | { ok: false; message: string };
+
+export type ConversationCatalogSearchCandidate = Omit<CatalogSearchCandidate, 'modifierGroups'> & {
+  displayPrice: ConversationCatalogDisplayPrice;
+  modifierGroups: ConversationModifierGroupDefinition[];
+};
+
+export type ConversationCatalogSearchResult = Omit<CatalogSearchResult, 'results'> & {
+  results: ConversationCatalogSearchCandidate[];
+};
 
 const EMPRESA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -36,8 +54,32 @@ export function parseInternalCatalogSearchRequest(input: unknown): ParsedCatalog
  * projection maintained by configStore.
  */
 export const CatalogDiscovery = {
-  async search({ empresaId, query, limit }: CatalogDiscoverySearchRequest): Promise<CatalogSearchResult> {
+  async search({ empresaId, query, limit }: CatalogDiscoverySearchRequest): Promise<ConversationCatalogSearchResult> {
     await loadCatalogFromDb(empresaId);
-    return searchCatalogDiscovery({ empresaId, query, limit, catalog: getConfig(empresaId).catalogHierarchy });
+    const catalog = getConfig(empresaId).catalogHierarchy;
+    const productsById = new Map<number, CatalogProduct>();
+    for (const category of catalog) {
+      for (const product of category.produtosDireto) productsById.set(product.id, product);
+      for (const subcategory of category.subcategorias) {
+        for (const product of subcategory.produtos) productsById.set(product.id, product);
+      }
+    }
+
+    const result = searchCatalogDiscovery({ empresaId, query, limit, catalog });
+    return {
+      ...result,
+      results: result.results.map((candidate) => {
+        const product = productsById.get(candidate.productId);
+        if (!product) throw new Error(`CATALOG_PRODUCT_NOT_FOUND:${candidate.productId}`);
+        const displayPrice = resolveConversationCatalogDisplayPrice(product);
+        return {
+          ...candidate,
+          parent: { ...candidate.parent, currentPrice: displayPrice.amount },
+          currentPrice: displayPrice.amount,
+          displayPrice,
+          modifierGroups: toConversationModifierGroups(product.modifierGroups),
+        };
+      }),
+    };
   },
 };

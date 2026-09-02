@@ -6,11 +6,12 @@ import {
   summarizeZeloMenuPublication,
 } from '../src/domain/zelomenuPublication.js';
 import { resolveCatalogProductAvailability } from '../src/domain/zelomenuCatalog.js';
-import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
+import { previewModifierPrice, resolveModifierOptionPrice, sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication, ZeloMenuPublicationProduct, ZeloMenuPublicationSummary } from '../src/domain/zelomenuPublication.js';
 import { deriveWeeklyFromLegacy, normalizeWeeklyHours, type WeeklyHours } from '../src/domain/businessHours.js';
 import { isPixKeyType, type PixKeyType } from '../src/domain/pixBrCode.js';
+import type { ConversationModifierGroupDefinition } from './conversationOrderRequirements.js';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -47,6 +48,55 @@ export type CatalogCategoriaGroup = {
   subcategorias: Array<{ nome: string; produtos: CatalogProduct[] }>;
   produtosDireto: CatalogProduct[];
 };
+
+export type ConversationCatalogDisplayPrice = {
+  kind: 'fixed' | 'from';
+  amount: number;
+};
+
+/**
+ * Maps the cached catalog into the conversation contract without sorting or
+ * filtering the cached arrays in place. Inactive options remain visible as
+ * unavailable so a consumer never has to infer their current state.
+ */
+export function toConversationModifierGroups(
+  groups: readonly ZeloMenuModifierGroup[],
+): ConversationModifierGroupDefinition[] {
+  return sortModifierGroups([...groups])
+    .filter((group) => group.active)
+    .map((group) => ({
+      id: group.id,
+      name: group.name,
+      kind: group.kind,
+      pricingMode: group.pricingMode,
+      minSelections: group.minSelections,
+      maxSelections: group.maxSelections,
+      minTotalQuantity: group.minTotalQuantity,
+      maxTotalQuantity: group.maxTotalQuantity,
+      allowsQuantity: group.allowsQuantity,
+      maxPerOption: group.maxPerOption,
+      order: group.order,
+      options: group.options.map((option) => ({
+        id: option.id,
+        name: option.name,
+        currentPrice: resolveModifierOptionPrice(option),
+        priceDelta: option.priceDelta,
+        available: option.active && option.linkedProduct?.available !== false,
+        order: option.order,
+      })),
+    }));
+}
+
+/** Resolves the cheapest complete required path shown before any selection. */
+export function resolveConversationCatalogDisplayPrice(
+  product: Pick<CatalogProduct, 'basePrice' | 'modifierGroups'>,
+): ConversationCatalogDisplayPrice {
+  const preview = previewModifierPrice([...product.modifierGroups], [], product.basePrice);
+  return {
+    kind: preview.hasRequiredGroup ? 'from' : 'fixed',
+    amount: preview.unitPrice,
+  };
+}
 
 export type BusinessConfig = {
   name: string;
