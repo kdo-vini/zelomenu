@@ -977,18 +977,16 @@ async function resolveSnapshots(
 
   const aggregated = new Map<number, number>();
   for (const item of params.items) {
-    if (item.productId != null) aggregated.set(item.productId, (aggregated.get(item.productId) ?? 0) + item.quantity);
-  }
-
-  for (const item of params.items) {
     const product = findCatalogProduct(config.products, { productId: item.productId ?? null, productName: item.productName });
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
-    if (product.stockControlled) {
-      const stockQuantity = Number(product.stockQuantity ?? 0);
-      const requestedQuantity = item.productId != null ? aggregated.get(item.productId) ?? item.quantity : item.quantity;
-      if (requestedQuantity > stockQuantity) throw stockExceededError(product.name, stockQuantity, requestedQuantity);
+    const unavailableOnlyBecauseOfStock = product.stockControlled
+      && Number(product.stockQuantity ?? 0) <= 0;
+    if (!product.available && !unavailableOnlyBecauseOfStock) throw new Error('PRODUCT_UNAVAILABLE');
+    const directAgg = (aggregated.get(product.id) ?? 0) + item.quantity;
+    if (!Number.isSafeInteger(item.quantity) || !Number.isSafeInteger(directAgg)) {
+      throw new Error('INVALID_QUANTITY');
     }
-    if (!product.available) throw new Error('PRODUCT_UNAVAILABLE');
+    aggregated.set(product.id, directAgg);
     const baseUnitPrice = Number(product.basePrice ?? product.price);
     const modifierGroups = params.allowIncompleteModifiers
       ? product.modifierGroups.map((group) => ({ ...group, minSelections: 0, minTotalQuantity: 0 }))
@@ -1009,17 +1007,13 @@ async function resolveSnapshots(
           const linkedProductInCatalog = linkedProductId == null
             ? null
             : config.products.find((p) => p.id === linkedProductId);
-          if (linkedProductInCatalog?.stockControlled) {
-            const stockQuantity = Number(linkedProductInCatalog.stockQuantity ?? 0);
-            const linkedContribution = item.quantity * opt.quantity;
-            const linkedAgg = (aggregated.get(linkedProductId!) ?? 0) + linkedContribution;
-            if (!Number.isSafeInteger(linkedContribution) || !Number.isSafeInteger(linkedAgg)) {
-              throw new Error('MODIFIER_QUANTITY_INVALID');
-            }
-            aggregated.set(linkedProductId!, linkedAgg);
-            if (linkedAgg > stockQuantity) throw stockExceededError(linkedProductInCatalog.name, stockQuantity, linkedAgg);
-          }
           if (modifierOption.linkedProduct.available === false) throw new Error('MODIFIER_INVALID:Uma opção vinculada não está mais disponível.');
+          if (linkedProductId == null || linkedProductInCatalog == null) continue;
+          const linkedContribution = item.quantity * opt.quantity;
+          if (!Number.isSafeInteger(linkedContribution)) throw new Error('MODIFIER_QUANTITY_INVALID');
+          const linkedAgg = (aggregated.get(linkedProductId) ?? 0) + linkedContribution;
+          if (!Number.isSafeInteger(linkedAgg)) throw new Error('MODIFIER_QUANTITY_INVALID');
+          aggregated.set(linkedProductId, linkedAgg);
         }
       }
     }
@@ -1035,6 +1029,15 @@ async function resolveSnapshots(
       lineTotal: Number((unitPrice * item.quantity).toFixed(2)),
       notes: sanitizeText(item.notes, 200),
     });
+  }
+
+  for (const [productId, requestedQuantity] of aggregated) {
+    const product = config.products.find((candidate) => candidate.id === productId);
+    if (!product?.stockControlled) continue;
+    const stockQuantity = Number(product.stockQuantity ?? 0);
+    if (requestedQuantity > stockQuantity) {
+      throw stockExceededError(product.name, stockQuantity, requestedQuantity);
+    }
   }
 
   const fulfillmentType = params.fulfillment?.type === 'delivery'

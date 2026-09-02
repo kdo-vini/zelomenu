@@ -149,6 +149,23 @@ function sharedLinkedStockItems() {
   ];
 }
 
+function linkedStockItem(
+  lineId: string,
+  parentQuantity: number,
+  group: 'a' | 'b',
+  optionQuantity: number,
+) {
+  return {
+    lineId,
+    productId: 10,
+    quantity: parentQuantity,
+    selectedOptions: [{
+      groupId: `g-stock-${group}`,
+      optionSelections: [{ optionId: `o-stock-${group}`, quantity: optionQuantity }],
+    }],
+  };
+}
+
 const EMPRESA_ID = '10000000-0000-4000-8000-000000000001';
 
 beforeEach(() => {
@@ -426,7 +443,59 @@ describe('materializeWhatsAppOrderDraft', () => {
     });
   });
 
-  it('rejeita demanda vinculada fora do inteiro seguro pelo caminho de quantidade inválida', async () => {
+  it('reporta a mesma demanda final quando uma contribuição intermediária já excede o estoque', async () => {
+    products = productsWithSharedLinkedStock(6);
+    const expected = 'PRODUCT_STOCK_EXCEEDED:{"productName":"Porção vinculada","availableQuantity":6,"requestedQuantity":10}';
+    const results = await Promise.allSettled([
+      materializeWhatsAppOrderDraft({
+        empresaId: EMPRESA_ID,
+        items: [linkedStockItem('line-1', 7, 'a', 1), linkedStockItem('line-2', 3, 'b', 1)],
+      }),
+      materializeWhatsAppOrderDraft({
+        empresaId: EMPRESA_ID,
+        items: [linkedStockItem('line-2', 3, 'b', 1), linkedStockItem('line-1', 7, 'a', 1)],
+      }),
+    ]);
+
+    expect(results.map((result) => (
+      result.status === 'rejected' && result.reason instanceof Error
+        ? result.reason.message
+        : result.status
+    ))).toEqual([expected, expected]);
+  });
+
+  it('soma a demanda direta e a demanda vinculada do mesmo produto antes de comparar o estoque', async () => {
+    products = productsWithSharedLinkedStock(6);
+
+    await expect(materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [
+        { lineId: 'linked-direct', productId: 20, quantity: 7 },
+        linkedStockItem('parent-line', 3, 'a', 1),
+      ],
+    })).rejects.toThrow(
+      'PRODUCT_STOCK_EXCEEDED:{"productName":"Porção vinculada","availableQuantity":6,"requestedQuantity":10}',
+    );
+  });
+
+  it('rejeita soma vinculada fora do inteiro seguro antes de comparar o estoque', async () => {
+    products = productsWithSharedLinkedStock(6);
+    products[0].modifierGroups = products[0].modifierGroups.map((group) => ({
+      ...group,
+      maxTotalQuantity: null,
+      maxPerOption: null,
+    }));
+
+    await expect(materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [
+        linkedStockItem('line-1', 1, 'a', Number.MAX_SAFE_INTEGER - 1),
+        linkedStockItem('line-2', 1, 'b', 2),
+      ],
+    })).rejects.toThrowError(/^MODIFIER_QUANTITY_INVALID$/);
+  });
+
+  it('rejeita multiplicação vinculada fora do inteiro seguro pelo caminho de quantidade inválida', async () => {
     products = productsWithSharedLinkedStock(Number.MAX_SAFE_INTEGER);
     products[0].modifierGroups[0] = {
       ...products[0].modifierGroups[0],
