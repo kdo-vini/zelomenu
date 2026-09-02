@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BusinessConfig, CatalogProduct } from './configStore';
 import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog';
@@ -338,5 +339,51 @@ describe('materializeWhatsAppOrderDraft', () => {
   it('não usa nome como fallback quando o ID solicitado não existe', async () => {
     await expect(materializeWhatsAppOrderDraft({ empresaId: EMPRESA_ID, items: [{ lineId: 'line-1', productId: 999, quantity: 1 }] }))
       .rejects.toThrow('PRODUCT_NOT_FOUND');
+  });
+});
+
+describe('migração de paridade dos componentes na confirmação', () => {
+  it('trava e resolve componentes canônicos, inclusive na viabilidade de grupos obrigatórios', () => {
+    const sql = readFileSync(
+      'supabase/migrations/20260902120000_whatsapp_materializer_component_parity.sql',
+      'utf8',
+    );
+    const materializer = sql.match(
+      /create or replace function public\.zelomenu_whatsapp_materialize_cart_v1\([\s\S]*?\n\$\$;/i,
+    )?.[0];
+
+    expect(materializer).toBeDefined();
+    expect(materializer).toMatch(
+      /returns jsonb\s+language plpgsql\s+security definer\s+set search_path = public, pg_temp/is,
+    );
+    expect(materializer).toMatch(
+      /from public\.zelomenu_modifier_components component[\s\S]*?for update of component/is,
+    );
+    expect(materializer).toMatch(
+      /left join public\.zelomenu_modifier_components linked_component\s+on linked_component\.id = link\.id_componente\s+and linked_component\.id_usuario = v_owner/is,
+    );
+
+    const requiredGroupViability = materializer?.match(
+      /if exists\s*\(\s*select 1\s+from public\.zelomenu_modifier_groups required_group[\s\S]*?\) < required_group\.min_selecoes[\s\S]*?end if;/i,
+    )?.[0];
+    expect(requiredGroupViability).toBeDefined();
+    expect(requiredGroupViability).toMatch(
+      /link\.id_componente is not null\s+and linked_component\.id is not null\s+and not coalesce\(linked_component\.pausado_manualmente, false\)/is,
+    );
+    expect(materializer).toMatch(
+      /link\.id_componente is not null and \(\s+linked_component\.id is null\s+or coalesce\(linked_component\.pausado_manualmente, false\)/is,
+    );
+    expect(materializer).toMatch(
+      /coalesce\(nullif\(publication\.nome_publico, ''\), linked_product\.nome, linked_component\.nome, o\.nome\) as option_name/is,
+    );
+    expect(materializer).toMatch(
+      /coalesce\(link\.price_override, linked_product\.preco, o\.price_delta\)::numeric\(10,2\) as resolved_price/is,
+    );
+    expect(materializer).toMatch(
+      /if v_option\.linked_product_id is not null then\s+v_requirements := v_requirements/is,
+    );
+    expect(sql).toMatch(
+      /revoke all on function public\.zelomenu_whatsapp_materialize_cart_v1\(uuid, jsonb\)\s+from public, anon, authenticated;[\s\S]*?grant execute on function public\.zelomenu_whatsapp_materialize_cart_v1\(uuid, jsonb\) to service_role;/is,
+    );
   });
 });
