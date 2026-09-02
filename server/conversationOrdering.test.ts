@@ -8,15 +8,20 @@ import {
   type ConversationOrderDraft,
   type DraftMaterialization,
   type DraftMutationResult,
+  type OrderingRequirement,
 } from './conversationOrdering';
+import { deriveModifierRequirements } from './conversationOrderRequirements';
+import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog';
 
 const EMPRESA_A = '10000000-0000-4000-8000-000000000001';
 const JID_A = '5511999999999@s.whatsapp.net';
+const PICKUP_FULFILLMENT = { type: 'pickup' } as const;
 
-function materialization(productId = 10, unitPrice = 20): DraftMaterialization {
+function materialization(productId = 10, unitPrice = 20, lineId = 'line-1'): DraftMaterialization {
   return {
     cart: {
       items: [{
+        lineId,
         productId,
         productName: 'X-Bacon',
         baseUnitPrice: unitPrice,
@@ -43,6 +48,8 @@ function materialization(productId = 10, unitPrice = 20): DraftMaterialization {
     payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false },
     pricing: { subtotal: unitPrice, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: unitPrice },
     revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
+    requirements: [],
+    readyForConfirmation: true,
   };
 }
 
@@ -70,6 +77,9 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   changePriceAfterRevalidate: number | null = null;
   conflictNextIssuance = false;
   jsonbRoundTrips = 0;
+  nextRequirements: OrderingRequirement[] = [];
+  deliveryFeeToConfirm = false;
+  forceReadyForConfirmation: boolean | null = null;
 
   private roundTrip(record: ConversationOrderingRecord | null): ConversationOrderingRecord | null {
     if (!record || !this.reorderEveryRoundTrip) return record;
@@ -81,11 +91,18 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   }
 
   async materializeDraft(_empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
-    const resolved = materialization(draft.items[0]?.productId ?? 10, this.currentPrice);
-    const quantity = draft.items[0]?.quantity ?? 1;
-    resolved.cart.items[0].quantity = quantity;
-    resolved.cart.items[0].lineTotal = resolved.cart.items[0].unitPrice * quantity;
-    resolved.pricing.subtotal = resolved.cart.items[0].lineTotal;
+    const first = draft.items[0];
+    const resolved = materialization(first?.productId ?? 10, this.currentPrice, first?.lineId ?? 'line-1');
+    resolved.cart.items = draft.items.map((item) => ({
+      ...resolved.cart.items[0],
+      lineId: item.lineId,
+      productId: item.productId,
+      productName: `Produto ${item.productId}`,
+      quantity: item.quantity,
+      lineTotal: this.currentPrice * item.quantity,
+      notes: item.notes ?? null,
+    }));
+    resolved.pricing.subtotal = resolved.cart.items.reduce((total, item) => total + item.lineTotal, 0);
     if (draft.fulfillment?.type === 'delivery') {
       resolved.fulfillment = {
         ...resolved.fulfillment,
@@ -93,9 +110,22 @@ class MemoryAdapter implements ConversationOrderingAdapter {
         type: 'delivery',
         asap: draft.fulfillment.asap !== false,
         deliveryFee: this.currentDeliveryFee,
-        deliveryFeeToConfirm: false,
+        deliveryFeeToConfirm: this.deliveryFeeToConfirm,
         deliveryStatus: 'eligible',
       };
+    } else if (draft.fulfillment?.type === 'pickup') {
+      resolved.fulfillment = { ...resolved.fulfillment, ...draft.fulfillment, type: 'pickup' };
+    }
+    resolved.requirements = [...this.nextRequirements];
+    if (this.nextRevalidationIssues.length > 0) {
+      resolved.revalidation = { checkedAt: '2026-08-30T12:01:00.000Z', ok: false, issues: this.nextRevalidationIssues };
+    }
+    resolved.readyForConfirmation = !resolved.requirements.some((requirement) => requirement.blocking)
+      && resolved.revalidation.ok
+      && resolved.fulfillment.type !== null
+      && !resolved.fulfillment.deliveryFeeToConfirm;
+    if (this.forceReadyForConfirmation !== null) {
+      resolved.readyForConfirmation = this.forceReadyForConfirmation;
     }
     resolved.pricing.deliveryFee = resolved.fulfillment.deliveryFee;
     resolved.pricing.total = resolved.pricing.subtotal + resolved.pricing.deliveryFee;
@@ -223,6 +253,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     }
     const draft: ConversationOrderDraft = {
       items: latest.cart.items.flatMap((item) => item.productId == null ? [] : [{
+        lineId: item.lineId,
         productId: item.productId,
         quantity: item.quantity,
         notes: item.notes,
@@ -231,7 +262,10 @@ class MemoryAdapter implements ConversationOrderingAdapter {
           optionSelections: group.selectedOptions.map((option) => ({ optionId: option.optionId, quantity: option.quantity ?? 1 })),
         })),
       }]),
-      fulfillment: latest.fulfillment,
+      fulfillment: latest.fulfillment.type === null ? null : {
+        ...latest.fulfillment,
+        type: latest.fulfillment.type,
+      },
       paymentMethod: latest.payment.declaredMethod,
       pessoaId: latest.pessoaId,
       customer: latest.customer,
@@ -264,6 +298,168 @@ class MemoryAdapter implements ConversationOrderingAdapter {
 }
 
 describe('ConversationOrdering', () => {
+  it('preserva linhas estáveis do mesmo produto ao atualizar somente a segunda linha', async () => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record) => `token-lines-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'a').slice(0, 64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.lines-open-123456',
+      draft: {
+        items: [
+          { lineId: 'line-1', productId: 1001, quantity: 1, notes: 'Sem gelo' },
+          { lineId: 'line-2', productId: 1001, quantity: 2 },
+        ],
+        fulfillment: PICKUP_FULFILLMENT,
+      },
+    });
+
+    const updated = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.lines-update-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      draft: {
+        items: [{ lineId: 'line-2', productId: 1001, quantity: 3 }],
+        fulfillment: PICKUP_FULFILLMENT,
+      },
+    });
+
+    expect(updated.cart.items).toMatchObject([
+      { lineId: 'line-1', productId: 1001, quantity: 1, notes: 'Sem gelo' },
+      { lineId: 'line-2', productId: 1001, quantity: 3 },
+    ]);
+    expect(updated.revision).toBe(2);
+  });
+
+  it('não emite confirmação quando a materialização tem requisito bloqueante', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.nextRequirements = deriveModifierRequirements(
+      [{ lineId: 'line-1', productId: 1007 }],
+      bemServidoConversationCatalog,
+    );
+    adapter.forceReadyForConfirmation = true;
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-blocked',
+      hashConfirmationToken: () => 'a'.repeat(64),
+    });
+
+    const snapshot = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.blocked-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1007, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+
+    expect(snapshot.requirements.some((requirement) => requirement.blocking)).toBe(true);
+    expect(snapshot.readyForConfirmation).toBe(false);
+    expect(snapshot.confirmationAction).toBeNull();
+    expect(adapter.issuedHashes).toEqual([]);
+  });
+
+  it('mantém modalidade ausente e exige escolha explícita sem assumir retirada', async () => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-without-fulfillment',
+      hashConfirmationToken: () => 'b'.repeat(64),
+    });
+
+    const snapshot = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.no-fulfillment-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }] },
+    });
+
+    expect(snapshot.fulfillment.type).toBeNull();
+    expect(snapshot.requirements).toContainEqual(expect.objectContaining({
+      id: 'fulfillment_type', type: 'fulfillment_type', blocking: true,
+    }));
+    expect(snapshot.readyForConfirmation).toBe(false);
+    expect(snapshot.confirmationAction).toBeNull();
+    expect(adapter.issuedHashes).toEqual([]);
+  });
+
+  it('rejeita lineId fora do formato permitido antes de materializar', async () => {
+    for (const [index, lineId] of ['', 'linha 1', 'linha.1', 'a'.repeat(65)].entries()) {
+      const adapter = new MemoryAdapter();
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: () => 'unused-invalid-line',
+        hashConfirmationToken: () => 'c'.repeat(64),
+      });
+
+      await expect(ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: `wamid.invalid-line-${index}-123456`,
+        draft: { items: [{ lineId, productId: 1001, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+      })).rejects.toMatchObject({
+        code: 'ITEM_INVALIDO',
+        message: 'Revise a identificação dos itens do pedido.',
+      });
+      expect(adapter.createCalls).toBe(0);
+      expect(adapter.issuedHashes).toEqual([]);
+    }
+  });
+
+  it('rejeita lineId duplicado antes de materializar', async () => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'unused-duplicate-line',
+      hashConfirmationToken: () => 'd'.repeat(64),
+    });
+
+    await expect(ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.duplicate-line-123456',
+      draft: {
+        items: [
+          { lineId: 'line-1', productId: 1001, quantity: 1 },
+          { lineId: 'line-1', productId: 1001, quantity: 2 },
+        ],
+        fulfillment: PICKUP_FULFILLMENT,
+      },
+    })).rejects.toMatchObject({
+      code: 'ITEM_INVALIDO',
+      message: 'Cada item do pedido precisa de uma identificação diferente.',
+    });
+    expect(adapter.createCalls).toBe(0);
+    expect(adapter.issuedHashes).toEqual([]);
+  });
+
+  it('não emite confirmação com taxa pendente ou revalidação reprovada', async () => {
+    const unsettledAdapter = new MemoryAdapter();
+    unsettledAdapter.deliveryFeeToConfirm = true;
+    unsettledAdapter.forceReadyForConfirmation = true;
+    const unsettledOrdering = createConversationOrdering(unsettledAdapter, {
+      createRawConfirmationToken: () => 'token-unsettled-fee',
+      hashConfirmationToken: () => 'e'.repeat(64),
+    });
+    const unsettled = await unsettledOrdering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.unsettled-fee-123456',
+      draft: {
+        items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }],
+        fulfillment: { type: 'delivery' },
+      },
+    });
+
+    const failedAdapter = new MemoryAdapter();
+    failedAdapter.nextRevalidationIssues = [{ code: 'product_unavailable', message: 'Item indisponível.' }];
+    failedAdapter.forceReadyForConfirmation = true;
+    const failedOrdering = createConversationOrdering(failedAdapter, {
+      createRawConfirmationToken: () => 'token-failed-revalidation',
+      hashConfirmationToken: () => 'f'.repeat(64),
+    });
+    const failed = await failedOrdering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.failed-revalidation-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+
+    expect(unsettled).toMatchObject({ readyForConfirmation: false, confirmationAction: null });
+    expect(failed).toMatchObject({ readyForConfirmation: false, confirmationAction: null });
+    expect(unsettledAdapter.issuedHashes).toEqual([]);
+    expect(failedAdapter.issuedHashes).toEqual([]);
+  });
+
   it('abre uma única sessão para retry concorrente do mesmo messageId', async () => {
     const adapter = new MemoryAdapter();
     const ordering = createConversationOrdering(adapter, {
@@ -276,7 +472,7 @@ describe('ConversationOrdering', () => {
       empresaId: EMPRESA_A,
       remoteJid: JID_A,
       messageId: 'wamid.HBgMNTUxMTk5OTk5OTk5ORUCABIYFjNFQjA=',
-      draft: { items: [{ productId: 10, quantity: 1 }] },
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     };
 
     const [first, retry] = await Promise.all([ordering.apply(command), ordering.apply(command)]);
@@ -299,12 +495,12 @@ describe('ConversationOrdering', () => {
     });
     const opened = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.open-1234567890', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.open-1234567890', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     });
     const update = {
       type: 'open_or_update_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.update-1234567890', orderingId: opened.orderingId,
-      expectedRevision: 1, draft: { items: [{ productId: 10, quantity: 2 }] },
+      expectedRevision: 1, draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 2 }], fulfillment: PICKUP_FULFILLMENT },
     };
 
     const changed = await ordering.apply(update);
@@ -327,12 +523,12 @@ describe('ConversationOrdering', () => {
     });
     const opened = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.open-confirm-1234', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.open-confirm-1234', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     });
     const updated = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.update-confirm-1234', orderingId: opened.orderingId, expectedRevision: 1,
-      draft: { items: [{ productId: 10, quantity: 2 }], pessoaId: '40000000-0000-4000-8000-000000000001' },
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 2 }], fulfillment: PICKUP_FULFILLMENT, pessoaId: '40000000-0000-4000-8000-000000000001' },
     });
 
     await expect(ordering.apply({
@@ -376,10 +572,10 @@ describe('ConversationOrdering', () => {
         type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
         messageId: `wamid.open-${scenario.label}-123456`,
         draft: {
-          items: [{ productId: 10, quantity: 1 }],
+          items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
           fulfillment: scenario.label === 'taxa' || scenario.label === 'cobertura'
             ? { type: 'delivery', deliveryPostalCode: '01001000', deliveryNumber: '10' }
-            : undefined,
+            : PICKUP_FULFILLMENT,
         },
       });
       scenario.configure(adapter);
@@ -393,8 +589,14 @@ describe('ConversationOrdering', () => {
       expect(reviewed.requiresReview, scenario.label).toBe(true);
       expect(reviewed.revision, scenario.label).toBe(2);
       expect(reviewed.order, scenario.label).toBeNull();
-      expect(reviewed.confirmationAction?.revision, scenario.label).toBe(2);
-      if (scenario.issue) expect(reviewed.revalidation.issues.map((item) => item.code)).toContain(scenario.issue);
+      if (scenario.issue) {
+        expect(reviewed.revalidation.issues.map((item) => item.code)).toContain(scenario.issue);
+        expect(reviewed.readyForConfirmation, scenario.label).toBe(false);
+        expect(reviewed.confirmationAction, scenario.label).toBeNull();
+      } else {
+        expect(reviewed.readyForConfirmation, scenario.label).toBe(true);
+        expect(reviewed.confirmationAction?.revision, scenario.label).toBe(2);
+      }
       if (scenario.label === 'preço') expect(reviewed.pricing.subtotal).toBe(25);
       if (scenario.label === 'taxa') expect(reviewed.pricing.deliveryFee).toBe(8);
     }
@@ -409,7 +611,7 @@ describe('ConversationOrdering', () => {
     });
     const first = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.first-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.first-open-123456', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     });
     const confirmed = await ordering.apply({
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
@@ -419,7 +621,7 @@ describe('ConversationOrdering', () => {
 
     const second = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.second-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.second-open-123456', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     });
     expect(second.orderingId).not.toBe(first.orderingId);
     expect(adapter.records).toHaveLength(2);
@@ -437,7 +639,7 @@ describe('ConversationOrdering', () => {
       empresaId: EMPRESA_A,
       remoteJid: JID_A,
       messageId: 'wamid.historical-open-123456',
-      draft: { items: [{ productId: 10, quantity: 1 }] },
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     };
     const opened = await firstReplica.apply(openCommand);
     await firstReplica.apply({
@@ -476,7 +678,7 @@ describe('ConversationOrdering', () => {
     adapter.writeTime = currentTime.toISOString();
     const command = {
       type: 'open_or_update_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.expiring-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.expiring-open-123456', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     };
     const opened = await ordering.apply(command);
     expect(opened.confirmationAction?.expiresAt).toBe('2026-08-30T12:10:00.000Z');
@@ -509,7 +711,7 @@ describe('ConversationOrdering', () => {
     });
     const opened = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.jsonb-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.jsonb-open-123456', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     });
 
     const confirmed = await ordering.apply({
@@ -531,7 +733,7 @@ describe('ConversationOrdering', () => {
     });
     const opened = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.atomic-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.atomic-open-123456', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     });
     adapter.changePriceAfterRevalidate = 30;
 
@@ -554,7 +756,7 @@ describe('ConversationOrdering', () => {
 
     await expect(ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.issue-conflict-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.issue-conflict-123456', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     })).rejects.toMatchObject({
       code: 'REVISAO_DESATUALIZADA',
       currentSnapshot: expect.objectContaining({ revision: 2 }),
@@ -569,7 +771,7 @@ describe('ConversationOrdering', () => {
     });
     const opened = await ordering.apply({
       type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
-      messageId: 'wamid.cancel-open-123456', draft: { items: [{ productId: 10, quantity: 1 }] },
+      messageId: 'wamid.cancel-open-123456', draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
     });
     await expect(ordering.apply({
       type: 'cancel_draft', empresaId: '10000000-0000-4000-8000-000000000002', remoteJid: JID_A,

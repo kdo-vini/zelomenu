@@ -58,7 +58,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   constructor(private readonly supabase: SupabaseClient = getServiceSupabase()) {}
 
   async materializeDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
-    return materializeWhatsAppOrderDraft({
+    const materialized = await materializeWhatsAppOrderDraft({
       empresaId,
       items: draft.items,
       observations: draft.observations,
@@ -66,6 +66,22 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       fulfillment: draft.fulfillment,
       paymentMethod: draft.paymentMethod,
     });
+    if (materialized.cart.items.length !== draft.items.length) {
+      throw new Error('MATERIALIZED_LINE_COUNT_MISMATCH');
+    }
+    return {
+      ...materialized,
+      cart: {
+        ...materialized.cart,
+        items: materialized.cart.items.map((item, index) => ({
+          ...item,
+          lineId: draft.items[index]!.lineId,
+        })),
+      },
+      requirements: [],
+      readyForConfirmation: materialized.revalidation.ok
+        && !materialized.fulfillment.deliveryFeeToConfirm,
+    };
   }
 
   private async loadOrder(sessionId: string): Promise<CanonicalOrderReference | null> {
@@ -96,6 +112,8 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       pessoaId: typeof metadata.pessoaId === 'string' ? metadata.pessoaId : null,
       processedMessageIds: processedMessageIds(metadata),
       revalidation: row.last_revalidation ?? { checkedAt: row.last_revalidated_at ?? new Date(0).toISOString(), ok: true, issues: [] },
+      requirements: [],
+      readyForConfirmation: false,
       order: state === 'cart_open' || state === 'cancelled' || state === 'archived' ? null : await this.loadOrder(row.id),
     };
   }

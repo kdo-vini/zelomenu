@@ -24,6 +24,8 @@ function record(overrides: Partial<ConversationOrderingRecord> = {}): Conversati
     pricing: { subtotal: 0, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 0 },
     payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false },
     revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
+    requirements: [],
+    readyForConfirmation: true,
     order: null,
     ...overrides,
   };

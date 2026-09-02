@@ -25,6 +25,8 @@ function snapshot(): OrderingSnapshot {
     pricing: { subtotal: 0, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 0 },
     payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false },
     revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
+    requirements: [],
+    readyForConfirmation: true,
     order: null,
     confirmationAction: { type: 'confirm_order', token: 'token-opaco-com-tamanho-valido', revision: 1, expiresAt: '2026-08-30T12:10:00.000Z' },
     requiresReview: false,
@@ -58,7 +60,7 @@ function validCommand(empresaId = EMPRESA) {
   return {
     type: 'open_or_update_draft', empresaId, remoteJid: JID,
     messageId: 'wamid.valid-message-123456',
-    draft: { items: [{ productId: 10, quantity: 2, notes: 'sem cebola' }] },
+    draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 2, notes: 'sem cebola' }] },
   };
 }
 
@@ -67,7 +69,7 @@ describe('parseInternalOrderingCommand', () => {
     expect(parseInternalOrderingCommand(validCommand()).ok).toBe(true);
     expect(parseInternalOrderingCommand({
       ...validCommand(),
-      draft: { items: [{ productId: 10, productName: 'Preço do caller', unitPrice: 0.01, quantity: 1 }] },
+      draft: { items: [{ lineId: 'line-1', productId: 10, productName: 'Preço do caller', unitPrice: 0.01, quantity: 1 }] },
     })).toEqual({ ok: false, message: 'Envie somente os identificadores e quantidades dos itens.' });
   });
 
@@ -76,7 +78,28 @@ describe('parseInternalOrderingCommand', () => {
     expect(parseInternalOrderingCommand({ ...validCommand(), remoteJid: 'telefone' }).ok).toBe(false);
     expect(parseInternalOrderingCommand({ ...validCommand(), messageId: 'curta' }).ok).toBe(false);
     expect(parseInternalOrderingCommand({ ...validCommand(), orderingId: ORDERING, expectedRevision: 0 }).ok).toBe(false);
-    expect(parseInternalOrderingCommand({ ...validCommand(), draft: { items: [{ productId: -1, quantity: 1 }] } }).ok).toBe(false);
+    expect(parseInternalOrderingCommand({ ...validCommand(), draft: { items: [{ lineId: 'line-1', productId: -1, quantity: 1 }] } }).ok).toBe(false);
+  });
+
+  it('exige lineId válido e único sem sintetizar identidade na borda', () => {
+    expect(parseInternalOrderingCommand({
+      ...validCommand(), draft: { items: [{ productId: 10, quantity: 1 }] },
+    })).toEqual({ ok: false, message: 'Informe uma identificação válida para cada item.' });
+    expect(parseInternalOrderingCommand({
+      ...validCommand(), draft: { items: [{ lineId: 'linha.1', productId: 10, quantity: 1 }] },
+    })).toEqual({ ok: false, message: 'Informe uma identificação válida para cada item.' });
+    expect(parseInternalOrderingCommand({
+      ...validCommand(),
+      draft: { items: [
+        { lineId: 'line-1', productId: 10, quantity: 1 },
+        { lineId: 'line-1', productId: 10, quantity: 2 },
+      ] },
+    })).toEqual({ ok: false, message: 'Cada item do pedido precisa de uma identificação diferente.' });
+
+    const parsed = parseInternalOrderingCommand(validCommand());
+    expect(parsed.ok && parsed.value.type === 'open_or_update_draft'
+      ? parsed.value.draft.items[0].lineId
+      : null).toBe('line-1');
   });
 });
 

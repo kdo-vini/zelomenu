@@ -1,4 +1,5 @@
 import type {
+  ZeloMenuCartItemSnapshot,
   ZeloMenuCartSnapshot,
   ZeloMenuPaymentSnapshot,
   ZeloMenuPricingSnapshot,
@@ -7,8 +8,10 @@ import type {
   ZeloMenuCustomerSnapshot,
   ZeloMenuFulfillmentSnapshot,
 } from './zelomenuCartSessions.js';
+import type { OrderingRequirement as ModifierOrderingRequirement } from './conversationOrderRequirements.js';
 
 export type ConversationOrderItemSelection = {
+  lineId: string;
   productId: number;
   quantity: number;
   notes?: string | null;
@@ -26,6 +29,27 @@ export type ConversationOrderDraft = {
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
 };
+
+export type ConversationOrderCartItemSnapshot = ZeloMenuCartItemSnapshot & {
+  lineId: string;
+};
+
+export type ConversationOrderCartSnapshot = Omit<ZeloMenuCartSnapshot, 'items'> & {
+  items: ConversationOrderCartItemSnapshot[];
+};
+
+export type ConversationFulfillmentSnapshot = Omit<ZeloMenuFulfillmentSnapshot, 'type'> & {
+  type: ZeloMenuFulfillmentSnapshot['type'] | null;
+};
+
+export type FulfillmentTypeOrderingRequirement = {
+  id: 'fulfillment_type';
+  type: 'fulfillment_type';
+  name: string;
+  blocking: true;
+};
+
+export type OrderingRequirement = ModifierOrderingRequirement | FulfillmentTypeOrderingRequirement;
 
 type CommandIdentity = {
   empresaId: string;
@@ -46,12 +70,14 @@ export type ConversationRevalidation = {
 };
 
 export type DraftMaterialization = {
-  cart: ZeloMenuCartSnapshot;
+  cart: ConversationOrderCartSnapshot;
   customer: ZeloMenuCustomerSnapshot;
-  fulfillment: ZeloMenuFulfillmentSnapshot;
+  fulfillment: ConversationFulfillmentSnapshot;
   payment: ZeloMenuPaymentSnapshot;
   pricing: ZeloMenuPricingSnapshot;
   revalidation: ConversationRevalidation;
+  requirements: OrderingRequirement[];
+  readyForConfirmation: boolean;
 };
 
 export type CanonicalOrderReference = {
@@ -146,9 +172,105 @@ type ConversationOrderingOptions = {
   confirmationTtlMs?: number;
 };
 
+const LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const FULFILLMENT_TYPE_REQUIREMENT: FulfillmentTypeOrderingRequirement = {
+  id: 'fulfillment_type',
+  type: 'fulfillment_type',
+  name: 'Escolha entrega ou retirada.',
+  blocking: true,
+};
+
+function validateDraftLineIds(draft: ConversationOrderDraft): void {
+  const lineIds = new Set<string>();
+  for (const item of draft.items) {
+    if (!LINE_ID.test(item.lineId)) {
+      throw new ConversationOrderingError('ITEM_INVALIDO', 'Revise a identificação dos itens do pedido.');
+    }
+    if (lineIds.has(item.lineId)) {
+      throw new ConversationOrderingError('ITEM_INVALIDO', 'Cada item do pedido precisa de uma identificação diferente.');
+    }
+    lineIds.add(item.lineId);
+  }
+}
+
+function requirementsWithFulfillment(
+  requirements: readonly OrderingRequirement[] | undefined,
+  fulfillment: ConversationFulfillmentSnapshot,
+): OrderingRequirement[] {
+  const normalized = [...(requirements ?? [])];
+  if (fulfillment.type === null && !normalized.some((requirement) => requirement.type === 'fulfillment_type')) {
+    normalized.push(FULFILLMENT_TYPE_REQUIREMENT);
+  }
+  return normalized;
+}
+
+function normalizeReadiness<T extends DraftMaterialization>(materialization: T): T {
+  const requirements = requirementsWithFulfillment(materialization.requirements, materialization.fulfillment);
+  const readyForConfirmation = materialization.readyForConfirmation === true
+    && materialization.fulfillment.type !== null
+    && !materialization.fulfillment.deliveryFeeToConfirm
+    && materialization.revalidation.ok
+    && !requirements.some((requirement) => requirement.blocking);
+  return { ...materialization, requirements, readyForConfirmation };
+}
+
+function normalizeDraftMaterialization(
+  draft: ConversationOrderDraft,
+  materialization: DraftMaterialization,
+): DraftMaterialization {
+  return normalizeReadiness({
+    ...materialization,
+    fulfillment: draft.fulfillment?.type
+      ? materialization.fulfillment
+      : { ...materialization.fulfillment, type: null },
+  });
+}
+
+function fulfillmentFromSnapshot(
+  fulfillment: ConversationFulfillmentSnapshot,
+): ConversationOrderDraft['fulfillment'] {
+  return fulfillment.type === null ? null : { ...fulfillment, type: fulfillment.type };
+}
+
+function selectionFromCartItem(item: ConversationOrderCartItemSnapshot): ConversationOrderItemSelection {
+  if (item.productId === null) {
+    throw new ConversationOrderingError('PEDIDO_INVALIDO', 'Revise os itens do pedido antes de continuar.');
+  }
+  return {
+    lineId: item.lineId,
+    productId: item.productId,
+    quantity: item.quantity,
+    notes: item.notes,
+    selectedOptions: item.selectedModifiers.map((group) => ({
+      groupId: group.groupId,
+      optionSelections: group.selectedOptions.map((option) => ({
+        optionId: option.optionId,
+        quantity: option.quantity ?? 1,
+      })),
+    })),
+  };
+}
+
+function mergeDraftLines(
+  current: ConversationOrderCartSnapshot,
+  incoming: readonly ConversationOrderItemSelection[],
+): ConversationOrderItemSelection[] {
+  const incomingByLineId = new Map(incoming.map((item) => [item.lineId, item]));
+  const currentLineIds = new Set(current.items.map((item) => item.lineId));
+  return [
+    ...current.items.map((item) => incomingByLineId.get(item.lineId) ?? selectionFromCartItem(item)),
+    ...incoming.filter((item) => !currentLineIds.has(item.lineId)),
+  ];
+}
+
 function toSnapshot(record: ConversationOrderingRecord, confirmationAction: OrderingSnapshot['confirmationAction'] = null, requiresReview = false): OrderingSnapshot {
-  const { sessionId: _sessionId, processedMessageIds: _processedMessageIds, ...publicRecord } = record;
-  return { ...publicRecord, confirmationAction, requiresReview };
+  const normalized = normalizeReadiness(record);
+  const { sessionId: _sessionId, processedMessageIds: _processedMessageIds, ...publicRecord } = normalized;
+  return {
+    ...publicRecord,
+    confirmationAction: normalized.readyForConfirmation ? confirmationAction : null,
+    requiresReview,
+  };
 }
 
 function canonicalJson(value: unknown): unknown {
@@ -188,19 +310,22 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
   const inFlight = new Map<string, Promise<OrderingSnapshot>>();
 
   async function withConfirmationAction(record: ConversationOrderingRecord, requiresReview = false): Promise<OrderingSnapshot> {
-    if (record.state !== 'cart_open') return toSnapshot(record, null, requiresReview);
-    const revisionTime = Date.parse(record.updatedAt);
+    const normalized = normalizeReadiness(record);
+    if (normalized.state !== 'cart_open' || !normalized.readyForConfirmation) {
+      return toSnapshot(normalized, null, requiresReview);
+    }
+    const revisionTime = Date.parse(normalized.updatedAt);
     const expiresAt = new Date((Number.isFinite(revisionTime) ? revisionTime : now().getTime()) + ttlMs).toISOString();
     if (Date.parse(expiresAt) <= now().getTime()) {
       throw new ConversationOrderingError(
         'RESUMO_EXPIRADO',
         'Este resumo expirou. Atualize o pedido para receber uma nova confirmação.',
-        toSnapshot(record, null, true),
+        toSnapshot(normalized, null, true),
       );
     }
-    const token = options.createRawConfirmationToken(record, expiresAt);
+    const token = options.createRawConfirmationToken(normalized, expiresAt);
     const issuance = await adapter.issueConfirmationToken({
-      current: record,
+      current: normalized,
       tokenHash: options.hashConfirmationToken(token),
       expiresAt,
     });
@@ -211,8 +336,8 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
         toSnapshot(issuance.record),
       );
     }
-    const action = { type: 'confirm_order' as const, token, revision: record.revision, expiresAt };
-    return toSnapshot(record, action, requiresReview);
+    const action = { type: 'confirm_order' as const, token, revision: normalized.revision, expiresAt };
+    return toSnapshot(normalized, action, requiresReview);
   }
 
   async function applyOnce(command: ConversationOrderCommand): Promise<OrderingSnapshot> {
@@ -220,6 +345,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (historical) return historical.state === 'cart_open' ? withConfirmationAction(historical) : toSnapshot(historical);
 
     if (command.type === 'open_or_update_draft' && !command.orderingId) {
+      validateDraftLineIds(command.draft);
       const existing = await adapter.findOpen(command.empresaId, command.remoteJid);
       if (existing) {
         if (existing.processedMessageIds.includes(command.messageId)) return withConfirmationAction(existing);
@@ -227,7 +353,10 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       }
       let materialized: DraftMaterialization;
       try {
-        materialized = await adapter.materializeDraft(command.empresaId, command.draft);
+        materialized = normalizeDraftMaterialization(
+          command.draft,
+          await adapter.materializeDraft(command.empresaId, command.draft),
+        );
       } catch (error) {
         throw asFriendlyMaterializationError(error);
       }
@@ -252,9 +381,20 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
 
     if (command.type === 'open_or_update_draft') {
       if (current.state !== 'cart_open') throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
+      validateDraftLineIds(command.draft);
       let materialized: DraftMaterialization;
       try {
-        materialized = await adapter.materializeDraft(command.empresaId, command.draft);
+        const materializationDraft: ConversationOrderDraft = {
+          ...command.draft,
+          items: mergeDraftLines(current.cart, command.draft.items),
+          fulfillment: command.draft.fulfillment === undefined
+            ? fulfillmentFromSnapshot(current.fulfillment)
+            : command.draft.fulfillment,
+        };
+        materialized = normalizeDraftMaterialization(
+          materializationDraft,
+          await adapter.materializeDraft(command.empresaId, materializationDraft),
+        );
       } catch (error) {
         throw asFriendlyMaterializationError(error);
       }

@@ -19,6 +19,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const JID = /^\d{8,20}@(s\.whatsapp\.net|c\.us)$/;
 const MESSAGE_ID = /^[\x21-\x7e]{8,200}$/;
 const OPTION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 function text(value: unknown, max: number): string | null | undefined {
   if (value == null) return value === null ? null : undefined;
@@ -34,12 +35,20 @@ function parseDraft(value: unknown): { ok: true; value: Extract<ConversationOrde
     return { ok: false, message: 'Informe de 1 a 50 itens.' };
   }
   const items = [] as Extract<ConversationOrderCommand, { type: 'open_or_update_draft' }>['draft']['items'];
+  const lineIds = new Set<string>();
   for (const raw of row.items) {
     if (!raw || typeof raw !== 'object') return { ok: false, message: 'Revise os itens informados.' };
     const item = raw as Record<string, unknown>;
     if ('productName' in item || 'price' in item || 'unitPrice' in item || 'lineTotal' in item) {
       return { ok: false, message: 'Envie somente os identificadores e quantidades dos itens.' };
     }
+    if (typeof item.lineId !== 'string' || !LINE_ID.test(item.lineId)) {
+      return { ok: false, message: 'Informe uma identificação válida para cada item.' };
+    }
+    if (lineIds.has(item.lineId)) {
+      return { ok: false, message: 'Cada item do pedido precisa de uma identificação diferente.' };
+    }
+    lineIds.add(item.lineId);
     if (!Number.isSafeInteger(item.productId) || Number(item.productId) <= 0) return { ok: false, message: 'Informe um produto válido.' };
     if (!Number.isSafeInteger(item.quantity) || Number(item.quantity) < 1 || Number(item.quantity) > 999) return { ok: false, message: 'Informe uma quantidade válida.' };
     const notes = text(item.notes, 200);
@@ -63,7 +72,7 @@ function parseDraft(value: unknown): { ok: true; value: Extract<ConversationOrde
         selectedOptions.push({ groupId: group.groupId, optionSelections });
       }
     }
-    items.push({ productId: Number(item.productId), quantity: Number(item.quantity), notes, selectedOptions });
+    items.push({ lineId: item.lineId, productId: Number(item.productId), quantity: Number(item.quantity), notes, selectedOptions });
   }
 
   const customerRaw = row.customer;
