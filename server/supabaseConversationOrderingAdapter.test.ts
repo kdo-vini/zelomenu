@@ -165,6 +165,106 @@ function adapterReading(row: Record<string, unknown>) {
   return new SupabaseConversationOrderingAdapter({ from } as never);
 }
 
+function adapterWithCreateCollision(rows: Array<Record<string, unknown>>) {
+  const rpc = vi.fn(async (functionName: string) => {
+    if (functionName !== 'zelomenu_open_whatsapp_order_with_ai_epoch_v1') {
+      throw new Error(`unexpected RPC: ${functionName}`);
+    }
+    return {
+      data: null,
+      error: {
+        code: '23505',
+        details: 'Key (empresa_id, source_ref) already exists.',
+        hint: '',
+        message: 'duplicate open WhatsApp cart',
+      },
+    };
+  });
+  const from = vi.fn((tableName: string) => {
+    if (tableName !== 'zelomenu_cart_sessions') {
+      throw new Error(`unexpected table: ${tableName}`);
+    }
+    const filters = new Map<string, unknown>();
+    const query: Record<string, unknown> = {};
+    query.eq = vi.fn((column: string, value: unknown) => {
+      filters.set(column, value);
+      return query;
+    });
+    query.maybeSingle = vi.fn(async () => {
+      const matches = rows.filter((row) => (
+        [...filters].every(([column, value]) => row[column] === value)
+      ));
+      if (matches.length === 1) return { data: matches[0], error: null };
+      return {
+        data: null,
+        error: {
+          code: 'PGRST116',
+          details: `Expected one scoped row, found ${matches.length}.`,
+          hint: '',
+          message: 'JSON object requested, multiple (or no) rows returned',
+        },
+      };
+    });
+    return { select: vi.fn(() => query) };
+  });
+  return new SupabaseConversationOrderingAdapter({ rpc, from } as never);
+}
+
+function createOpenInput(snapshot: ConversationOrderingRecord, processedMessageIds: string[]) {
+  return {
+    ...AI_PERMIT,
+    empresaId: snapshot.empresaId,
+    remoteJid: snapshot.remoteJid,
+    pessoaId: snapshot.pessoaId,
+    processedMessageIds,
+    customer: snapshot.customer,
+    cart: snapshot.cart,
+    fulfillment: snapshot.fulfillment,
+    pricing: snapshot.pricing,
+    payment: snapshot.payment,
+    revalidation: snapshot.revalidation,
+    requirements: snapshot.requirements,
+    readyForConfirmation: snapshot.readyForConfirmation,
+  };
+}
+
+describe('colisao cross-replica ao criar pedido', () => {
+  it('retorna o carrinho do mesmo tenant e JID quando a mensagem ja venceu a corrida', async () => {
+    const replayed = record({ processedMessageIds: ['wamid.same-message'] });
+    const otherTenant = record({
+      sessionId: '20000000-0000-4000-8000-000000000002',
+      orderingId: '30000000-0000-4000-8000-000000000002',
+      empresaId: '10000000-0000-4000-8000-000000000002',
+      processedMessageIds: ['wamid.same-message'],
+    });
+    const otherJid = record({
+      sessionId: '20000000-0000-4000-8000-000000000003',
+      orderingId: '30000000-0000-4000-8000-000000000003',
+      remoteJid: '5511888888888@s.whatsapp.net',
+      processedMessageIds: ['wamid.same-message'],
+    });
+    const adapter = adapterWithCreateCollision([
+      sessionRow(otherTenant),
+      sessionRow(otherJid),
+      sessionRow(replayed),
+    ]);
+
+    await expect(adapter.createOpen(createOpenInput(replayed, ['wamid.same-message'])))
+      .resolves.toEqual(replayed);
+  });
+
+  it('rejeita outra mensagem quando ja existe carrinho aberto no mesmo tenant e JID', async () => {
+    const existing = record({ processedMessageIds: ['wamid.existing-message'] });
+    const adapter = adapterWithCreateCollision([sessionRow(existing)]);
+
+    await expect(adapter.createOpen(createOpenInput(existing, ['wamid.new-message'])))
+      .rejects.toMatchObject({
+        code: 'PEDIDO_EM_ANDAMENTO',
+        currentSnapshot: null,
+      });
+  });
+});
+
 describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
   it('preserva requisitos e decisão de prontidão produzidos pelo materializador', async () => {
     const requirements = deriveModifierRequirements(
@@ -834,5 +934,39 @@ describe('migration de fencing por epoch', () => {
     expect(sql).toContain('create table public.zelochat_sessions');
     expect(sql).not.toContain('create table public.zelochat_conversation_control');
     expect(sql.trimEnd()).toMatch(/rollback;$/i);
+  });
+
+  it('mantem o snapshot temporario legivel durante a execucao como service_role', () => {
+    const sql = readFileSync('supabase/tests/conversation_order_ai_epoch.sql', 'utf8');
+
+    expect(sql).toMatch(
+      /create temporary table conversation_epoch_before[\s\S]+grant select on conversation_epoch_before to service_role;[\s\S]+set local role service_role;/i,
+    );
+  });
+
+  it('semeia a identidade canonica e prova que a bridge preservou o controle exato', () => {
+    const sql = readFileSync('supabase/tests/conversation_order_ai_epoch.sql', 'utf8');
+
+    expect(sql).toContain("'phone:11888888888'");
+    expect(sql).not.toContain("'phone:5511888888888'");
+    expect(sql).toMatch(
+      /insert into public\.zelochat_sessions[\s\S]+select is\([\s\S]+conversation_control_id[\s\S]+'b8000000-0000-4000-8000-000000000003'::uuid[\s\S]+shared bridge preserves exact seeded control binding[\s\S]+set local role service_role;/i,
+    );
+  });
+
+  it('prova que um permit AI atual passa antes de qualquer takeover', () => {
+    const sql = readFileSync('supabase/tests/conversation_order_ai_epoch.sql', 'utf8');
+
+    expect(sql).toMatch(
+      /set local role service_role;[\s\S]+select lives_ok\([\s\S]+zelomenu_assert_ai_conversation_permit_v1\([\s\S]+'10'[\s\S]+current AI permit succeeds[\s\S]+-- A takeover advances the control immediately before create\./i,
+    );
+  });
+
+  it('rejeita epoch obsoleto enquanto o controle continua em modo AI', () => {
+    const sql = readFileSync('supabase/tests/conversation_order_ai_epoch.sql', 'utf8');
+
+    expect(sql).toMatch(
+      /select throws_ok\([\s\S]+zelomenu_assert_ai_conversation_permit_v1\([\s\S]+'9'[\s\S]+'ZL409'[\s\S]+'AI_TURN_REVOKED'[\s\S]+stale epoch is rejected while control remains in AI mode[\s\S]+-- A takeover advances the control immediately before create\./i,
+    );
   });
 });

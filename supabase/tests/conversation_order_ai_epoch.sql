@@ -67,7 +67,7 @@ revoke all on function public.zelochat_conversation_control_lock_gate()
 grant execute on function public.zelochat_conversation_control_lock_gate()
   to service_role;
 
-select plan(11);
+select plan(14);
 
 insert into auth.users (
   id, email, aud, role, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -91,7 +91,7 @@ insert into public.zelochat_conversation_ai_control (
 ) values (
   'b8000000-0000-4000-8000-000000000003',
   'b8000000-0000-4000-8000-000000000002',
-  'phone:5511888888888',
+  'phone:11888888888',
   'ai',
   10,
   'pgtap'
@@ -106,7 +106,41 @@ insert into public.zelochat_sessions (
   'b8000000-0000-4000-8000-000000000003'
 );
 
+select is(
+  (select conversation_control_id
+    from public.zelochat_sessions
+    where id = 'b8000000-0000-4000-8000-000000000004'),
+  'b8000000-0000-4000-8000-000000000003'::uuid,
+  'shared bridge preserves exact seeded control binding'
+);
+
 set local role service_role;
+
+select lives_ok(
+  $sql$
+    select public.zelomenu_assert_ai_conversation_permit_v1(
+      'b8000000-0000-4000-8000-000000000002',
+      '5511888888888@s.whatsapp.net',
+      'b8000000-0000-4000-8000-000000000003',
+      '10'
+    )
+  $sql$,
+  'current AI permit succeeds'
+);
+
+select throws_ok(
+  $sql$
+    select public.zelomenu_assert_ai_conversation_permit_v1(
+      'b8000000-0000-4000-8000-000000000002',
+      '5511888888888@s.whatsapp.net',
+      'b8000000-0000-4000-8000-000000000003',
+      '9'
+    )
+  $sql$,
+  'ZL409',
+  'AI_TURN_REVOKED',
+  'stale epoch is rejected while control remains in AI mode'
+);
 
 -- A takeover advances the control immediately before create.
 update public.zelochat_conversation_ai_control
@@ -171,6 +205,8 @@ create temporary table conversation_epoch_before as
 select to_jsonb(session_row) as session_snapshot
 from public.zelomenu_cart_sessions session_row
 where id = 'b8000000-0000-4000-8000-000000000010';
+
+grant select on conversation_epoch_before to service_role;
 
 set local role service_role;
 

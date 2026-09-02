@@ -102,6 +102,26 @@ describe('parseInternalOrderingCommand', () => {
     });
   });
 
+  it('rejeita epoch decimal com zero a esquerda', () => {
+    expect(parseInternalOrderingCommand({
+      ...validCommand(),
+      conversationEpoch: '042',
+    })).toEqual({
+      ok: false,
+      message: 'Informe uma versão válida da conversa.',
+    });
+  });
+
+  it('preserva o maior bigint como string decimal exata', () => {
+    const parsed = parseInternalOrderingCommand({
+      ...validCommand(),
+      conversationEpoch: '9223372036854775807',
+    });
+
+    expect(parsed.ok ? parsed.value.conversationEpoch : null)
+      .toBe('9223372036854775807');
+  });
+
   it('aceita somente IDs/quantidades/observações e aplica asap por padrão no domínio', () => {
     expect(parseInternalOrderingCommand(validCommand()).ok).toBe(true);
     expect(parseInternalOrderingCommand({
