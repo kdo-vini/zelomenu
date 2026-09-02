@@ -296,6 +296,21 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
     })).rejects.toMatchObject({ code: 'AI_TURN_REVOKED', currentSnapshot: null });
     expect(rpc).toHaveBeenCalledTimes(1);
   });
+
+  it('falha fechado com mensagem amigavel quando o wrapper cercado de token nao existe', async () => {
+    const current = record();
+    const { adapter } = adapterWithRpc({
+      data: null,
+      error: { message: 'Could not find the function public.issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1 in the schema cache' },
+    });
+
+    await expect(adapter.issueConfirmationToken({
+      current,
+      ...AI_PERMIT,
+      tokenHash: 'd'.repeat(64),
+      expiresAt: '2026-08-30T12:10:00.000Z',
+    })).rejects.toMatchObject({ code: 'CONFIRMACAO_INDISPONIVEL', currentSnapshot: null });
+  });
 });
 
 describe('fencing atomico do SupabaseConversationOrderingAdapter', () => {
@@ -807,5 +822,17 @@ describe('migration de fencing por epoch', () => {
       expect(sql).toMatch(new RegExp(`grant execute on function public\\.${functionName}[\\s\\S]+to service_role;`, 'i'));
     }
     expect(sql).toMatch(/confirm_whatsapp_zelo_order_atomic_v1[\s\S]+p_empresa_id[\s\S]+p_source_ref/is);
+  });
+
+  it('mantem o pgTAP executavel em schema Menu isolado com bootstrap apenas de teste', () => {
+    const sql = readFileSync('supabase/tests/conversation_order_ai_epoch.sql', 'utf8');
+
+    expect(sql).toContain("to_regclass('public.zelochat_conversation_ai_control')");
+    expect(sql).toContain("to_regclass('public.zelochat_sessions')");
+    expect(sql).toContain("to_regprocedure('public.zelochat_conversation_control_lock_gate()')");
+    expect(sql).toContain('create table public.zelochat_conversation_ai_control');
+    expect(sql).toContain('create table public.zelochat_sessions');
+    expect(sql).not.toContain('create table public.zelochat_conversation_control');
+    expect(sql.trimEnd()).toMatch(/rollback;$/i);
   });
 });

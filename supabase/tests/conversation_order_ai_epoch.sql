@@ -3,6 +3,70 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
+-- ZeloMenu's migration must compile without ZeloChat and fail closed at
+-- runtime. A fresh local Menu test database therefore lacks the shared
+-- objects. Recreate only the checked-in 063/064 contract needed by this test,
+-- inside this transaction; the final rollback removes the test-only bootstrap.
+do $bootstrap$
+begin
+  if to_regclass('public.zelochat_conversation_ai_control') is null then
+    execute $ddl$
+      create table public.zelochat_conversation_ai_control (
+        id uuid primary key default gen_random_uuid(),
+        empresa_id uuid not null references public.empresa_perfil(id) on delete cascade,
+        identity_key text not null,
+        mode text not null default 'ai' check (mode in ('ai', 'human')),
+        epoch bigint not null default 0 check (epoch >= 0),
+        changed_source text not null default 'bootstrap',
+        unique (empresa_id, id),
+        unique (empresa_id, identity_key)
+      )
+    $ddl$;
+  end if;
+
+  if to_regclass('public.zelochat_sessions') is null then
+    execute $ddl$
+      create table public.zelochat_sessions (
+        id uuid primary key default gen_random_uuid(),
+        empresa_id uuid not null references public.empresa_perfil(id) on delete cascade,
+        remote_jid text not null,
+        conversation_control_id uuid,
+        unique (empresa_id, remote_jid),
+        foreign key (empresa_id, conversation_control_id)
+          references public.zelochat_conversation_ai_control(empresa_id, id)
+          on update cascade on delete restrict
+      )
+    $ddl$;
+  end if;
+
+  if to_regprocedure('public.zelochat_conversation_control_lock_gate()') is null then
+    execute $ddl$
+      create function public.zelochat_conversation_control_lock_gate()
+      returns void
+      language plpgsql
+      security definer
+      set search_path = public, pg_temp
+      as $gate$
+      begin
+        perform pg_advisory_xact_lock(
+          hashtextextended('zelochat:conversation_control:lock_gate:v1', 0)
+        );
+      end;
+      $gate$
+    $ddl$;
+  end if;
+end;
+$bootstrap$;
+
+revoke all on table public.zelochat_conversation_ai_control, public.zelochat_sessions
+  from public, anon, authenticated;
+grant all on table public.zelochat_conversation_ai_control, public.zelochat_sessions
+  to service_role;
+revoke all on function public.zelochat_conversation_control_lock_gate()
+  from public, anon, authenticated;
+grant execute on function public.zelochat_conversation_control_lock_gate()
+  to service_role;
+
 select plan(11);
 
 insert into auth.users (
@@ -44,7 +108,7 @@ insert into public.zelochat_sessions (
 
 set local role service_role;
 
--- A committed takeover wins the control-row lock before create.
+-- A takeover advances the control immediately before create.
 update public.zelochat_conversation_ai_control
 set mode = 'human', epoch = 11, changed_source = 'pgtap_takeover'
 where id = 'b8000000-0000-4000-8000-000000000003';

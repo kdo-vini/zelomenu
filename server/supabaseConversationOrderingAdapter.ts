@@ -463,7 +463,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     if (/AI_TURN_REVOKED/.test(message)) {
       return new ConversationOrderingError('AI_TURN_REVOKED', 'Esta conversa mudou de atendimento. Vou deixar a equipe continuar por aqui.');
     }
-    if (/CONFIRMATION_TOKEN_RPC_UNAVAILABLE|confirm_whatsapp_zelo_order_(?:with_ai_epoch|atomic)_v1|function .* does not exist|42883/i.test(message)) {
+    if (/CONFIRMATION_TOKEN_RPC_UNAVAILABLE|issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1|confirm_whatsapp_zelo_order_(?:with_ai_epoch|atomic)_v1|function .* does not exist|42883/i.test(message)) {
       return new ConversationOrderingError('CONFIRMACAO_INDISPONIVEL', 'A confirmação de pedidos não está disponível agora.');
     }
     if (/REVISION|REVISAO/.test(message)) return new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.');

@@ -492,6 +492,9 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     }
     if (result.kind === 'requires_review') return withConfirmationAction(result.record, command, true);
     const originalAlreadyConfirmed = result.record.order?.alreadyConfirmed;
+    // Confirmation already committed under the permit. Auto-accept is the
+    // restaurant's independent CAS-protected order policy, so a later chat
+    // takeover must not suppress acceptance of this valid canonical order.
     const autoAccepted = await adapter.applyAutoAccept(result.record);
     if (autoAccepted.order && originalAlreadyConfirmed != null) autoAccepted.order.alreadyConfirmed = originalAlreadyConfirmed;
     return toSnapshot(autoAccepted);
