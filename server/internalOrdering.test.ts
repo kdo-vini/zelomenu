@@ -1,17 +1,29 @@
 import { createServer } from 'node:http';
 import express from 'express';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ConversationOrderingError,
   createConversationOrdering,
   type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
+  type ConversationOrderCommand,
   type DraftMaterialization,
   type OrderingSnapshot,
 } from './conversationOrdering';
 import { createInternalOrderingRouter, parseInternalOrderingCommand } from './internalOrdering';
 import { createInternalCatalogFailureLimiter } from './internalCatalogRateLimit';
 import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog';
+import { SupabaseConversationOrderingAdapter } from './supabaseConversationOrderingAdapter';
+
+const originalSupabaseEnvironment = vi.hoisted(() => {
+  const original = {
+    url: process.env.SUPABASE_URL,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  };
+  process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://ordering-http-contract.test.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-role-key-for-ordering-http-contract';
+  return original;
+});
 
 const EMPRESA = '10000000-0000-4000-8000-000000000001';
 const ORDERING = '30000000-0000-4000-8000-000000000001';
@@ -70,6 +82,13 @@ afterEach(async () => {
   } finally {
     vi.restoreAllMocks();
   }
+});
+
+afterAll(() => {
+  if (originalSupabaseEnvironment.url === undefined) delete process.env.SUPABASE_URL;
+  else process.env.SUPABASE_URL = originalSupabaseEnvironment.url;
+  if (originalSupabaseEnvironment.serviceRoleKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  else process.env.SUPABASE_SERVICE_ROLE_KEY = originalSupabaseEnvironment.serviceRoleKey;
 });
 
 function validCommand(empresaId = EMPRESA) {
@@ -613,13 +632,27 @@ describe('rotas internas de ordering', () => {
   });
 
   it('devolve revogacao sem snapshot ou dados da conversa e com texto amigavel', async () => {
+    const technicalFailure = [
+      'AI_TURN_REVOKED Supabase RPC issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1',
+      `control=${CONVERSATION_CONTROL}`,
+      `empresa=${EMPRESA}`,
+      `jid=${JID}`,
+      'cliente=Cliente de teste',
+    ].join(' ');
+    const adapter = new SupabaseConversationOrderingAdapter({
+      rpc: vi.fn(async () => ({ data: null, error: { message: technicalFailure } })),
+    } as never);
     const ordering = {
-      apply: vi.fn(async () => {
-        throw new ConversationOrderingError(
-          'AI_TURN_REVOKED',
-          'Esta conversa passou para atendimento humano. Atualize antes de continuar.',
-        );
-      }),
+      async apply(command: ConversationOrderCommand): Promise<OrderingSnapshot> {
+        await adapter.issueConfirmationToken({
+          current: massRecord(false),
+          conversationControlId: command.conversationControlId,
+          conversationEpoch: command.conversationEpoch,
+          tokenHash: 'a'.repeat(64),
+          expiresAt: '2026-09-02T12:10:00.000Z',
+        });
+        throw new Error('permit revogado foi aceito');
+      },
       getSnapshot: vi.fn(async () => snapshot()),
     };
     const { baseUrl } = await start({ ordering });
@@ -634,11 +667,12 @@ describe('rotas internas de ordering', () => {
     expect(response.status).toBe(409);
     expect(body).toEqual({
       error: 'AI_TURN_REVOKED',
-      detail: 'Esta conversa passou para atendimento humano. Atualize antes de continuar.',
+      detail: 'Esta conversa mudou de atendimento. Vou deixar a equipe continuar por aqui.',
       current: null,
       requestId: 'request-gerado',
     });
-    expect(JSON.stringify(body)).not.toMatch(/Supabase|RPC|epoch|control|5511999999999|10000000-/i);
+    expect(JSON.stringify(body)).not.toContain(technicalFailure);
+    expect(JSON.stringify(body)).not.toMatch(/Supabase|RPC|epoch|control|Cliente de teste|5511999999999|10000000-/i);
   });
 
   it('redige erro inesperado, detalhes técnicos e dados de cliente da resposta', async () => {
