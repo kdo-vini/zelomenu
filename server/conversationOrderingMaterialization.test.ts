@@ -3,6 +3,7 @@ import type { BusinessConfig, CatalogProduct } from './configStore';
 import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog';
 
 let products: CatalogProduct[] = [];
+let deliveryConfig: BusinessConfig['deliveryConfig'] = null;
 
 const weeklyHours = {
   sun: [], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [],
@@ -13,7 +14,7 @@ function config(): BusinessConfig {
     name: 'Lanchonete Canônica',
     address: 'Rua Teste, 10',
     contato: null,
-    deliveryConfig: null,
+    deliveryConfig,
     pixReceiptConfig: null,
     pixPayment: null,
     publicationSummary: { total: products.length, published: products.filter((p) => p.available).length, unpublished: 0, paused: 0, hidden: 0, outOfStock: 0, missingCategory: 0, attention: 0 },
@@ -86,7 +87,10 @@ function massProduct(): CatalogProduct {
 
 const EMPRESA_ID = '10000000-0000-4000-8000-000000000001';
 
-beforeEach(() => { products = [product()]; });
+beforeEach(() => {
+  products = [product()];
+  deliveryConfig = null;
+});
 
 describe('materializeWhatsAppOrderDraft', () => {
   it('materializa nomes, preços, complementos, subtotal e asap somente pelo servidor', async () => {
@@ -113,7 +117,9 @@ describe('materializeWhatsAppOrderDraft', () => {
         quantity: 1,
         selectedOptions: [{ groupId: 'g001', optionSelections: [{ optionId: 'o002', quantity: 1 }] }],
       }],
+      customer: { name: 'Ana' },
       fulfillment: { type: 'pickup' },
+      paymentMethod: 'dinheiro',
     });
 
     expect(result.cart.items[0]).toMatchObject({
@@ -234,6 +240,79 @@ describe('materializeWhatsAppOrderDraft', () => {
       type: 'fulfillment_type',
       name: 'Escolha entrega ou retirada.',
       blocking: true,
+    });
+    expect(result.readyForConfirmation).toBe(false);
+  });
+
+  it('mantém o rascunho bloqueado enquanto faltar o nome do cliente', async () => {
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+      fulfillment: { type: 'pickup' },
+      paymentMethod: 'dinheiro',
+    });
+
+    expect(result.requirements).toContainEqual({
+      id: 'customer_name',
+      type: 'customer_name',
+      name: 'Informe o nome para o pedido.',
+      blocking: true,
+    });
+    expect(result.readyForConfirmation).toBe(false);
+  });
+
+  it('mantém o rascunho bloqueado enquanto faltar a forma de pagamento', async () => {
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+      customer: { name: 'Ana' },
+      fulfillment: { type: 'pickup' },
+    });
+
+    expect(result.requirements).toContainEqual({
+      id: 'payment_method',
+      type: 'payment_method',
+      name: 'Escolha a forma de pagamento.',
+      blocking: true,
+    });
+    expect(result.readyForConfirmation).toBe(false);
+  });
+
+  it('lista endereço, número e bairro ausentes em uma entrega', async () => {
+    deliveryConfig = { enabled: true, neighborhoods: [] };
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+      customer: { name: 'Ana' },
+      fulfillment: { type: 'delivery' },
+      paymentMethod: 'dinheiro',
+    });
+
+    expect(result.requirements).toContainEqual({
+      id: 'delivery_address',
+      type: 'delivery_address',
+      name: 'Informe o endereço de entrega.',
+      blocking: true,
+      missingFields: ['address', 'number', 'neighborhood'],
+    });
+    expect(result.readyForConfirmation).toBe(false);
+  });
+
+  it('lista data e horário ausentes quando o pedido é agendado', async () => {
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+      customer: { name: 'Ana' },
+      fulfillment: { type: 'pickup', asap: false },
+      paymentMethod: 'dinheiro',
+    });
+
+    expect(result.requirements).toContainEqual({
+      id: 'schedule',
+      type: 'schedule',
+      name: 'Informe a data e o horário do pedido.',
+      blocking: true,
+      missingFields: ['date', 'time'],
     });
     expect(result.readyForConfirmation).toBe(false);
   });

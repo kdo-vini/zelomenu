@@ -11,8 +11,7 @@ import type {
 } from './zelomenuCartSessions.js';
 import {
   FULFILLMENT_TYPE_REQUIREMENT,
-  type FulfillmentTypeOrderingRequirement,
-  type OrderingRequirement as ModifierOrderingRequirement,
+  type OrderingRequirement as CanonicalOrderingRequirement,
 } from './conversationOrderRequirements.js';
 
 export type { ConversationFulfillmentSnapshot } from './zelomenuCartSessions.js';
@@ -46,7 +45,7 @@ export type ConversationOrderCartSnapshot = Omit<ZeloMenuCartSnapshot, 'items'> 
   items: ConversationOrderCartItemSnapshot[];
 };
 
-export type OrderingRequirement = ModifierOrderingRequirement | FulfillmentTypeOrderingRequirement;
+export type OrderingRequirement = CanonicalOrderingRequirement;
 
 type CommandIdentity = {
   empresaId: string;

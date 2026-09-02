@@ -39,7 +39,7 @@ export type ConversationRequirementLine = {
   }[];
 };
 
-export type OrderingRequirement = {
+export type ModifierOrderingRequirement = {
   id: string;
   type: 'modifier_group';
   lineId: string;
@@ -74,6 +74,62 @@ export const FULFILLMENT_TYPE_REQUIREMENT: FulfillmentTypeOrderingRequirement = 
   name: 'Escolha entrega ou retirada.',
   blocking: true,
 };
+
+export type CustomerNameOrderingRequirement = {
+  id: 'customer_name';
+  type: 'customer_name';
+  name: string;
+  blocking: true;
+};
+
+export const CUSTOMER_NAME_REQUIREMENT: CustomerNameOrderingRequirement = {
+  id: 'customer_name',
+  type: 'customer_name',
+  name: 'Informe o nome para o pedido.',
+  blocking: true,
+};
+
+export type PaymentMethodOrderingRequirement = {
+  id: 'payment_method';
+  type: 'payment_method';
+  name: string;
+  blocking: true;
+};
+
+export const PAYMENT_METHOD_REQUIREMENT: PaymentMethodOrderingRequirement = {
+  id: 'payment_method',
+  type: 'payment_method',
+  name: 'Escolha a forma de pagamento.',
+  blocking: true,
+};
+
+export type DeliveryAddressRequirementField = 'address' | 'number' | 'neighborhood';
+
+export type DeliveryAddressOrderingRequirement = {
+  id: 'delivery_address';
+  type: 'delivery_address';
+  name: string;
+  blocking: true;
+  missingFields: DeliveryAddressRequirementField[];
+};
+
+export type ScheduleRequirementField = 'date' | 'time';
+
+export type ScheduleOrderingRequirement = {
+  id: 'schedule';
+  type: 'schedule';
+  name: string;
+  blocking: true;
+  missingFields: ScheduleRequirementField[];
+};
+
+export type OrderingRequirement =
+  | ModifierOrderingRequirement
+  | FulfillmentTypeOrderingRequirement
+  | CustomerNameOrderingRequirement
+  | PaymentMethodOrderingRequirement
+  | DeliveryAddressOrderingRequirement
+  | ScheduleOrderingRequirement;
 
 function byDisplayOrder<T extends { order: number; name: string }>(left: T, right: T): number {
   return left.order - right.order || left.name.localeCompare(right.name, 'pt-BR');
@@ -134,9 +190,9 @@ function validateUpperBounds(
 export function deriveModifierRequirements(
   lines: readonly ConversationRequirementLine[],
   products: readonly ConversationCatalogProductDefinition[],
-): OrderingRequirement[] {
+): ModifierOrderingRequirement[] {
   const productsById = new Map(products.map((product) => [product.id, product]));
-  const requirements: OrderingRequirement[] = [];
+  const requirements: ModifierOrderingRequirement[] = [];
 
   for (const line of lines) {
     const product = productsById.get(line.productId);

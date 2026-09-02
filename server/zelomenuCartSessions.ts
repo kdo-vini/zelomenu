@@ -55,10 +55,14 @@ import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemptio
 import { normalizePhoneNumber } from '../src/domain/chat.js';
 import { hasZeloMenuAccessForEmpresa } from './zelomenuAccess.js';
 import {
+  CUSTOMER_NAME_REQUIREMENT,
   deriveModifierRequirements,
   FULFILLMENT_TYPE_REQUIREMENT,
-  type FulfillmentTypeOrderingRequirement,
-  type OrderingRequirement as ModifierOrderingRequirement,
+  PAYMENT_METHOD_REQUIREMENT,
+  type DeliveryAddressRequirementField,
+  type ModifierOrderingRequirement,
+  type OrderingRequirement,
+  type ScheduleRequirementField,
 } from './conversationOrderRequirements.js';
 
 // ─── Token helpers (node:crypto, backend only) ─────────────────────────────────
@@ -1189,7 +1193,7 @@ export type WhatsAppOrderDraftMaterialization = {
   payment: ZeloMenuPaymentSnapshot;
   pricing: ZeloMenuPricingSnapshot;
   revalidation: ZeloMenuCartRevalidation;
-  requirements: Array<ModifierOrderingRequirement | FulfillmentTypeOrderingRequirement>;
+  requirements: OrderingRequirement[];
   readyForConfirmation: boolean;
 };
 
@@ -1274,17 +1278,54 @@ export async function materializeWhatsAppOrderDraft(input: {
     allowIncompleteModifiers: true,
     allowMissingFulfillment: true,
   }, config);
-  const requirements: Array<ModifierOrderingRequirement | FulfillmentTypeOrderingRequirement> = [
+  const customer: ZeloMenuCustomerSnapshot = {
+    name: sanitizeText(input.customer?.name, 120),
+    phone: sanitizeText(input.customer?.phone, 40),
+  };
+  const missingDeliveryAddressFields: DeliveryAddressRequirementField[] = [];
+  if (resolved.fulfillment.type === 'delivery') {
+    if (
+      sanitizeText(resolved.fulfillment.deliveryAddress, 250) === null
+      && sanitizeText(resolved.fulfillment.deliveryStreet, 250) === null
+    ) {
+      missingDeliveryAddressFields.push('address');
+    }
+    if (sanitizeText(resolved.fulfillment.deliveryNumber, 30) === null) {
+      missingDeliveryAddressFields.push('number');
+    }
+    if (sanitizeText(resolved.fulfillment.deliveryNeighborhood, 120) === null) {
+      missingDeliveryAddressFields.push('neighborhood');
+    }
+  }
+  const missingScheduleFields: ScheduleRequirementField[] = [];
+  if (resolved.fulfillment.asap === false) {
+    if (resolved.fulfillment.pickupDate === null) missingScheduleFields.push('date');
+    if (resolved.fulfillment.pickupTime === null) missingScheduleFields.push('time');
+  }
+  const requirements: WhatsAppOrderDraftMaterialization['requirements'] = [
     ...modifierRequirements,
     ...(resolved.fulfillment.type === null ? [FULFILLMENT_TYPE_REQUIREMENT] : []),
+    ...(customer.name === null ? [CUSTOMER_NAME_REQUIREMENT] : []),
+    ...(resolved.payment.declaredMethod === null ? [PAYMENT_METHOD_REQUIREMENT] : []),
+    ...(missingDeliveryAddressFields.length > 0 ? [{
+      id: 'delivery_address' as const,
+      type: 'delivery_address' as const,
+      name: 'Informe o endereço de entrega.',
+      blocking: true as const,
+      missingFields: missingDeliveryAddressFields,
+    }] : []),
+    ...(missingScheduleFields.length > 0 ? [{
+      id: 'schedule' as const,
+      type: 'schedule' as const,
+      name: 'Informe a data e o horário do pedido.',
+      blocking: true as const,
+      missingFields: missingScheduleFields,
+    }] : []),
   ];
   const revalidation = revalidationFromResolved(resolved);
   return {
     ...resolved,
-    customer: {
-      name: sanitizeText(input.customer?.name, 120),
-      phone: sanitizeText(input.customer?.phone, 40),
-    },
+    customer,
     revalidation,
     requirements,
     readyForConfirmation: resolved.fulfillment.type !== null
