@@ -58,7 +58,7 @@ const VALID_MODIFIER_REQUIREMENT: Extract<
     id: 'option-1',
     name: 'Molho branco',
     currentPrice: 3,
-    priceDelta: 3,
+    priceDelta: -3,
     available: true,
     order: 0,
   }],
@@ -304,6 +304,55 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
         missingFields: ['tomorrow'],
       }],
     },
+    {
+      label: 'blocking falso com minimo de escolhas pendente',
+      requirements: [{
+        ...VALID_MODIFIER_REQUIREMENT,
+        minSelections: 1,
+        selectedDistinctCount: 0,
+        blocking: false,
+      }],
+    },
+    {
+      label: 'blocking falso com minimo de quantidade pendente',
+      requirements: [{
+        ...VALID_MODIFIER_REQUIREMENT,
+        minTotalQuantity: 1,
+        selectedTotalQuantity: 0,
+        blocking: false,
+      }],
+    },
+    {
+      label: 'escolhas selecionadas acima do maximo',
+      requirements: [{
+        ...VALID_MODIFIER_REQUIREMENT,
+        maxSelections: 1,
+        selectedDistinctCount: 2,
+      }],
+    },
+    {
+      label: 'quantidade selecionada acima do maximo',
+      requirements: [{
+        ...VALID_MODIFIER_REQUIREMENT,
+        maxTotalQuantity: 1,
+        selectedTotalQuantity: 2,
+      }],
+    },
+    {
+      label: 'auto selecao aponta para opcao ausente',
+      requirements: [{
+        ...VALID_MODIFIER_REQUIREMENT,
+        autoSelectableOptionId: 'option-missing',
+      }],
+    },
+    {
+      label: 'auto selecao aponta para opcao indisponivel',
+      requirements: [{
+        ...VALID_MODIFIER_REQUIREMENT,
+        autoSelectableOptionId: 'option-1',
+        options: [{ ...VALID_MODIFIER_REQUIREMENT.options[0], available: false }],
+      }],
+    },
   ])('falha fechado para snapshot malformado: $label', async ({ requirements }) => {
     const row = sessionRow(record()) as Record<string, unknown>;
     row.requirements_snapshot = requirements;
@@ -319,6 +368,22 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
     const row = sessionRow(record({
       requirements: [CUSTOMER_NAME_REQUIREMENT],
       readyForConfirmation: true,
+    })) as Record<string, unknown>;
+
+    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+      requirements: [],
+      readyForConfirmation: false,
+    });
+  });
+
+  it('falha fechado quando blocking verdadeiro diverge de minimos ja atendidos', async () => {
+    const inconsistent = {
+      ...VALID_MODIFIER_REQUIREMENT,
+      blocking: true,
+    } satisfies typeof VALID_MODIFIER_REQUIREMENT;
+    const row = sessionRow(record({
+      requirements: [inconsistent],
+      readyForConfirmation: false,
     })) as Record<string, unknown>;
 
     await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
@@ -349,6 +414,18 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
     await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
       requirements: VALID_REQUIREMENTS,
       readyForConfirmation: false,
+    });
+  });
+
+  it('preserva requisito opcional pronto com delta de preco negativo', async () => {
+    const row = sessionRow(record({
+      requirements: [VALID_MODIFIER_REQUIREMENT],
+      readyForConfirmation: true,
+    })) as Record<string, unknown>;
+
+    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+      requirements: [VALID_MODIFIER_REQUIREMENT],
+      readyForConfirmation: true,
     });
   });
 

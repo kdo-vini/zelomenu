@@ -122,6 +122,15 @@ function isValidModifierRequirement(value: Record<string, unknown>): boolean {
     || !value.options.every(isValidModifierOption)) {
     return false;
   }
+  const blocking = Number(value.selectedDistinctCount) < Number(value.minSelections)
+    || Number(value.selectedTotalQuantity) < Number(value.minTotalQuantity);
+  if (value.blocking !== blocking) return false;
+  if (typeof value.autoSelectableOptionId === 'string'
+    && !value.options.some((option) => isObject(option)
+      && option.id === value.autoSelectableOptionId
+      && option.available === true)) {
+    return false;
+  }
   return value.id === `${value.lineId}:${value.groupId}`;
 }
 
