@@ -101,6 +101,35 @@ describe('parseInternalOrderingCommand', () => {
       ? parsed.value.draft.items[0].lineId
       : null).toBe('line-1');
   });
+
+  it('aceita remoção explícita e valida removedLineIds na borda', () => {
+    const removalOnly = parseInternalOrderingCommand({
+      ...validCommand(),
+      orderingId: ORDERING,
+      expectedRevision: 1,
+      draft: { items: [], removedLineIds: ['line-1'] },
+    });
+    expect(removalOnly.ok && removalOnly.value.type === 'open_or_update_draft'
+      ? removalOnly.value.draft.removedLineIds
+      : null).toEqual(['line-1']);
+
+    expect(parseInternalOrderingCommand({
+      ...validCommand(), draft: { items: [], removedLineIds: ['line.1'] },
+    })).toEqual({ ok: false, message: 'Revise a identificação dos itens removidos.' });
+    expect(parseInternalOrderingCommand({
+      ...validCommand(), draft: { items: [], removedLineIds: ['line-1', 'line-1'] },
+    })).toEqual({ ok: false, message: 'Cada item removido precisa de uma identificação diferente.' });
+    expect(parseInternalOrderingCommand({
+      ...validCommand(),
+      draft: {
+        items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+        removedLineIds: ['line-1'],
+      },
+    })).toEqual({ ok: false, message: 'Um item não pode ser atualizado e removido ao mesmo tempo.' });
+    expect(parseInternalOrderingCommand({
+      ...validCommand(), draft: { items: [], removedLineIds: [] },
+    })).toEqual({ ok: false, message: 'Informe pelo menos um item para atualizar ou remover.' });
+  });
 });
 
 describe('rotas internas de ordering', () => {

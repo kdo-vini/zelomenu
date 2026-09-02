@@ -1,11 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationOrderingRecord } from './conversationOrdering';
 import { SupabaseConversationOrderingAdapter } from './supabaseConversationOrderingAdapter';
+import { deriveModifierRequirements } from './conversationOrderRequirements';
+import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog';
 
 vi.hoisted(() => {
   process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://ordering-adapter.test.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-role-key-for-ordering-adapter';
 });
+
+const materializeWhatsAppOrderDraft = vi.hoisted(() => vi.fn());
+
+vi.mock('./zelomenuCartSessions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./zelomenuCartSessions')>(),
+  materializeWhatsAppOrderDraft,
+}));
+
+const EMPRESA = '10000000-0000-4000-8000-000000000001';
 
 function record(overrides: Partial<ConversationOrderingRecord> = {}): ConversationOrderingRecord {
   return {
@@ -39,6 +50,63 @@ function adapterWithRpc(result: { data: unknown; error: { message: string } | nu
 }
 
 describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
+  it('preserva requisitos e decisão de prontidão produzidos pelo materializador', async () => {
+    const requirements = deriveModifierRequirements(
+      [{ lineId: 'line-1', productId: 1007 }],
+      bemServidoConversationCatalog,
+    );
+    materializeWhatsAppOrderDraft.mockResolvedValueOnce({
+      cart: {
+        items: [{
+          productId: 1007,
+          productName: 'Monte Sua Massa',
+          baseUnitPrice: 0,
+          selectedModifiers: [],
+          modifierDeltaTotal: 0,
+          quantity: 1,
+          unitPrice: 0,
+          lineTotal: 0,
+          notes: null,
+        }],
+        observations: null,
+      },
+      customer: { name: null, phone: null },
+      fulfillment: {
+        type: 'pickup',
+        asap: true,
+        pickupDate: null,
+        pickupTime: null,
+        deliveryAddress: null,
+        deliveryNeighborhood: null,
+        deliveryFee: 0,
+        deliveryFeeToConfirm: false,
+      },
+      payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false },
+      pricing: {
+        subtotal: 0,
+        deliveryFee: 0,
+        discount: 0,
+        couponCode: null,
+        couponDiscountType: null,
+        couponDiscountValue: null,
+        total: 0,
+      },
+      revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
+      requirements,
+      readyForConfirmation: false,
+    });
+    const adapter = new SupabaseConversationOrderingAdapter({} as never);
+
+    const result = await adapter.materializeDraft(EMPRESA, {
+      items: [{ lineId: 'line-1', productId: 1007, quantity: 1 }],
+      fulfillment: { type: 'pickup' },
+    });
+
+    expect(result.requirements).toEqual(requirements);
+    expect(result.readyForConfirmation).toBe(false);
+    expect(result.cart.items[0].lineId).toBe('line-1');
+  });
+
   it.each([
     { label: 'texto', tokenHash: null },
     { label: 'botão', tokenHash: 'a'.repeat(64) },

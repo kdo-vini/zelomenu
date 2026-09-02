@@ -332,6 +332,137 @@ describe('ConversationOrdering', () => {
     expect(updated.revision).toBe(2);
   });
 
+  it('remove somente a linha explicitamente informada e preserva o replay idempotente', async () => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record) => `token-remove-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'a').slice(0, 64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.remove-open-123456',
+      draft: {
+        items: [
+          { lineId: 'line-1', productId: 1001, quantity: 1 },
+          { lineId: 'line-2', productId: 1001, quantity: 2 },
+        ],
+        fulfillment: PICKUP_FULFILLMENT,
+      },
+    });
+    const removeCommand = {
+      type: 'open_or_update_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.remove-update-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      draft: { items: [], removedLineIds: ['line-1'], fulfillment: PICKUP_FULFILLMENT },
+    };
+
+    const updated = await ordering.apply(removeCommand);
+    const retry = await ordering.apply(removeCommand);
+
+    expect(updated.cart.items.map((item) => item.lineId)).toEqual(['line-2']);
+    expect(updated.revision).toBe(2);
+    expect(retry.cart.items.map((item) => item.lineId)).toEqual(['line-2']);
+    expect(retry.revision).toBe(2);
+  });
+
+  it('rejeita removedLineIds inválidos, duplicados ou sobrepostos aos itens recebidos', async () => {
+    const scenarios = [
+      {
+        label: 'inválido',
+        items: [],
+        removedLineIds: ['line.1'],
+        message: 'Revise a identificação dos itens removidos.',
+      },
+      {
+        label: 'duplicado',
+        items: [],
+        removedLineIds: ['line-1', 'line-1'],
+        message: 'Cada item removido precisa de uma identificação diferente.',
+      },
+      {
+        label: 'sobreposto',
+        items: [{ lineId: 'line-1', productId: 1001, quantity: 3 }],
+        removedLineIds: ['line-1'],
+        message: 'Um item não pode ser atualizado e removido ao mesmo tempo.',
+      },
+    ];
+
+    for (const [index, scenario] of scenarios.entries()) {
+      const adapter = new MemoryAdapter();
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: () => `token-remove-invalid-${index}`,
+        hashConfirmationToken: () => 'b'.repeat(64),
+      });
+      const opened = await ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: `wamid.remove-validation-open-${index}`,
+        draft: {
+          items: [
+            { lineId: 'line-1', productId: 1001, quantity: 1 },
+            { lineId: 'line-2', productId: 1001, quantity: 2 },
+          ],
+          fulfillment: PICKUP_FULFILLMENT,
+        },
+      });
+
+      await expect(ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: `wamid.remove-validation-update-${index}`, orderingId: opened.orderingId, expectedRevision: 1,
+        draft: {
+          items: scenario.items,
+          removedLineIds: scenario.removedLineIds,
+          fulfillment: PICKUP_FULFILLMENT,
+        },
+      }), scenario.label).rejects.toMatchObject({ code: 'ITEM_INVALIDO', message: scenario.message });
+      expect((await ordering.getSnapshot(opened.orderingId))?.revision, scenario.label).toBe(1);
+    }
+  });
+
+  it('rejeita remoção de lineId ausente do carrinho atual', async () => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-remove-missing',
+      hashConfirmationToken: () => 'c'.repeat(64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.remove-missing-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+
+    await expect(ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.remove-missing-update-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      draft: { items: [], removedLineIds: ['line-2'], fulfillment: PICKUP_FULFILLMENT },
+    })).rejects.toMatchObject({
+      code: 'ITEM_INVALIDO',
+      message: 'Não encontrei um item informado para remoção.',
+    });
+    expect((await ordering.getSnapshot(opened.orderingId))?.revision).toBe(1);
+  });
+
+  it('rejeita remoção que deixaria o carrinho vazio e orienta cancelamento total', async () => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-remove-last',
+      hashConfirmationToken: () => 'd'.repeat(64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.remove-last-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+
+    await expect(ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.remove-last-update-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      draft: { items: [], removedLineIds: ['line-1'], fulfillment: PICKUP_FULFILLMENT },
+    })).rejects.toMatchObject({
+      code: 'PEDIDO_VAZIO',
+      message: 'O pedido precisa ter pelo menos um item. Para encerrar tudo, cancele o pedido.',
+    });
+    expect((await ordering.getSnapshot(opened.orderingId))?.revision).toBe(1);
+  });
+
   it('não emite confirmação quando a materialização tem requisito bloqueante', async () => {
     const adapter = new MemoryAdapter();
     adapter.nextRequirements = deriveModifierRequirements(

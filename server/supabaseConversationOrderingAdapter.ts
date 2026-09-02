@@ -69,18 +69,23 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     if (materialized.cart.items.length !== draft.items.length) {
       throw new Error('MATERIALIZED_LINE_COUNT_MISMATCH');
     }
+    const upstream = materialized as typeof materialized & Partial<Pick<
+      DraftMaterialization,
+      'requirements' | 'readyForConfirmation'
+    >>;
     return {
-      ...materialized,
+      ...upstream,
       cart: {
-        ...materialized.cart,
-        items: materialized.cart.items.map((item, index) => ({
+        ...upstream.cart,
+        items: upstream.cart.items.map((item, index) => ({
           ...item,
           lineId: draft.items[index]!.lineId,
         })),
       },
-      requirements: [],
-      readyForConfirmation: materialized.revalidation.ok
-        && !materialized.fulfillment.deliveryFeeToConfirm,
+      requirements: upstream.requirements ?? [],
+      readyForConfirmation: upstream.readyForConfirmation === true
+        && upstream.revalidation.ok
+        && !upstream.fulfillment.deliveryFeeToConfirm,
     };
   }
 

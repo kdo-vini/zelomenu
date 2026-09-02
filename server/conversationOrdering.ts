@@ -23,6 +23,7 @@ export type ConversationOrderItemSelection = {
 
 export type ConversationOrderDraft = {
   items: ConversationOrderItemSelection[];
+  removedLineIds?: string[];
   observations?: string | null;
   customer?: { name?: string | null; phone?: string | null };
   pessoaId?: string | null;
@@ -191,6 +192,19 @@ function validateDraftLineIds(draft: ConversationOrderDraft): void {
     }
     lineIds.add(item.lineId);
   }
+  const removedLineIds = new Set<string>();
+  for (const lineId of draft.removedLineIds ?? []) {
+    if (!LINE_ID.test(lineId)) {
+      throw new ConversationOrderingError('ITEM_INVALIDO', 'Revise a identificação dos itens removidos.');
+    }
+    if (removedLineIds.has(lineId)) {
+      throw new ConversationOrderingError('ITEM_INVALIDO', 'Cada item removido precisa de uma identificação diferente.');
+    }
+    if (lineIds.has(lineId)) {
+      throw new ConversationOrderingError('ITEM_INVALIDO', 'Um item não pode ser atualizado e removido ao mesmo tempo.');
+    }
+    removedLineIds.add(lineId);
+  }
 }
 
 function requirementsWithFulfillment(
@@ -254,13 +268,27 @@ function selectionFromCartItem(item: ConversationOrderCartItemSnapshot): Convers
 function mergeDraftLines(
   current: ConversationOrderCartSnapshot,
   incoming: readonly ConversationOrderItemSelection[],
+  removedLineIds: readonly string[],
 ): ConversationOrderItemSelection[] {
   const incomingByLineId = new Map(incoming.map((item) => [item.lineId, item]));
   const currentLineIds = new Set(current.items.map((item) => item.lineId));
-  return [
-    ...current.items.map((item) => incomingByLineId.get(item.lineId) ?? selectionFromCartItem(item)),
+  if (removedLineIds.some((lineId) => !currentLineIds.has(lineId))) {
+    throw new ConversationOrderingError('ITEM_INVALIDO', 'Não encontrei um item informado para remoção.');
+  }
+  const removed = new Set(removedLineIds);
+  const merged = [
+    ...current.items
+      .filter((item) => !removed.has(item.lineId))
+      .map((item) => incomingByLineId.get(item.lineId) ?? selectionFromCartItem(item)),
     ...incoming.filter((item) => !currentLineIds.has(item.lineId)),
   ];
+  if (merged.length === 0) {
+    throw new ConversationOrderingError(
+      'PEDIDO_VAZIO',
+      'O pedido precisa ter pelo menos um item. Para encerrar tudo, cancele o pedido.',
+    );
+  }
+  return merged;
 }
 
 function toSnapshot(record: ConversationOrderingRecord, confirmationAction: OrderingSnapshot['confirmationAction'] = null, requiresReview = false): OrderingSnapshot {
@@ -346,6 +374,15 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
 
     if (command.type === 'open_or_update_draft' && !command.orderingId) {
       validateDraftLineIds(command.draft);
+      if ((command.draft.removedLineIds?.length ?? 0) > 0) {
+        throw new ConversationOrderingError('ITEM_INVALIDO', 'Não encontrei um item informado para remoção.');
+      }
+      if (command.draft.items.length === 0) {
+        throw new ConversationOrderingError(
+          'PEDIDO_VAZIO',
+          'O pedido precisa ter pelo menos um item. Para encerrar tudo, cancele o pedido.',
+        );
+      }
       const existing = await adapter.findOpen(command.empresaId, command.remoteJid);
       if (existing) {
         if (existing.processedMessageIds.includes(command.messageId)) return withConfirmationAction(existing);
@@ -382,11 +419,17 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (command.type === 'open_or_update_draft') {
       if (current.state !== 'cart_open') throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
       validateDraftLineIds(command.draft);
+      const mergedItems = mergeDraftLines(
+        current.cart,
+        command.draft.items,
+        command.draft.removedLineIds ?? [],
+      );
       let materialized: DraftMaterialization;
       try {
         const materializationDraft: ConversationOrderDraft = {
           ...command.draft,
-          items: mergeDraftLines(current.cart, command.draft.items),
+          items: mergedItems,
+          removedLineIds: undefined,
           fulfillment: command.draft.fulfillment === undefined
             ? fulfillmentFromSnapshot(current.fulfillment)
             : command.draft.fulfillment,

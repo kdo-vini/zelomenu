@@ -31,8 +31,8 @@ function text(value: unknown, max: number): string | null | undefined {
 function parseDraft(value: unknown): { ok: true; value: Extract<ConversationOrderCommand, { type: 'open_or_update_draft' }>['draft'] } | { ok: false; message: string } {
   if (!value || typeof value !== 'object') return { ok: false, message: 'Envie os dados do pedido.' };
   const row = value as Record<string, unknown>;
-  if (!Array.isArray(row.items) || row.items.length < 1 || row.items.length > 50) {
-    return { ok: false, message: 'Informe de 1 a 50 itens.' };
+  if (!Array.isArray(row.items) || row.items.length > 50) {
+    return { ok: false, message: 'Informe até 50 itens.' };
   }
   const items = [] as Extract<ConversationOrderCommand, { type: 'open_or_update_draft' }>['draft']['items'];
   const lineIds = new Set<string>();
@@ -75,6 +75,31 @@ function parseDraft(value: unknown): { ok: true; value: Extract<ConversationOrde
     items.push({ lineId: item.lineId, productId: Number(item.productId), quantity: Number(item.quantity), notes, selectedOptions });
   }
 
+  let removedLineIds: string[] | undefined;
+  if (row.removedLineIds !== undefined) {
+    if (!Array.isArray(row.removedLineIds) || row.removedLineIds.length > 50) {
+      return { ok: false, message: 'Revise os itens removidos.' };
+    }
+    removedLineIds = [];
+    const removed = new Set<string>();
+    for (const lineId of row.removedLineIds) {
+      if (typeof lineId !== 'string' || !LINE_ID.test(lineId)) {
+        return { ok: false, message: 'Revise a identificação dos itens removidos.' };
+      }
+      if (removed.has(lineId)) {
+        return { ok: false, message: 'Cada item removido precisa de uma identificação diferente.' };
+      }
+      if (lineIds.has(lineId)) {
+        return { ok: false, message: 'Um item não pode ser atualizado e removido ao mesmo tempo.' };
+      }
+      removed.add(lineId);
+      removedLineIds.push(lineId);
+    }
+  }
+  if (items.length === 0 && (removedLineIds?.length ?? 0) === 0) {
+    return { ok: false, message: 'Informe pelo menos um item para atualizar ou remover.' };
+  }
+
   const customerRaw = row.customer;
   let customer: { name?: string | null; phone?: string | null } | undefined;
   if (customerRaw != null) {
@@ -111,7 +136,7 @@ function parseDraft(value: unknown): { ok: true; value: Extract<ConversationOrde
     };
   }
 
-  return { ok: true, value: { items, observations, customer, pessoaId, fulfillment, paymentMethod } };
+  return { ok: true, value: { items, removedLineIds, observations, customer, pessoaId, fulfillment, paymentMethod } };
 }
 
 export function parseInternalOrderingCommand(input: unknown): ParseResult {
