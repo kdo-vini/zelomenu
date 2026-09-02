@@ -1011,7 +1011,12 @@ async function resolveSnapshots(
             : config.products.find((p) => p.id === linkedProductId);
           if (linkedProductInCatalog?.stockControlled) {
             const stockQuantity = Number(linkedProductInCatalog.stockQuantity ?? 0);
-            const linkedAgg = aggregated.get(linkedProductId!) ?? item.quantity;
+            const linkedContribution = item.quantity * opt.quantity;
+            const linkedAgg = (aggregated.get(linkedProductId!) ?? 0) + linkedContribution;
+            if (!Number.isSafeInteger(linkedContribution) || !Number.isSafeInteger(linkedAgg)) {
+              throw new Error('MODIFIER_QUANTITY_INVALID');
+            }
+            aggregated.set(linkedProductId!, linkedAgg);
             if (linkedAgg > stockQuantity) throw stockExceededError(linkedProductInCatalog.name, stockQuantity, linkedAgg);
           }
           if (modifierOption.linkedProduct.available === false) throw new Error('MODIFIER_INVALID:Uma opção vinculada não está mais disponível.');

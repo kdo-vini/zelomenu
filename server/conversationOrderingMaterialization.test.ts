@@ -86,6 +86,69 @@ function massProduct(): CatalogProduct {
   };
 }
 
+function productsWithSharedLinkedStock(stockQuantity: number): CatalogProduct[] {
+  const linkedProduct = product({
+    id: 20,
+    name: 'Porção vinculada',
+    price: 5,
+    basePrice: 5,
+    stockControlled: true,
+    stockQuantity,
+    modifierGroups: [],
+  });
+  const linkedOption = (id: string) => ({
+    id,
+    name: 'Porção extra',
+    priceDelta: 5,
+    active: true,
+    order: 0,
+    linkedProduct: {
+      productId: linkedProduct.id,
+      name: linkedProduct.name,
+      photoUrl: null,
+      price: linkedProduct.price,
+      available: true,
+    },
+  });
+
+  return [
+    product({
+      modifierGroups: [
+        {
+          id: 'g-stock-a', productId: 10, name: 'Primeiro grupo', kind: 'adicional', pricingMode: 'somar',
+          minSelections: 0, maxSelections: 1, minTotalQuantity: 0, maxTotalQuantity: 5,
+          allowsQuantity: true, maxPerOption: 5, active: true, order: 0,
+          options: [linkedOption('o-stock-a')],
+        },
+        {
+          id: 'g-stock-b', productId: 10, name: 'Segundo grupo', kind: 'adicional', pricingMode: 'somar',
+          minSelections: 0, maxSelections: 1, minTotalQuantity: 0, maxTotalQuantity: 5,
+          allowsQuantity: true, maxPerOption: 5, active: true, order: 1,
+          options: [linkedOption('o-stock-b')],
+        },
+      ],
+    }),
+    linkedProduct,
+  ];
+}
+
+function sharedLinkedStockItems() {
+  return [
+    {
+      lineId: 'line-1',
+      productId: 10,
+      quantity: 2,
+      selectedOptions: [{ groupId: 'g-stock-a', optionSelections: [{ optionId: 'o-stock-a', quantity: 2 }] }],
+    },
+    {
+      lineId: 'line-2',
+      productId: 10,
+      quantity: 3,
+      selectedOptions: [{ groupId: 'g-stock-b', optionSelections: [{ optionId: 'o-stock-b', quantity: 1 }] }],
+    },
+  ];
+}
+
 const EMPRESA_ID = '10000000-0000-4000-8000-000000000001';
 
 beforeEach(() => {
@@ -334,6 +397,55 @@ describe('materializeWhatsAppOrderDraft', () => {
       empresaId: EMPRESA_ID,
       items: [{ lineId: 'line-1', productId: 10, quantity: 1, selectedOptions: [{ groupId: 'g1', optionSelections: [{ optionId: 'inexistente', quantity: 1 }] }] }],
     })).rejects.toThrow(/MODIFIER_INVALID/);
+  });
+
+  it('soma a demanda do mesmo produto vinculado entre linhas e grupos', async () => {
+    products = productsWithSharedLinkedStock(6);
+
+    await expect(materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: sharedLinkedStockItems(),
+    })).rejects.toThrow(
+      'PRODUCT_STOCK_EXCEEDED:{"productName":"Porção vinculada","availableQuantity":6,"requestedQuantity":7}',
+    );
+  });
+
+  it('aceita a montagem quando o estoque cobre exatamente a demanda vinculada agregada', async () => {
+    products = productsWithSharedLinkedStock(7);
+
+    await expect(materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: sharedLinkedStockItems(),
+    })).resolves.toMatchObject({
+      cart: {
+        items: [
+          { lineId: 'line-1', quantity: 2 },
+          { lineId: 'line-2', quantity: 3 },
+        ],
+      },
+    });
+  });
+
+  it('rejeita demanda vinculada fora do inteiro seguro pelo caminho de quantidade inválida', async () => {
+    products = productsWithSharedLinkedStock(Number.MAX_SAFE_INTEGER);
+    products[0].modifierGroups[0] = {
+      ...products[0].modifierGroups[0],
+      maxTotalQuantity: null,
+      maxPerOption: null,
+    };
+
+    await expect(materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{
+        lineId: 'line-1',
+        productId: 10,
+        quantity: 2,
+        selectedOptions: [{
+          groupId: 'g-stock-a',
+          optionSelections: [{ optionId: 'o-stock-a', quantity: Number.MAX_SAFE_INTEGER }],
+        }],
+      }],
+    })).rejects.toThrowError(/^MODIFIER_QUANTITY_INVALID$/);
   });
 
   it('não usa nome como fallback quando o ID solicitado não existe', async () => {
