@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationOrderingRecord, DraftMaterialization } from './conversationOrdering';
 import { SupabaseConversationOrderingAdapter } from './supabaseConversationOrderingAdapter';
@@ -31,6 +32,63 @@ const PAYMENT_METHOD_REQUIREMENT: ConversationOrderingRecord['requirements'][num
   name: 'Escolha a forma de pagamento.',
   blocking: true,
 };
+
+const VALID_MODIFIER_REQUIREMENT: Extract<
+  ConversationOrderingRecord['requirements'][number],
+  { type: 'modifier_group' }
+> = {
+  id: 'line-1:group-1',
+  type: 'modifier_group',
+  lineId: 'line-1',
+  productId: 1007,
+  groupId: 'group-1',
+  name: 'Molho',
+  blocking: false,
+  kind: 'variacao',
+  pricingMode: 'somar',
+  minSelections: 0,
+  maxSelections: 1,
+  minTotalQuantity: 0,
+  maxTotalQuantity: 1,
+  allowsQuantity: false,
+  maxPerOption: 1,
+  selectedDistinctCount: 0,
+  selectedTotalQuantity: 0,
+  options: [{
+    id: 'option-1',
+    name: 'Molho branco',
+    currentPrice: 3,
+    priceDelta: 3,
+    available: true,
+    order: 0,
+  }],
+};
+
+const VALID_REQUIREMENTS = [
+  VALID_MODIFIER_REQUIREMENT,
+  {
+    id: 'fulfillment_type',
+    type: 'fulfillment_type',
+    name: 'Escolha entrega ou retirada.',
+    blocking: true,
+  },
+  CUSTOMER_NAME_REQUIREMENT,
+  PAYMENT_METHOD_REQUIREMENT,
+  {
+    id: 'delivery_address',
+    type: 'delivery_address',
+    name: 'Informe o endereco de entrega.',
+    blocking: true,
+    missingFields: ['number'],
+  },
+  {
+    id: 'schedule',
+    type: 'schedule',
+    name: 'Informe quando deseja receber.',
+    blocking: true,
+    missingFields: ['date'],
+  },
+] satisfies ConversationOrderingRecord['requirements'];
 
 function record(overrides: Partial<ConversationOrderingRecord> = {}): ConversationOrderingRecord {
   return {
@@ -94,6 +152,13 @@ function chainReturning(result: { data: unknown; error: unknown }) {
   }
   query.maybeSingle = vi.fn(async () => result);
   return query;
+}
+
+function adapterReading(row: Record<string, unknown>) {
+  const returned = chainReturning({ data: row, error: null });
+  const select = vi.fn(() => returned);
+  const from = vi.fn(() => ({ select }));
+  return new SupabaseConversationOrderingAdapter({ from } as never);
 }
 
 describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
@@ -203,6 +268,90 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
 });
 
 describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
+  it.each([
+    { label: 'null', requirements: [null] },
+    { label: 'objeto vazio', requirements: [{}] },
+    {
+      label: 'discriminante desconhecido',
+      requirements: [{ id: 'customer_name', type: 'unknown', name: 'Nome', blocking: true }],
+    },
+    {
+      label: 'kind de modificador desconhecido',
+      requirements: [{ ...VALID_MODIFIER_REQUIREMENT, kind: 'combo' }],
+    },
+    {
+      label: 'campo simples invalido',
+      requirements: [{ ...CUSTOMER_NAME_REQUIREMENT, name: 42 }],
+    },
+    {
+      label: 'campo aninhado invalido',
+      requirements: [{
+        ...VALID_MODIFIER_REQUIREMENT,
+        options: [{ ...VALID_MODIFIER_REQUIREMENT.options[0], available: 'yes' }],
+      }],
+    },
+    {
+      label: 'campo de endereco desconhecido',
+      requirements: [{
+        id: 'delivery_address', type: 'delivery_address', name: 'Endereco', blocking: true,
+        missingFields: ['postalCode'],
+      }],
+    },
+    {
+      label: 'campo de agenda desconhecido',
+      requirements: [{
+        id: 'schedule', type: 'schedule', name: 'Agenda', blocking: true,
+        missingFields: ['tomorrow'],
+      }],
+    },
+  ])('falha fechado para snapshot malformado: $label', async ({ requirements }) => {
+    const row = sessionRow(record()) as Record<string, unknown>;
+    row.requirements_snapshot = requirements;
+    row.ready_for_confirmation = true;
+
+    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+      requirements: [],
+      readyForConfirmation: false,
+    });
+  });
+
+  it('falha fechado quando prontidao verdadeira acompanha requisito bloqueante', async () => {
+    const row = sessionRow(record({
+      requirements: [CUSTOMER_NAME_REQUIREMENT],
+      readyForConfirmation: true,
+    })) as Record<string, unknown>;
+
+    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+      requirements: [],
+      readyForConfirmation: false,
+    });
+  });
+
+  it('falha fechado para prontidao verdadeira fora de whatsapp_order cart_open', async () => {
+    const row = sessionRow(record({
+      state: 'cancelled',
+      requirements: [],
+      readyForConfirmation: true,
+    })) as Record<string, unknown>;
+
+    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+      requirements: [],
+      readyForConfirmation: false,
+    });
+  });
+
+  it('preserva todas as variantes validas do contrato de requisitos', async () => {
+    const row = sessionRow(record({
+      requirements: VALID_REQUIREMENTS,
+      readyForConfirmation: false,
+    })) as Record<string, unknown>;
+
+    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+      requirements: VALID_REQUIREMENTS,
+      readyForConfirmation: false,
+    });
+  });
+
   it('mantem linhas legadas sem materializacao confiavel fechadas para confirmacao', async () => {
     const stored = record({ requirements: [], readyForConfirmation: true });
     const legacyRow = sessionRow(stored) as Record<string, unknown>;
@@ -324,5 +473,52 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
         readyForConfirmation: false,
       },
     });
+  });
+
+  it('limpa a prontidao ao cancelar uma sessao pronta', async () => {
+    const current = record({ requirements: [], readyForConfirmation: true });
+    const cancelled = record({
+      state: 'cancelled',
+      revision: 2,
+      requirements: [],
+      readyForConfirmation: false,
+    });
+    const updateResult = chainReturning({ data: sessionRow(cancelled), error: null });
+    const select = vi.fn(() => updateResult);
+    updateResult.select = select;
+    const update = vi.fn(() => updateResult);
+    const from = vi.fn(() => ({ update }));
+    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+
+    await expect(adapter.cancelOpen({
+      current,
+      expectedRevision: current.revision,
+      messageId: 'wamid.cancel-ready-order',
+    })).resolves.toMatchObject({
+      kind: 'applied',
+      record: { state: 'cancelled', readyForConfirmation: false },
+    });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      state: 'cancelled',
+      ready_for_confirmation: false,
+    }));
+  });
+});
+
+describe('migration de snapshots parciais', () => {
+  it('instala um trigger terminal antes da constraint de prontidao', () => {
+    const sql = readFileSync(
+      'supabase/migrations/20260902110000_conversation_ordering_partial_snapshots.sql',
+      'utf8',
+    );
+    const functionName = 'public.zelomenu_clear_conversation_readiness_on_terminal_state()';
+
+    expect(sql).toContain(`create or replace function ${functionName}`);
+    expect(sql).toMatch(/returns trigger\s+language plpgsql\s+security invoker\s+set search_path = pg_catalog/is);
+    expect(sql).toMatch(/if new\.context <> 'whatsapp_order' or new\.state <> 'cart_open' then\s+new\.ready_for_confirmation := false;/is);
+    expect(sql).toMatch(/create trigger zelomenu_cart_sessions_clear_terminal_readiness\s+before update on public\.zelomenu_cart_sessions\s+for each row execute function public\.zelomenu_clear_conversation_readiness_on_terminal_state\(\);/is);
+    expect(sql).toContain(`revoke all on function ${functionName} from public, anon, authenticated;`);
+    expect(sql.indexOf('create trigger zelomenu_cart_sessions_clear_terminal_readiness'))
+      .toBeLessThan(sql.indexOf('add constraint zelomenu_cart_sessions_ready_for_confirmation_state_check'));
   });
 });

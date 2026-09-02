@@ -8,6 +8,26 @@ alter table public.zelomenu_cart_sessions
 -- Only a future canonical materialization may promote an open WhatsApp draft;
 -- no existing terminal state is changed or reopened by this migration.
 
+create or replace function public.zelomenu_clear_conversation_readiness_on_terminal_state()
+returns trigger
+language plpgsql
+security invoker
+set search_path = pg_catalog
+as $function$
+begin
+  if new.context <> 'whatsapp_order' or new.state <> 'cart_open' then
+    new.ready_for_confirmation := false;
+  end if;
+  return new;
+end;
+$function$;
+
+create trigger zelomenu_cart_sessions_clear_terminal_readiness
+before update on public.zelomenu_cart_sessions
+for each row execute function public.zelomenu_clear_conversation_readiness_on_terminal_state();
+
+revoke all on function public.zelomenu_clear_conversation_readiness_on_terminal_state() from public, anon, authenticated;
+
 do $$
 begin
   if not exists (

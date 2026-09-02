@@ -9,6 +9,7 @@ import {
   type ConversationOrderingRecord,
   type DraftMaterialization,
   type DraftMutationResult,
+  type OrderingRequirement,
 } from './conversationOrdering.js';
 import { getServiceSupabase } from './supabaseServer.js';
 import { applyZeloMenuAutoAccept, materializeWhatsAppOrderDraft, type ZeloMenuCartState } from './zelomenuCartSessions.js';
@@ -32,8 +33,8 @@ type SessionRow = {
   revision: number;
   last_revalidated_at: string | null;
   last_revalidation: ConversationOrderingRecord['revalidation'] | null;
-  requirements_snapshot: ConversationOrderingRecord['requirements'];
-  ready_for_confirmation: boolean;
+  requirements_snapshot: unknown;
+  ready_for_confirmation: unknown;
   archived_at: string | null;
   updated_at: string;
 };
@@ -54,6 +55,108 @@ function nextMetadata(current: ConversationOrderingRecord, messageId: string, ex
 
 function safeState(state: ZeloMenuCartState): ConversationOrderingRecord['state'] {
   return state;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isNullableBound(value: unknown, minimum: number): value is number | null {
+  return value === null || (Number.isSafeInteger(value) && Number(value) >= minimum);
+}
+
+function hasValidRequirementBase(
+  value: Record<string, unknown>,
+  type: OrderingRequirement['type'],
+  id: OrderingRequirement['id'],
+): boolean {
+  return value.type === type
+    && value.id === id
+    && isNonEmptyString(value.name)
+    && value.blocking === true;
+}
+
+function isValidModifierOption(value: unknown): boolean {
+  return isObject(value)
+    && isNonEmptyString(value.id)
+    && isNonEmptyString(value.name)
+    && typeof value.currentPrice === 'number'
+    && Number.isFinite(value.currentPrice)
+    && typeof value.priceDelta === 'number'
+    && Number.isFinite(value.priceDelta)
+    && typeof value.available === 'boolean'
+    && Number.isSafeInteger(value.order);
+}
+
+function isValidModifierRequirement(value: Record<string, unknown>): boolean {
+  if (value.type !== 'modifier_group'
+    || !isNonEmptyString(value.id)
+    || !isNonEmptyString(value.lineId)
+    || !Number.isSafeInteger(value.productId)
+    || Number(value.productId) < 1
+    || !isNonEmptyString(value.groupId)
+    || !isNonEmptyString(value.name)
+    || typeof value.blocking !== 'boolean'
+    || (value.kind !== 'adicional' && value.kind !== 'variacao')
+    || (value.pricingMode !== 'somar' && value.pricingMode !== 'substituir')
+    || !isNonNegativeInteger(value.minSelections)
+    || !isNullableBound(value.maxSelections, Number(value.minSelections))
+    || !isNonNegativeInteger(value.minTotalQuantity)
+    || !isNullableBound(value.maxTotalQuantity, Number(value.minTotalQuantity))
+    || typeof value.allowsQuantity !== 'boolean'
+    || !isNullableBound(value.maxPerOption, 1)
+    || !isNonNegativeInteger(value.selectedDistinctCount)
+    || !isNonNegativeInteger(value.selectedTotalQuantity)
+    || (value.maxSelections !== null && Number(value.selectedDistinctCount) > Number(value.maxSelections))
+    || (value.maxTotalQuantity !== null && Number(value.selectedTotalQuantity) > Number(value.maxTotalQuantity))
+    || (value.autoSelectableOptionId !== undefined && !isNonEmptyString(value.autoSelectableOptionId))
+    || !Array.isArray(value.options)
+    || !value.options.every(isValidModifierOption)) {
+    return false;
+  }
+  return value.id === `${value.lineId}:${value.groupId}`;
+}
+
+function hasValidMissingFields(value: unknown, allowed: ReadonlySet<string>): boolean {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((field) => typeof field === 'string' && allowed.has(field))
+    && new Set(value).size === value.length;
+}
+
+const DELIVERY_REQUIREMENT_FIELDS = new Set(['address', 'number', 'neighborhood']);
+const SCHEDULE_REQUIREMENT_FIELDS = new Set(['date', 'time']);
+
+function isValidOrderingRequirement(value: unknown): value is OrderingRequirement {
+  if (!isObject(value) || typeof value.type !== 'string') return false;
+  switch (value.type) {
+    case 'modifier_group':
+      return isValidModifierRequirement(value);
+    case 'fulfillment_type':
+    case 'customer_name':
+    case 'payment_method':
+      return hasValidRequirementBase(value, value.type, value.type);
+    case 'delivery_address':
+      return hasValidRequirementBase(value, value.type, value.type)
+        && hasValidMissingFields(value.missingFields, DELIVERY_REQUIREMENT_FIELDS);
+    case 'schedule':
+      return hasValidRequirementBase(value, value.type, value.type)
+        && hasValidMissingFields(value.missingFields, SCHEDULE_REQUIREMENT_FIELDS);
+    default:
+      return false;
+  }
+}
+
+function validatedRequirementsSnapshot(value: unknown): OrderingRequirement[] | null {
+  return Array.isArray(value) && value.every(isValidOrderingRequirement) ? value : null;
 }
 
 export class SupabaseConversationOrderingAdapter implements ConversationOrderingAdapter {
@@ -103,7 +206,15 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   private async mapRow(row: SessionRow): Promise<ConversationOrderingRecord> {
     const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
     const state = safeState(row.state);
-    const hasRequirementsSnapshot = Array.isArray(row.requirements_snapshot);
+    const requirements = validatedRequirementsSnapshot(row.requirements_snapshot);
+    const hasTrustworthyReadiness = requirements !== null
+      && typeof row.ready_for_confirmation === 'boolean'
+      && (!row.ready_for_confirmation || (
+        row.context === 'whatsapp_order'
+        && state === 'cart_open'
+        && !requirements.some((requirement) => requirement.blocking)
+      ));
+    const trustedRequirements = hasTrustworthyReadiness ? requirements : [];
     return {
       sessionId: row.id,
       orderingId: row.ordering_id,
@@ -120,8 +231,8 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       pessoaId: typeof metadata.pessoaId === 'string' ? metadata.pessoaId : null,
       processedMessageIds: processedMessageIds(metadata),
       revalidation: row.last_revalidation ?? { checkedAt: row.last_revalidated_at ?? new Date(0).toISOString(), ok: true, issues: [] },
-      requirements: hasRequirementsSnapshot ? row.requirements_snapshot : [],
-      readyForConfirmation: hasRequirementsSnapshot && row.ready_for_confirmation === true,
+      requirements: trustedRequirements,
+      readyForConfirmation: hasTrustworthyReadiness && row.ready_for_confirmation === true,
       order: state === 'cart_open' || state === 'cancelled' || state === 'archived' ? null : await this.loadOrder(row.id),
     };
   }
@@ -211,6 +322,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string }): Promise<DraftMutationResult> {
     return this.mutateOpen(input.current, input.expectedRevision, input.messageId, {
       state: 'cancelled',
+      ready_for_confirmation: false,
       archived_at: new Date().toISOString(),
       metadata: nextMetadata(input.current, input.messageId, { cancellationReason: 'explicit_command' }),
     });
