@@ -61,6 +61,20 @@ export type OrderingRequirement = {
   options: ConversationModifierOptionDefinition[];
 };
 
+export type FulfillmentTypeOrderingRequirement = {
+  id: 'fulfillment_type';
+  type: 'fulfillment_type';
+  name: string;
+  blocking: true;
+};
+
+export const FULFILLMENT_TYPE_REQUIREMENT: FulfillmentTypeOrderingRequirement = {
+  id: 'fulfillment_type',
+  type: 'fulfillment_type',
+  name: 'Escolha entrega ou retirada.',
+  blocking: true,
+};
+
 function byDisplayOrder<T extends { order: number; name: string }>(left: T, right: T): number {
   return left.order - right.order || left.name.localeCompare(right.name, 'pt-BR');
 }
@@ -130,8 +144,19 @@ export function deriveModifierRequirements(
 
     const groupsById = new Map(product.modifierGroups.map((group) => [group.id, group]));
     for (const selection of line.selectedOptions ?? []) {
-      if (!groupsById.has(selection.groupId)) {
+      const group = groupsById.get(selection.groupId);
+      if (!group) {
         throw new Error(`MODIFIER_GROUP_OUTSIDE_PRODUCT:${selection.groupId}`);
+      }
+      const productOptionIds = new Set(product.modifierGroups.flatMap((candidate) => candidate.options.map((option) => option.id)));
+      const groupOptionIds = new Set(group.options.map((option) => option.id));
+      for (const optionSelection of selection.optionSelections) {
+        if (!productOptionIds.has(optionSelection.optionId)) {
+          throw new Error(`MODIFIER_OPTION_OUTSIDE_PRODUCT:${optionSelection.optionId}`);
+        }
+        if (!groupOptionIds.has(optionSelection.optionId)) {
+          throw new Error(`MODIFIER_OPTION_OUTSIDE_GROUP:${optionSelection.optionId}`);
+        }
       }
     }
 
@@ -141,6 +166,7 @@ export function deriveModifierRequirements(
       const { distinctCount, totalQuantity } = validateUpperBounds(group, quantities);
       const blocking = distinctCount < group.minSelections || totalQuantity < group.minTotalQuantity;
       const isRequired = group.minSelections > 0 || group.minTotalQuantity > 0;
+      if (isRequired && !blocking) continue;
 
       requirements.push({
         id: `${line.lineId}:${group.id}`,

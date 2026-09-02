@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createHash, randomBytes } from 'node:crypto';
-import { getConfig, loadCatalogFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
+import { getConfig, loadCatalogFromDb, toConversationModifierGroups, type BusinessConfig, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { getServiceSupabase, getEmpresaUserId } from './supabaseServer.js';
 import { notifyPushSubscribers } from './zelomenuPushSubscriptions.js';
 import { getMesaContext } from './zelomenuMesaHandler.js';
@@ -54,6 +54,12 @@ import { shouldAutoAcceptPublicOrder } from '../src/domain/zelomenuOrderAcceptan
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
 import { hasZeloMenuAccessForEmpresa } from './zelomenuAccess.js';
+import {
+  deriveModifierRequirements,
+  FULFILLMENT_TYPE_REQUIREMENT,
+  type FulfillmentTypeOrderingRequirement,
+  type OrderingRequirement as ModifierOrderingRequirement,
+} from './conversationOrderRequirements.js';
 
 // ─── Token helpers (node:crypto, backend only) ─────────────────────────────────
 
@@ -170,6 +176,7 @@ export type ZeloMenuCartState =
 export type ZeloMenuCartContext = 'whatsapp_order' | 'public_order' | 'table_order';
 
 export type ZeloMenuCartItemInput = {
+  lineId?: string;
   productId?: number | null;
   productName: string;
   quantity: number;
@@ -214,6 +221,10 @@ export type ZeloMenuFulfillmentSnapshot = {
   deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
   deliveryPricingMode?: 'standard' | 'custom_time';
   deliveryPricingRuleLabel?: string | null;
+};
+
+export type ConversationFulfillmentSnapshot = Omit<ZeloMenuFulfillmentSnapshot, 'type'> & {
+  type: ZeloMenuFulfillmentSnapshot['type'] | null;
 };
 
 export type ZeloMenuDeliveryQuoteOverride = {
@@ -905,6 +916,7 @@ function stockExceededError(productName: string, availableQuantity: number, requ
 
 function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
   return cart.items.map((item) => ({
+    lineId: item.lineId,
     productId: item.productId,
     productName: item.productName,
     quantity: item.quantity,
@@ -921,27 +933,42 @@ function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
 
 // ─── Snapshot resolution ──────────────────────────────────────────────────────
 
-type ResolvedCart = {
+type ResolvedCart<TFulfillment extends ConversationFulfillmentSnapshot = ZeloMenuFulfillmentSnapshot> = {
   cart: ZeloMenuCartSnapshot;
-  fulfillment: ZeloMenuFulfillmentSnapshot;
+  fulfillment: TFulfillment;
   pricing: ZeloMenuPricingSnapshot;
   payment: ZeloMenuPaymentSnapshot;
 };
 
+type ResolveSnapshotsParams = {
+  items: ZeloMenuCartItemInput[];
+  fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
+  paymentMethod?: string | null;
+  observations?: string | null;
+  context: ZeloMenuCartContext;
+  couponCode?: string | null;
+  deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
+  allowIncompleteModifiers?: boolean;
+  allowMissingFulfillment?: boolean;
+};
+
 async function resolveSnapshots(
   empresaId: string,
-  params: {
-    items: ZeloMenuCartItemInput[];
-    fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
-    paymentMethod?: string | null;
-    observations?: string | null;
-    context: ZeloMenuCartContext;
-    couponCode?: string | null;
-    deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
-  },
-): Promise<ResolvedCart> {
-  await loadCatalogFromDb(empresaId);
-  const config = getConfig(empresaId);
+  params: ResolveSnapshotsParams & { allowMissingFulfillment: true },
+  loadedConfig?: BusinessConfig,
+): Promise<ResolvedCart<ConversationFulfillmentSnapshot>>;
+async function resolveSnapshots(
+  empresaId: string,
+  params: ResolveSnapshotsParams & { allowMissingFulfillment?: false },
+  loadedConfig?: BusinessConfig,
+): Promise<ResolvedCart>;
+async function resolveSnapshots(
+  empresaId: string,
+  params: ResolveSnapshotsParams,
+  loadedConfig?: BusinessConfig,
+): Promise<ResolvedCart<ConversationFulfillmentSnapshot>> {
+  if (!loadedConfig) await loadCatalogFromDb(empresaId);
+  const config = loadedConfig ?? getConfig(empresaId);
   const resolvedItems: ZeloMenuCartItemSnapshot[] = [];
 
   const aggregated = new Map<number, number>();
@@ -959,7 +986,10 @@ async function resolveSnapshots(
     }
     if (!product.available) throw new Error('PRODUCT_UNAVAILABLE');
     const baseUnitPrice = Number(product.basePrice ?? product.price);
-    const modifierResolution = resolveModifierSelections(product.modifierGroups, item.selectedOptions ?? [], baseUnitPrice);
+    const modifierGroups = params.allowIncompleteModifiers
+      ? product.modifierGroups.map((group) => ({ ...group, minSelections: 0, minTotalQuantity: 0 }))
+      : product.modifierGroups;
+    const modifierResolution = resolveModifierSelections(modifierGroups, item.selectedOptions ?? [], baseUnitPrice);
     if (modifierResolution.ok === false) throw new Error(`MODIFIER_INVALID:${modifierResolution.message}`);
     const unitPrice = Number(modifierResolution.finalUnitPrice.toFixed(2));
 
@@ -985,6 +1015,7 @@ async function resolveSnapshots(
       }
     }
     resolvedItems.push({
+      lineId: item.lineId,
       productId: product.id ?? null,
       productName: product.name,
       baseUnitPrice,
@@ -997,7 +1028,13 @@ async function resolveSnapshots(
     });
   }
 
-  const fulfillmentType = params.fulfillment?.type === 'delivery' ? 'delivery' : 'pickup';
+  const fulfillmentType = params.fulfillment?.type === 'delivery'
+    ? 'delivery'
+    : params.fulfillment?.type === 'pickup'
+      ? 'pickup'
+      : params.allowMissingFulfillment
+        ? null
+        : 'pickup';
   const deliveryNeighborhood = sanitizeText(params.fulfillment?.deliveryNeighborhood, 120);
 
   let deliveryFee = 0;
@@ -1076,7 +1113,7 @@ async function resolveSnapshots(
     }
   }
 
-  const fulfillment: ZeloMenuFulfillmentSnapshot = {
+  const fulfillment: ConversationFulfillmentSnapshot = {
     type: fulfillmentType,
     asap: params.fulfillment?.asap === true,
     pickupDate: normalizeDate(params.fulfillment?.pickupDate),
@@ -1094,7 +1131,11 @@ async function resolveSnapshots(
     deliveryLatitude: deliveryDetail?.coordinates?.latitude ?? null,
     deliveryLongitude: deliveryDetail?.coordinates?.longitude ?? null,
     deliveryDistanceM: deliveryDetail?.distanceM ?? null,
-    deliveryStatus: fulfillmentType === 'delivery' ? (deliveryDetail?.status ?? 'pending') : 'not_applicable',
+    deliveryStatus: fulfillmentType === 'delivery'
+      ? (deliveryDetail?.status ?? 'pending')
+      : fulfillmentType === 'pickup'
+        ? 'not_applicable'
+        : null,
     deliveryCacheLayer: deliveryDetail?.cacheLayer ?? null,
     deliveryQuoteRequestId: deliveryDetail?.quoteRequestId ?? null,
     deliveryPricingMode: deliveryDetail?.deliveryPricingMode,
@@ -1141,9 +1182,39 @@ async function resolveSnapshots(
  * aceita somente IDs, quantidades e observações; nomes, preços, disponibilidade,
  * complementos, frete e totais são sempre reconstruídos do catálogo público.
  */
+export type WhatsAppOrderDraftMaterialization = {
+  cart: ZeloMenuCartSnapshot;
+  customer: ZeloMenuCustomerSnapshot;
+  fulfillment: ConversationFulfillmentSnapshot;
+  payment: ZeloMenuPaymentSnapshot;
+  pricing: ZeloMenuPricingSnapshot;
+  revalidation: ZeloMenuCartRevalidation;
+  requirements: Array<ModifierOrderingRequirement | FulfillmentTypeOrderingRequirement>;
+  readyForConfirmation: boolean;
+};
+
+function throwConversationModifierError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith('PRODUCT_NOT_FOUND:')) throw new Error('PRODUCT_NOT_FOUND');
+  const codes: Array<[prefix: string, publicCode: string]> = [
+    ['MODIFIER_GROUP_OUTSIDE_PRODUCT:', 'GROUP_OUTSIDE_PRODUCT'],
+    ['MODIFIER_OPTION_OUTSIDE_PRODUCT:', 'OPTION_OUTSIDE_PRODUCT'],
+    ['MODIFIER_OPTION_OUTSIDE_GROUP:', 'OPTION_OUTSIDE_GROUP'],
+    ['MODIFIER_OPTION_UNAVAILABLE:', 'OPTION_UNAVAILABLE'],
+    ['MODIFIER_QUANTITY_INVALID:', 'QUANTITY_INVALID'],
+    ['MODIFIER_DISTINCT_SELECTIONS_EXCEEDED:', 'DISTINCT_SELECTIONS_EXCEEDED'],
+    ['MODIFIER_TOTAL_QUANTITY_EXCEEDED:', 'TOTAL_QUANTITY_EXCEEDED'],
+    ['MODIFIER_OPTION_QUANTITY_EXCEEDED:', 'OPTION_QUANTITY_EXCEEDED'],
+  ];
+  const match = codes.find(([prefix]) => message.startsWith(prefix));
+  if (match) throw new Error(`MODIFIER_INVALID:${match[1]}`);
+  throw error;
+}
+
 export async function materializeWhatsAppOrderDraft(input: {
   empresaId: string;
   items: Array<{
+    lineId: string;
     productId: number;
     quantity: number;
     notes?: string | null;
@@ -1153,13 +1224,14 @@ export async function materializeWhatsAppOrderDraft(input: {
   customer?: { name?: string | null; phone?: string | null };
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
-}): Promise<ResolvedCart & { customer: ZeloMenuCustomerSnapshot; revalidation: ZeloMenuCartRevalidation }> {
+}): Promise<WhatsAppOrderDraftMaterialization> {
   if (!Array.isArray(input.items) || input.items.length < 1) throw new Error('EMPTY_CART');
   if (input.items.length > 50) throw new Error('CART_LINE_LIMIT_EXCEEDED');
   const items = input.items.map((item): ZeloMenuCartItemInput => {
     if (!Number.isSafeInteger(item.productId) || item.productId <= 0) throw new Error('PRODUCT_NOT_FOUND');
     if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 999) throw new Error('INVALID_QUANTITY');
     return {
+      lineId: item.lineId,
       productId: item.productId,
       // Sentinela deliberadamente não pesquisável: esta camada jamais resolve
       // ambiguidade por nome se o ID canônico deixar de existir.
@@ -1169,25 +1241,56 @@ export async function materializeWhatsAppOrderDraft(input: {
       selectedOptions: item.selectedOptions ?? [],
     };
   });
-  const fulfillment: Partial<ZeloMenuFulfillmentSnapshot> = {
-    type: input.fulfillment?.type === 'delivery' ? 'delivery' : 'pickup',
-    ...input.fulfillment,
-    asap: input.fulfillment?.asap !== false,
-  };
+  await loadCatalogFromDb(input.empresaId);
+  const config = getConfig(input.empresaId);
+  let modifierRequirements: ModifierOrderingRequirement[];
+  try {
+    modifierRequirements = deriveModifierRequirements(
+      input.items.map((item) => ({
+        lineId: item.lineId,
+        productId: item.productId,
+        selectedOptions: item.selectedOptions,
+      })),
+      config.products.map((product) => ({
+        id: product.id,
+        name: product.name,
+        basePrice: product.basePrice,
+        available: product.available,
+        modifierGroups: toConversationModifierGroups(product.modifierGroups),
+      })),
+    );
+  } catch (error) {
+    throwConversationModifierError(error);
+  }
+  const fulfillment = input.fulfillment?.type
+    ? { ...input.fulfillment, asap: input.fulfillment.asap !== false }
+    : input.fulfillment;
   const resolved = await resolveSnapshots(input.empresaId, {
     items,
     fulfillment,
     paymentMethod: input.paymentMethod,
     observations: input.observations,
     context: 'whatsapp_order',
-  });
+    allowIncompleteModifiers: true,
+    allowMissingFulfillment: true,
+  }, config);
+  const requirements: Array<ModifierOrderingRequirement | FulfillmentTypeOrderingRequirement> = [
+    ...modifierRequirements,
+    ...(resolved.fulfillment.type === null ? [FULFILLMENT_TYPE_REQUIREMENT] : []),
+  ];
+  const revalidation = revalidationFromResolved(resolved);
   return {
     ...resolved,
     customer: {
       name: sanitizeText(input.customer?.name, 120),
       phone: sanitizeText(input.customer?.phone, 40),
     },
-    revalidation: revalidationFromResolved(resolved),
+    revalidation,
+    requirements,
+    readyForConfirmation: resolved.fulfillment.type !== null
+      && !resolved.fulfillment.deliveryFeeToConfirm
+      && revalidation.ok
+      && !requirements.some((requirement) => requirement.blocking),
   };
 }
 
@@ -1348,7 +1451,9 @@ async function runRevalidation(session: PublicCartSession): Promise<InternalZelo
   return { checkedAt: new Date().toISOString(), ok: issues.length === 0, issues, previewCart, previewPricing, previewPayment, previewFulfillment };
 }
 
-function revalidationFromResolved(resolved: ResolvedCart): ZeloMenuCartRevalidation {
+function revalidationFromResolved(
+  resolved: ResolvedCart<ConversationFulfillmentSnapshot>,
+): ZeloMenuCartRevalidation {
   const issues: ZeloMenuCartRevalidationIssue[] = [];
   if (resolved.fulfillment.type === 'delivery') {
     if (resolved.fulfillment.deliveryStatus === 'out_of_area') {

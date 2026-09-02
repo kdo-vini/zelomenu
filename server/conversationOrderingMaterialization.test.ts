@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BusinessConfig, CatalogProduct } from './configStore';
+import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog';
 
 let products: CatalogProduct[] = [];
 
@@ -25,7 +26,8 @@ function config(): BusinessConfig {
   };
 }
 
-vi.mock('./configStore.js', () => ({
+vi.mock('./configStore.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./configStore.js')>(),
   loadCatalogFromDb: vi.fn(async () => undefined),
   getConfig: () => config(),
 }));
@@ -57,41 +59,205 @@ function product(overrides: Partial<CatalogProduct> = {}): CatalogProduct {
   };
 }
 
+function massProduct(): CatalogProduct {
+  const source = bemServidoConversationCatalog.find((candidate) => candidate.id === 1007)!;
+  return {
+    id: source.id,
+    name: source.name,
+    price: source.basePrice,
+    basePrice: source.basePrice,
+    available: source.available,
+    stockControlled: false,
+    stockQuantity: 0,
+    modifierGroups: source.modifierGroups.map((group) => ({
+      ...group,
+      productId: source.id,
+      active: true,
+      options: group.options.map((option) => ({
+        id: option.id,
+        name: option.name,
+        priceDelta: option.priceDelta,
+        active: option.available,
+        order: option.order,
+      })),
+    })),
+  };
+}
+
+const EMPRESA_ID = '10000000-0000-4000-8000-000000000001';
+
 beforeEach(() => { products = [product()]; });
 
 describe('materializeWhatsAppOrderDraft', () => {
   it('materializa nomes, preços, complementos, subtotal e asap somente pelo servidor', async () => {
     const result = await materializeWhatsAppOrderDraft({
-      empresaId: '10000000-0000-4000-8000-000000000001',
-      items: [{ productId: 10, quantity: 2, selectedOptions: [{ groupId: 'g1', optionSelections: [{ optionId: 'o1', quantity: 1 }] }] }],
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 2, selectedOptions: [{ groupId: 'g1', optionSelections: [{ optionId: 'o1', quantity: 1 }] }] }],
+      fulfillment: { type: 'pickup' },
     });
 
-    expect(result.cart.items[0]).toMatchObject({ productName: 'X-Bacon oficial', baseUnitPrice: 20, unitPrice: 23, quantity: 2, lineTotal: 46 });
+    expect(result.cart.items[0]).toMatchObject({ lineId: 'line-1', productName: 'X-Bacon oficial', baseUnitPrice: 20, unitPrice: 23, quantity: 2, lineTotal: 46 });
     expect(result.cart.items[0].selectedModifiers[0].selectedOptions[0]).toMatchObject({ optionName: 'Bacon extra', priceDelta: 3 });
     expect(result.pricing).toMatchObject({ subtotal: 46, deliveryFee: 0, total: 46 });
     expect(result.fulfillment).toMatchObject({ type: 'pickup', asap: true });
   });
 
+  it('preserva a massa parcial no preço conhecido e pede somente o molho obrigatório mais opcionais', async () => {
+    products = [massProduct()];
+
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{
+        lineId: 'massa-1',
+        productId: 1007,
+        quantity: 1,
+        selectedOptions: [{ groupId: 'g001', optionSelections: [{ optionId: 'o002', quantity: 1 }] }],
+      }],
+      fulfillment: { type: 'pickup' },
+    });
+
+    expect(result.cart.items[0]).toMatchObject({
+      lineId: 'massa-1',
+      productName: 'Monte Sua Massa',
+      unitPrice: 25,
+      lineTotal: 25,
+    });
+    expect(result.cart.items[0].selectedModifiers[0].selectedOptions[0]).toMatchObject({
+      optionName: 'Talharim',
+      priceDelta: 25,
+    });
+    expect(result.pricing).toMatchObject({ subtotal: 25, total: 25 });
+    expect(result.requirements.map((requirement) => ({
+      type: requirement.type,
+      groupId: requirement.type === 'modifier_group' ? requirement.groupId : null,
+      blocking: requirement.blocking,
+    }))).toEqual([
+      { type: 'modifier_group', groupId: 'g002', blocking: true },
+      { type: 'modifier_group', groupId: 'g003', blocking: false },
+      { type: 'modifier_group', groupId: 'g004', blocking: false },
+      { type: 'modifier_group', groupId: 'g005', blocking: false },
+    ]);
+    expect(result.readyForConfirmation).toBe(false);
+  });
+
+  it('rejeita opção existente em outro produto em vez de aceitar IDs globais', async () => {
+    products = [product(), massProduct()];
+
+    await expect(materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{
+        lineId: 'massa-1',
+        productId: 1007,
+        quantity: 1,
+        selectedOptions: [{ groupId: 'g002', optionSelections: [{ optionId: 'o1', quantity: 1 }] }],
+      }],
+      fulfillment: { type: 'pickup' },
+    })).rejects.toThrow('MODIFIER_INVALID:OPTION_OUTSIDE_PRODUCT');
+  });
+
+  it.each([
+    {
+      label: 'opções distintas',
+      group: {
+        maxSelections: 2,
+        maxTotalQuantity: null,
+        allowsQuantity: false,
+        maxPerOption: null,
+      },
+      optionSelections: [
+        { optionId: 'o1', quantity: 1 },
+        { optionId: 'o2', quantity: 1 },
+        { optionId: 'o3', quantity: 1 },
+      ],
+      expected: 'MODIFIER_INVALID:DISTINCT_SELECTIONS_EXCEEDED',
+    },
+    {
+      label: 'quantidade total',
+      group: {
+        maxSelections: 2,
+        maxTotalQuantity: 2,
+        allowsQuantity: true,
+        maxPerOption: null,
+      },
+      optionSelections: [
+        { optionId: 'o1', quantity: 2 },
+        { optionId: 'o2', quantity: 1 },
+      ],
+      expected: 'MODIFIER_INVALID:TOTAL_QUANTITY_EXCEEDED',
+    },
+    {
+      label: 'quantidade por opção',
+      group: {
+        maxSelections: 2,
+        maxTotalQuantity: 4,
+        allowsQuantity: true,
+        maxPerOption: 2,
+      },
+      optionSelections: [{ optionId: 'o1', quantity: 3 }],
+      expected: 'MODIFIER_INVALID:OPTION_QUANTITY_EXCEEDED',
+    },
+  ])('rejeita excesso de $label sem truncar seleções', async ({ group, optionSelections, expected }) => {
+    products = [product({
+      modifierGroups: [{
+        id: 'g1', productId: 10, name: 'Adicionais', kind: 'adicional', pricingMode: 'somar',
+        minSelections: 0, minTotalQuantity: 0, active: true, order: 0,
+        options: [
+          { id: 'o1', name: 'Primeiro', priceDelta: 1, active: true, order: 0 },
+          { id: 'o2', name: 'Segundo', priceDelta: 2, active: true, order: 1 },
+          { id: 'o3', name: 'Terceiro', priceDelta: 3, active: true, order: 2 },
+        ],
+        ...group,
+      }],
+    })];
+
+    await expect(materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{
+        lineId: 'line-1',
+        productId: 10,
+        quantity: 1,
+        selectedOptions: [{ groupId: 'g1', optionSelections }],
+      }],
+      fulfillment: { type: 'pickup' },
+    })).rejects.toThrow(expected);
+  });
+
+  it('mantém modalidade ausente como nula e requisito bloqueante', async () => {
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+    });
+
+    expect(result.fulfillment.type).toBeNull();
+    expect(result.requirements).toContainEqual({
+      id: 'fulfillment_type',
+      type: 'fulfillment_type',
+      name: 'Escolha entrega ou retirada.',
+      blocking: true,
+    });
+    expect(result.readyForConfirmation).toBe(false);
+  });
+
   it.each(['invisível', 'pausado'])('rejeita produto %s na projeção pública canônica', async () => {
     products = [product({ available: false })];
-    await expect(materializeWhatsAppOrderDraft({ empresaId: '10000000-0000-4000-8000-000000000001', items: [{ productId: 10, quantity: 1 }] }))
+    await expect(materializeWhatsAppOrderDraft({ empresaId: EMPRESA_ID, items: [{ lineId: 'line-1', productId: 10, quantity: 1 }] }))
       .rejects.toThrow('PRODUCT_UNAVAILABLE');
   });
 
   it('rejeita produto sem estoque e montagem com opção inválida', async () => {
     products = [product({ stockControlled: true, stockQuantity: 0 })];
-    await expect(materializeWhatsAppOrderDraft({ empresaId: '10000000-0000-4000-8000-000000000001', items: [{ productId: 10, quantity: 1 }] }))
+    await expect(materializeWhatsAppOrderDraft({ empresaId: EMPRESA_ID, items: [{ lineId: 'line-1', productId: 10, quantity: 1 }] }))
       .rejects.toThrow(/PRODUCT_STOCK_EXCEEDED/);
 
     products = [product()];
     await expect(materializeWhatsAppOrderDraft({
-      empresaId: '10000000-0000-4000-8000-000000000001',
-      items: [{ productId: 10, quantity: 1, selectedOptions: [{ groupId: 'g1', optionSelections: [{ optionId: 'inexistente', quantity: 1 }] }] }],
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1, selectedOptions: [{ groupId: 'g1', optionSelections: [{ optionId: 'inexistente', quantity: 1 }] }] }],
     })).rejects.toThrow(/MODIFIER_INVALID/);
   });
 
   it('não usa nome como fallback quando o ID solicitado não existe', async () => {
-    await expect(materializeWhatsAppOrderDraft({ empresaId: '10000000-0000-4000-8000-000000000001', items: [{ productId: 999, quantity: 1 }] }))
+    await expect(materializeWhatsAppOrderDraft({ empresaId: EMPRESA_ID, items: [{ lineId: 'line-1', productId: 999, quantity: 1 }] }))
       .rejects.toThrow('PRODUCT_NOT_FOUND');
   });
 });

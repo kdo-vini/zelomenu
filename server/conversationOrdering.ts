@@ -6,9 +6,16 @@ import type {
 } from '../src/domain/zelomenuCartSchema.js';
 import type {
   ZeloMenuCustomerSnapshot,
+  ConversationFulfillmentSnapshot,
   ZeloMenuFulfillmentSnapshot,
 } from './zelomenuCartSessions.js';
-import type { OrderingRequirement as ModifierOrderingRequirement } from './conversationOrderRequirements.js';
+import {
+  FULFILLMENT_TYPE_REQUIREMENT,
+  type FulfillmentTypeOrderingRequirement,
+  type OrderingRequirement as ModifierOrderingRequirement,
+} from './conversationOrderRequirements.js';
+
+export type { ConversationFulfillmentSnapshot } from './zelomenuCartSessions.js';
 
 export type ConversationOrderItemSelection = {
   lineId: string;
@@ -37,17 +44,6 @@ export type ConversationOrderCartItemSnapshot = ZeloMenuCartItemSnapshot & {
 
 export type ConversationOrderCartSnapshot = Omit<ZeloMenuCartSnapshot, 'items'> & {
   items: ConversationOrderCartItemSnapshot[];
-};
-
-export type ConversationFulfillmentSnapshot = Omit<ZeloMenuFulfillmentSnapshot, 'type'> & {
-  type: ZeloMenuFulfillmentSnapshot['type'] | null;
-};
-
-export type FulfillmentTypeOrderingRequirement = {
-  id: 'fulfillment_type';
-  type: 'fulfillment_type';
-  name: string;
-  blocking: true;
 };
 
 export type OrderingRequirement = ModifierOrderingRequirement | FulfillmentTypeOrderingRequirement;
@@ -174,13 +170,6 @@ type ConversationOrderingOptions = {
 };
 
 const LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const FULFILLMENT_TYPE_REQUIREMENT: FulfillmentTypeOrderingRequirement = {
-  id: 'fulfillment_type',
-  type: 'fulfillment_type',
-  name: 'Escolha entrega ou retirada.',
-  blocking: true,
-};
-
 function validateDraftLineIds(draft: ConversationOrderDraft): void {
   const lineIds = new Set<string>();
   for (const item of draft.items) {
