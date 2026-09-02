@@ -53,7 +53,12 @@ type CommandIdentity = {
   messageId: string;
 };
 
-export type ConversationOrderCommand = CommandIdentity & (
+export type ConversationAiPermit = {
+  conversationControlId: string;
+  conversationEpoch: string;
+};
+
+export type ConversationOrderCommand = CommandIdentity & ConversationAiPermit & (
   | { type: 'open_or_update_draft'; orderingId?: string; expectedRevision?: number; draft: ConversationOrderDraft }
   | { type: 'confirm_draft'; orderingId: string; expectedRevision: number; confirmationToken?: string; pessoaId?: string | null }
   | { type: 'cancel_draft'; orderingId: string; expectedRevision: number }
@@ -125,20 +130,20 @@ export interface ConversationOrderingAdapter {
   findOpen(empresaId: string, remoteJid: string): Promise<ConversationOrderingRecord | null>;
   findByMessageId(empresaId: string, remoteJid: string, messageId: string): Promise<ConversationOrderingRecord | null>;
   findByOrderingId(orderingId: string): Promise<ConversationOrderingRecord | null>;
-  createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'>): Promise<ConversationOrderingRecord>;
+  createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'> & ConversationAiPermit): Promise<ConversationOrderingRecord>;
   updateOpen(input: {
     current: ConversationOrderingRecord;
     expectedRevision: number;
     messageId: string;
     materialization: DraftMaterialization;
     pessoaId: string | null;
-  }): Promise<DraftMutationResult>;
-  cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string }): Promise<DraftMutationResult>;
+  } & ConversationAiPermit): Promise<DraftMutationResult>;
+  cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string } & ConversationAiPermit): Promise<DraftMutationResult>;
   issueConfirmationToken(input: {
     current: ConversationOrderingRecord;
     tokenHash: string;
     expiresAt: string;
-  }): Promise<TokenIssuanceResult>;
+  } & ConversationAiPermit): Promise<TokenIssuanceResult>;
   confirmAtomically(input: {
     current: ConversationOrderingRecord;
     expectedRevision: number;
@@ -146,7 +151,7 @@ export interface ConversationOrderingAdapter {
     tokenHash: string | null;
     idempotencyKey: string;
     pessoaId: string | null;
-  }): Promise<AtomicConfirmationResult>;
+  } & ConversationAiPermit): Promise<AtomicConfirmationResult>;
   applyAutoAccept(record: ConversationOrderingRecord): Promise<ConversationOrderingRecord>;
 }
 
@@ -325,7 +330,11 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
   const ttlMs = options.confirmationTtlMs ?? 10 * 60_000;
   const inFlight = new Map<string, Promise<OrderingSnapshot>>();
 
-  async function withConfirmationAction(record: ConversationOrderingRecord, requiresReview = false): Promise<OrderingSnapshot> {
+  async function withConfirmationAction(
+    record: ConversationOrderingRecord,
+    permit: ConversationAiPermit,
+    requiresReview = false,
+  ): Promise<OrderingSnapshot> {
     const normalized = normalizeReadiness(record);
     if (normalized.state !== 'cart_open' || !normalized.readyForConfirmation) {
       return toSnapshot(normalized, null, requiresReview);
@@ -342,6 +351,8 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     const token = options.createRawConfirmationToken(normalized, expiresAt);
     const issuance = await adapter.issueConfirmationToken({
       current: normalized,
+      conversationControlId: permit.conversationControlId,
+      conversationEpoch: permit.conversationEpoch,
       tokenHash: options.hashConfirmationToken(token),
       expiresAt,
     });
@@ -358,7 +369,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
 
   async function applyOnce(command: ConversationOrderCommand): Promise<OrderingSnapshot> {
     const historical = await adapter.findByMessageId(command.empresaId, command.remoteJid, command.messageId);
-    if (historical) return historical.state === 'cart_open' ? withConfirmationAction(historical) : toSnapshot(historical);
+    if (historical) return historical.state === 'cart_open' ? withConfirmationAction(historical, command) : toSnapshot(historical);
 
     if (command.type === 'open_or_update_draft' && !command.orderingId) {
       validateDraftLineIds(command.draft);
@@ -373,7 +384,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       }
       const existing = await adapter.findOpen(command.empresaId, command.remoteJid);
       if (existing) {
-        if (existing.processedMessageIds.includes(command.messageId)) return withConfirmationAction(existing);
+        if (existing.processedMessageIds.includes(command.messageId)) return withConfirmationAction(existing, command);
         throw new ConversationOrderingError('PEDIDO_EM_ANDAMENTO', 'Já existe um pedido em andamento nesta conversa.', toSnapshot(existing));
       }
       let materialized: DraftMaterialization;
@@ -387,19 +398,21 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       }
       const record = await adapter.createOpen({
         ...materialized,
+        conversationControlId: command.conversationControlId,
+        conversationEpoch: command.conversationEpoch,
         empresaId: command.empresaId,
         remoteJid: command.remoteJid,
         pessoaId: command.draft.pessoaId ?? null,
         processedMessageIds: [command.messageId],
       });
-      return withConfirmationAction(record);
+      return withConfirmationAction(record, command);
     }
 
     const current = await adapter.findByOrderingId(command.orderingId!);
     if (!current || current.empresaId !== command.empresaId || current.remoteJid !== command.remoteJid) {
       throw new ConversationOrderingError('PEDIDO_NAO_ENCONTRADO', 'Não encontrei este pedido para a conversa informada.');
     }
-    if (current.processedMessageIds.includes(command.messageId)) return withConfirmationAction(current);
+    if (current.processedMessageIds.includes(command.messageId)) return withConfirmationAction(current, command);
     if (command.expectedRevision !== current.revision) {
       throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(current));
     }
@@ -431,6 +444,8 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       }
       const result = await adapter.updateOpen({
         current,
+        conversationControlId: command.conversationControlId,
+        conversationEpoch: command.conversationEpoch,
         expectedRevision: command.expectedRevision,
         messageId: command.messageId,
         materialization: materialized,
@@ -439,13 +454,19 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       if (result.kind === 'conflict') {
         throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(result.record));
       }
-      return withConfirmationAction(result.record);
+      return withConfirmationAction(result.record, command);
     }
 
     if (command.type === 'cancel_draft') {
       if (current.state === 'cancelled') return toSnapshot(current);
       if (current.state !== 'cart_open') throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
-      const result = await adapter.cancelOpen({ current, expectedRevision: command.expectedRevision, messageId: command.messageId });
+      const result = await adapter.cancelOpen({
+        current,
+        conversationControlId: command.conversationControlId,
+        conversationEpoch: command.conversationEpoch,
+        expectedRevision: command.expectedRevision,
+        messageId: command.messageId,
+      });
       if (result.kind === 'conflict') {
         throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(result.record));
       }
@@ -458,6 +479,8 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     const idempotencyKey = `whatsapp:${current.sessionId}:${command.messageId}`;
     const result = await adapter.confirmAtomically({
       current,
+      conversationControlId: command.conversationControlId,
+      conversationEpoch: command.conversationEpoch,
       expectedRevision: command.expectedRevision,
       messageId: command.messageId,
       tokenHash: command.confirmationToken ? options.hashConfirmationToken(command.confirmationToken) : null,
@@ -467,7 +490,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (result.kind === 'conflict') {
       throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(result.record));
     }
-    if (result.kind === 'requires_review') return withConfirmationAction(result.record, true);
+    if (result.kind === 'requires_review') return withConfirmationAction(result.record, command, true);
     const originalAlreadyConfirmed = result.record.order?.alreadyConfirmed;
     const autoAccepted = await adapter.applyAutoAccept(result.record);
     if (autoAccepted.order && originalAlreadyConfirmed != null) autoAccepted.order.alreadyConfirmed = originalAlreadyConfirmed;
@@ -476,7 +499,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
 
   return {
     apply(command: ConversationOrderCommand): Promise<OrderingSnapshot> {
-      const key = `${command.empresaId}\u0000${command.remoteJid}\u0000${command.messageId}`;
+      const key = `${command.empresaId}\u0000${command.remoteJid}\u0000${command.messageId}\u0000${command.conversationControlId}\u0000${command.conversationEpoch}`;
       const current = inFlight.get(key);
       if (current) return current;
       const pending = applyOnce(command).finally(() => inFlight.delete(key));

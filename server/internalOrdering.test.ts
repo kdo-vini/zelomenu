@@ -1,12 +1,13 @@
 import { createServer } from 'node:http';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { OrderingSnapshot } from './conversationOrdering';
+import { ConversationOrderingError, type OrderingSnapshot } from './conversationOrdering';
 import { createInternalOrderingRouter, parseInternalOrderingCommand } from './internalOrdering';
 import { createInternalCatalogFailureLimiter } from './internalCatalogRateLimit';
 
 const EMPRESA = '10000000-0000-4000-8000-000000000001';
 const ORDERING = '30000000-0000-4000-8000-000000000001';
+const CONVERSATION_CONTROL = '60000000-0000-4000-8000-000000000001';
 const JID = '5511999999999@s.whatsapp.net';
 const servers: ReturnType<typeof createServer>[] = [];
 
@@ -33,8 +34,14 @@ function snapshot(): OrderingSnapshot {
   };
 }
 
-async function start(options: { quotaMax?: number } = {}) {
-  const ordering = { apply: vi.fn(async () => snapshot()), getSnapshot: vi.fn(async () => snapshot()) };
+async function start(options: {
+  quotaMax?: number;
+  ordering?: {
+    apply: ReturnType<typeof vi.fn>;
+    getSnapshot: ReturnType<typeof vi.fn>;
+  };
+} = {}) {
+  const ordering = options.ordering ?? { apply: vi.fn(async () => snapshot()), getSnapshot: vi.fn(async () => snapshot()) };
   const app = express();
   app.use((req, res, next) => {
     res.locals.requestId = req.header('x-request-id') ?? 'request-gerado';
@@ -43,7 +50,7 @@ async function start(options: { quotaMax?: number } = {}) {
   });
   app.use('/internal/ordering', createInternalCatalogFailureLimiter({ isInternalKeyValid: (key) => key === 'valid' }));
   app.use(express.json({ limit: '4kb' }));
-  app.use('/internal/ordering', createInternalOrderingRouter(ordering, options));
+  app.use('/internal/ordering', createInternalOrderingRouter(ordering, { quotaMax: options.quotaMax }));
   const server = createServer(app);
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -60,11 +67,41 @@ function validCommand(empresaId = EMPRESA) {
   return {
     type: 'open_or_update_draft', empresaId, remoteJid: JID,
     messageId: 'wamid.valid-message-123456',
+    conversationControlId: CONVERSATION_CONTROL,
+    conversationEpoch: '42',
     draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 2, notes: 'sem cebola' }] },
   };
 }
 
 describe('parseInternalOrderingCommand', () => {
+  it('exige permit de conversa com epoch decimal exato e dentro de bigint', () => {
+    const { conversationEpoch: _missing, ...missingEpoch } = validCommand();
+    const invalidEpochs = [42, '-1', '9223372036854775808'];
+
+    expect(parseInternalOrderingCommand(missingEpoch)).toEqual({
+      ok: false,
+      message: 'Informe uma versão válida da conversa.',
+    });
+    for (const conversationEpoch of invalidEpochs) {
+      expect(parseInternalOrderingCommand({
+        ...validCommand(),
+        conversationEpoch,
+      }), String(conversationEpoch)).toEqual({
+        ok: false,
+        message: 'Informe uma versão válida da conversa.',
+      });
+    }
+
+    const parsed = parseInternalOrderingCommand(validCommand());
+    expect(parsed.ok ? {
+      conversationControlId: parsed.value.conversationControlId,
+      conversationEpoch: parsed.value.conversationEpoch,
+    } : null).toEqual({
+      conversationControlId: CONVERSATION_CONTROL,
+      conversationEpoch: '42',
+    });
+  });
+
   it('aceita somente IDs/quantidades/observações e aplica asap por padrão no domínio', () => {
     expect(parseInternalOrderingCommand(validCommand()).ok).toBe(true);
     expect(parseInternalOrderingCommand({
@@ -158,6 +195,35 @@ describe('rotas internas de ordering', () => {
     const loaded = await fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${EMPRESA}`, { headers: { 'x-zelo-internal-key': 'valid' } });
     expect(loaded.status).toBe(200);
     expect(ordering.getSnapshot).toHaveBeenCalledWith(ORDERING);
+  });
+
+  it('devolve revogacao sem snapshot ou dados da conversa e com texto amigavel', async () => {
+    const ordering = {
+      apply: vi.fn(async () => {
+        throw new ConversationOrderingError(
+          'AI_TURN_REVOKED',
+          'Esta conversa passou para atendimento humano. Atualize antes de continuar.',
+        );
+      }),
+      getSnapshot: vi.fn(async () => snapshot()),
+    };
+    const { baseUrl } = await start({ ordering });
+
+    const response = await fetch(`${baseUrl}/internal/ordering/commands`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-zelo-internal-key': 'valid' },
+      body: JSON.stringify(validCommand()),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toEqual({
+      error: 'AI_TURN_REVOKED',
+      detail: 'Esta conversa passou para atendimento humano. Atualize antes de continuar.',
+      current: null,
+      requestId: 'request-gerado',
+    });
+    expect(JSON.stringify(body)).not.toMatch(/Supabase|RPC|epoch|control|5511999999999|10000000-/i);
   });
 
   it('limita por empresa sem misturar empresas distintas', async () => {

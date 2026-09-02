@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createConversationOrdering,
+  createConversationOrdering as createProductionConversationOrdering,
   ConversationOrderingError,
   jsonbSemanticallyEqual,
   type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
   type ConversationOrderDraft,
+  type ConversationAiPermit,
+  type ConversationOrderCommand,
   type DraftMaterialization,
   type DraftMutationResult,
   type OrderingRequirement,
@@ -15,7 +17,27 @@ import { bemServidoConversationCatalog } from './fixtures/bemServidoConversation
 
 const EMPRESA_A = '10000000-0000-4000-8000-000000000001';
 const JID_A = '5511999999999@s.whatsapp.net';
+const AI_PERMIT = {
+  conversationControlId: '60000000-0000-4000-8000-000000000001',
+  conversationEpoch: '42',
+} as const;
 const PICKUP_FULFILLMENT = { type: 'pickup' } as const;
+
+type TestConversationOrderCommand = ConversationOrderCommand extends infer Command
+  ? Command extends ConversationOrderCommand
+    ? Omit<Command, keyof ConversationAiPermit> & Partial<ConversationAiPermit>
+    : never
+  : never;
+
+function createConversationOrdering(...args: Parameters<typeof createProductionConversationOrdering>) {
+  const ordering = createProductionConversationOrdering(...args);
+  return {
+    ...ordering,
+    apply(command: TestConversationOrderCommand) {
+      return ordering.apply({ ...AI_PERMIT, ...command } as ConversationOrderCommand);
+    },
+  };
+}
 
 function materialization(productId = 10, unitPrice = 20, lineId = 'line-1'): DraftMaterialization {
   return {
@@ -80,6 +102,42 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   nextRequirements: OrderingRequirement[] = [];
   deliveryFeeToConfirm = false;
   forceReadyForConfirmation: boolean | null = null;
+  controlMode: 'ai' | 'human' = 'ai';
+  controlEpoch: string = AI_PERMIT.conversationEpoch;
+  revokeBeforeMutation: 'create' | 'update' | 'cancel' | 'confirm' | 'token' | null = null;
+  mutationPermits: Array<{
+    mutation: 'create' | 'update' | 'cancel' | 'confirm' | 'token';
+    conversationControlId: unknown;
+    conversationEpoch: unknown;
+  }> = [];
+
+  private fenceAiMutation(
+    mutation: 'create' | 'update' | 'cancel' | 'confirm' | 'token',
+    input: unknown,
+  ): void {
+    const candidate = input as Partial<typeof AI_PERMIT>;
+    this.mutationPermits.push({
+      mutation,
+      conversationControlId: candidate.conversationControlId,
+      conversationEpoch: candidate.conversationEpoch,
+    });
+    if (this.revokeBeforeMutation === mutation) {
+      this.revokeBeforeMutation = null;
+      this.controlMode = 'human';
+      this.controlEpoch = String(BigInt(this.controlEpoch) + 1n);
+    }
+    // Models the unsafe legacy path: a mutation without a permit bypasses the
+    // control row entirely. The RED test proves the domain currently does this.
+    if (candidate.conversationControlId === undefined || candidate.conversationEpoch === undefined) return;
+    if (candidate.conversationControlId !== AI_PERMIT.conversationControlId
+      || candidate.conversationEpoch !== this.controlEpoch
+      || this.controlMode !== 'ai') {
+      throw new ConversationOrderingError(
+        'AI_TURN_REVOKED',
+        'Esta conversa passou para atendimento humano. Atualize antes de continuar.',
+      );
+    }
+  }
 
   private roundTrip(record: ConversationOrderingRecord | null): ConversationOrderingRecord | null {
     if (!record || !this.reorderEveryRoundTrip) return record;
@@ -156,8 +214,9 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     return this.roundTrip(this.records.find((record) => record.orderingId === orderingId) ?? null);
   }
 
-  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'>): Promise<ConversationOrderingRecord> {
+  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
     await Promise.resolve();
+    this.fenceAiMutation('create', input);
     const existing = await this.findOpen(input.empresaId, input.remoteJid);
     if (existing) return existing;
     this.createCalls += 1;
@@ -180,7 +239,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     messageId: string;
     materialization: DraftMaterialization;
     pessoaId: string | null;
-  }): Promise<DraftMutationResult> {
+  } & ConversationAiPermit): Promise<DraftMutationResult> {
+    this.fenceAiMutation('update', input);
     const latest = await this.findByOrderingId(input.current.orderingId);
     if (!latest) throw new Error('missing');
     if (latest.processedMessageIds.includes(input.messageId)) return { kind: 'duplicate', record: latest };
@@ -194,7 +254,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     return { kind: 'applied', record: latest };
   }
 
-  async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string }): Promise<DraftMutationResult> {
+  async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string } & ConversationAiPermit): Promise<DraftMutationResult> {
+    this.fenceAiMutation('cancel', input);
     const latest = await this.findByOrderingId(input.current.orderingId);
     if (!latest) throw new Error('missing');
     if (latest.processedMessageIds.includes(input.messageId)) return { kind: 'duplicate', record: latest };
@@ -206,15 +267,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     return { kind: 'applied', record: latest };
   }
 
-  async persistRevalidation(input: {
-    current: ConversationOrderingRecord;
-    expectedRevision: number;
-    messageId: string;
-    materialization: DraftMaterialization;
-  }): Promise<DraftMutationResult> {
-    return this.updateOpen({ ...input, pessoaId: input.current.pessoaId });
-  }
-  async issueConfirmationToken(input: { current: ConversationOrderingRecord; tokenHash: string }) {
+  async issueConfirmationToken(input: { current: ConversationOrderingRecord; tokenHash: string } & ConversationAiPermit) {
+    this.fenceAiMutation('token', input);
     if (this.conflictNextIssuance) {
       this.conflictNextIssuance = false;
       input.current.revision += 1;
@@ -240,7 +294,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   async confirmAtomically(input: {
     current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
     tokenHash: string | null; pessoaId: string | null;
-  }) {
+  } & ConversationAiPermit) {
+    this.fenceAiMutation('confirm', input);
     const latest = await this.findByOrderingId(input.current.orderingId);
     if (!latest) throw new Error('missing');
     if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict' as const, record: latest };
@@ -278,6 +333,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     );
     if (!revalidated.revalidation.ok || !same) {
       const persisted = await this.updateOpen({
+        conversationControlId: input.conversationControlId,
+        conversationEpoch: input.conversationEpoch,
         current: latest, expectedRevision: input.expectedRevision, messageId: input.messageId,
         materialization: revalidated, pessoaId: input.pessoaId,
       });
@@ -298,6 +355,137 @@ class MemoryAdapter implements ConversationOrderingAdapter {
 }
 
 describe('ConversationOrdering', () => {
+  it('encaminha o permit atual sem converter o epoch em todas as mutações', async () => {
+    const updating = new MemoryAdapter();
+    const updatingOrdering = createConversationOrdering(updating, {
+      createRawConfirmationToken: (record) => `token-permit-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'a').slice(0, 64),
+    });
+    const opened = await updatingOrdering.apply({
+      ...AI_PERMIT,
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.permit-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+    await updatingOrdering.apply({
+      ...AI_PERMIT,
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.permit-update-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 2 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+    await updatingOrdering.apply({
+      ...AI_PERMIT,
+      type: 'cancel_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.permit-cancel-123456', orderingId: opened.orderingId, expectedRevision: 2,
+    });
+
+    const confirming = new MemoryAdapter();
+    confirming.autoAccept = false;
+    const confirmingOrdering = createConversationOrdering(confirming, {
+      createRawConfirmationToken: (record) => `token-permit-confirm-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'b').slice(0, 64),
+    });
+    const ready = await confirmingOrdering.apply({
+      ...AI_PERMIT,
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.permit-confirm-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+    await confirmingOrdering.apply({
+      ...AI_PERMIT,
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.permit-confirm-123456', orderingId: ready.orderingId, expectedRevision: 1,
+    });
+
+    expect(updating.mutationPermits).toEqual([
+      { mutation: 'create', ...AI_PERMIT },
+      { mutation: 'token', ...AI_PERMIT },
+      { mutation: 'update', ...AI_PERMIT },
+      { mutation: 'token', ...AI_PERMIT },
+      { mutation: 'cancel', ...AI_PERMIT },
+    ]);
+    expect(confirming.mutationPermits).toEqual([
+      { mutation: 'create', ...AI_PERMIT },
+      { mutation: 'token', ...AI_PERMIT },
+      { mutation: 'confirm', ...AI_PERMIT },
+    ]);
+  });
+
+  it.each(['create', 'update', 'cancel', 'confirm'] as const)(
+    'não grava quando a tomada humana ocorre imediatamente antes de $s',
+    async (mutation) => {
+      const adapter = new MemoryAdapter();
+      adapter.autoAccept = false;
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: (record) => `token-revoked-${mutation}-${record.revision}`,
+        hashConfirmationToken: (token) => token.padEnd(64, 'c').slice(0, 64),
+      });
+
+      let opened: Awaited<ReturnType<typeof ordering.apply>> | null = null;
+      if (mutation !== 'create') {
+        opened = await ordering.apply({
+          ...AI_PERMIT,
+          type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+          messageId: `wamid.revoked-${mutation}-open-123456`,
+          draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+        });
+      }
+      const before = structuredClone(adapter.records);
+      adapter.revokeBeforeMutation = mutation;
+
+      const command = mutation === 'create'
+        ? {
+          ...AI_PERMIT,
+          type: 'open_or_update_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
+          messageId: 'wamid.revoked-create-123456',
+          draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+        }
+        : mutation === 'update'
+          ? {
+            ...AI_PERMIT,
+            type: 'open_or_update_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
+            messageId: 'wamid.revoked-update-123456', orderingId: opened!.orderingId, expectedRevision: 1,
+            draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 2 }], fulfillment: PICKUP_FULFILLMENT },
+          }
+          : mutation === 'cancel'
+            ? {
+              ...AI_PERMIT,
+              type: 'cancel_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
+              messageId: 'wamid.revoked-cancel-123456', orderingId: opened!.orderingId, expectedRevision: 1,
+            }
+            : {
+              ...AI_PERMIT,
+              type: 'confirm_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
+              messageId: 'wamid.revoked-confirm-123456', orderingId: opened!.orderingId, expectedRevision: 1,
+            };
+
+      await expect(ordering.apply(command)).rejects.toMatchObject({
+        code: 'AI_TURN_REVOKED',
+        currentSnapshot: null,
+      });
+      expect(adapter.records).toEqual(before);
+    },
+  );
+
+  it('nao emite token de confirmacao se a tomada ocorrer depois do draft e antes da emissao', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.revokeBeforeMutation = 'token';
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record) => `token-revoked-issue-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'd').slice(0, 64),
+    });
+
+    await expect(ordering.apply({
+      ...AI_PERMIT,
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.revoked-token-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    })).rejects.toMatchObject({ code: 'AI_TURN_REVOKED', currentSnapshot: null });
+
+    expect(adapter.records).toHaveLength(1);
+    expect(adapter.tokenHashes).toEqual(new Map());
+  });
+
   it('preserva linhas estáveis do mesmo produto ao atualizar somente a segunda linha', async () => {
     const adapter = new MemoryAdapter();
     const ordering = createConversationOrdering(adapter, {

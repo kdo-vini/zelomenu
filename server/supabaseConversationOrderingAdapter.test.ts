@@ -18,6 +18,10 @@ vi.mock('./zelomenuCartSessions', async (importOriginal) => ({
 }));
 
 const EMPRESA = '10000000-0000-4000-8000-000000000001';
+const AI_PERMIT = {
+  conversationControlId: '60000000-0000-4000-8000-000000000001',
+  conversationEpoch: '42',
+} as const;
 
 const CUSTOMER_NAME_REQUIREMENT: ConversationOrderingRecord['requirements'][number] = {
   id: 'customer_name',
@@ -229,15 +233,18 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
 
     await expect(adapter.confirmAtomically({
       current,
+      ...AI_PERMIT,
       expectedRevision: 1,
       messageId: 'wamid.confirm-atomic-contract',
       tokenHash,
       idempotencyKey: 'whatsapp:session:message',
       pessoaId: '40000000-0000-4000-8000-000000000001',
     })).resolves.toEqual({ kind: 'requires_review', record: reviewed });
-    expect(rpc).toHaveBeenCalledWith('confirm_whatsapp_zelo_order_atomic_v1', {
+    expect(rpc).toHaveBeenCalledWith('confirm_whatsapp_zelo_order_with_ai_epoch_v1', {
       p_empresa_id: current.empresaId,
       p_source_ref: current.remoteJid,
+      p_conversation_control_id: AI_PERMIT.conversationControlId,
+      p_conversation_epoch: AI_PERMIT.conversationEpoch,
       p_session_id: current.sessionId,
       p_expected_revision: 1,
       p_message_id: 'wamid.confirm-atomic-contract',
@@ -252,7 +259,7 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
     const { adapter } = adapterWithRpc({ data: null, error: { message: 'function confirm_whatsapp_zelo_order_atomic_v1 does not exist' } });
 
     await expect(adapter.confirmAtomically({
-      current, expectedRevision: 1, messageId: 'wamid.missing-rpc-contract', tokenHash: null,
+      current, ...AI_PERMIT, expectedRevision: 1, messageId: 'wamid.missing-rpc-contract', tokenHash: null,
       idempotencyKey: 'whatsapp:session:missing', pessoaId: null,
     })).rejects.toMatchObject({ code: 'CONFIRMACAO_INDISPONIVEL', currentSnapshot: null });
   });
@@ -260,11 +267,133 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
   it('relê a sessão quando a emissão de token perde a revisão', async () => {
     const current = record();
     const latest = record({ revision: 2 });
-    const { adapter } = adapterWithRpc({ data: null, error: { message: 'SESSION_REVISION_MISMATCH' } }, latest);
+    const { adapter, rpc } = adapterWithRpc({ data: null, error: { message: 'SESSION_REVISION_MISMATCH' } }, latest);
 
-    await expect(adapter.issueConfirmationToken({ current, tokenHash: 'b'.repeat(64), expiresAt: '2026-08-30T12:10:00.000Z' }))
+    await expect(adapter.issueConfirmationToken({ current, ...AI_PERMIT, tokenHash: 'b'.repeat(64), expiresAt: '2026-08-30T12:10:00.000Z' }))
       .resolves.toEqual({ kind: 'conflict', record: latest });
+    expect(rpc).toHaveBeenCalledWith('issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1', {
+      p_token_hash: 'b'.repeat(64),
+      p_empresa_id: current.empresaId,
+      p_source_ref: current.remoteJid,
+      p_conversation_control_id: AI_PERMIT.conversationControlId,
+      p_conversation_epoch: AI_PERMIT.conversationEpoch,
+      p_session_id: current.sessionId,
+      p_expected_revision: current.revision,
+      p_expires_at: '2026-08-30T12:10:00.000Z',
+    });
   });
+
+  it('nao emite token depois de takeover', async () => {
+    const current = record();
+    const rpc = vi.fn(async () => ({ data: null, error: { message: 'AI_TURN_REVOKED' } }));
+    const adapter = new SupabaseConversationOrderingAdapter({ rpc } as never);
+
+    await expect(adapter.issueConfirmationToken({
+      current,
+      ...AI_PERMIT,
+      tokenHash: 'c'.repeat(64),
+      expiresAt: '2026-08-30T12:10:00.000Z',
+    })).rejects.toMatchObject({ code: 'AI_TURN_REVOKED', currentSnapshot: null });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fencing atomico do SupabaseConversationOrderingAdapter', () => {
+  it.each(['create', 'update', 'cancel', 'confirm'] as const)(
+    'nao executa escrita quando o controle e tomado imediatamente antes de %s',
+    async (mutation) => {
+      const current = record();
+      const confirmed = record({
+        state: 'confirmed_waiting_review',
+        order: {
+          id: '50000000-0000-4000-8000-000000000001',
+          status: 'pending_review',
+          revision: 1,
+          alreadyConfirmed: true,
+        },
+      });
+      const database = {
+        sessions: mutation === 'create' ? [] as Array<Record<string, unknown>> : [sessionRow(current)],
+        orders: [] as Array<Record<string, unknown>>,
+      };
+      const before = structuredClone(database);
+      const takeover = () => ({ mode: 'human' as const, epoch: '43' });
+      const directMutation = (kind: 'create' | 'update' | 'cancel') => {
+        takeover();
+        if (kind === 'create') database.sessions.push(sessionRow(current));
+        if (kind === 'update') database.sessions[0] = sessionRow(record({ revision: 2 }));
+        if (kind === 'cancel') database.sessions[0] = sessionRow(record({ state: 'cancelled', revision: 2, readyForConfirmation: false }));
+        const returned = chainReturning({ data: database.sessions.at(-1), error: null });
+        returned.select = vi.fn(() => returned);
+        return returned;
+      };
+      const from = vi.fn(() => ({
+        insert: vi.fn(() => directMutation('create')),
+        update: vi.fn(() => directMutation(mutation === 'cancel' ? 'cancel' : 'update')),
+      }));
+      const rpc = vi.fn(async (name: string) => {
+        takeover();
+        if (name.endsWith('_with_ai_epoch_v1')) {
+          return { data: null, error: { message: 'AI_TURN_REVOKED' } };
+        }
+        database.orders.push({ id: confirmed.order!.id, sessionId: current.sessionId });
+        return { data: { outcome: 'confirmed', alreadyConfirmed: true }, error: null };
+      });
+      const adapter = new SupabaseConversationOrderingAdapter({ from, rpc } as never);
+      Object.defineProperty(adapter, 'findRequired', { value: vi.fn(async () => confirmed) });
+      const materialization: DraftMaterialization = {
+        cart: current.cart,
+        customer: current.customer,
+        fulfillment: current.fulfillment,
+        pricing: current.pricing,
+        payment: current.payment,
+        revalidation: current.revalidation,
+        requirements: current.requirements,
+        readyForConfirmation: current.readyForConfirmation,
+      };
+
+      const result = mutation === 'create'
+        ? adapter.createOpen({
+          ...AI_PERMIT,
+          empresaId: current.empresaId,
+          remoteJid: current.remoteJid,
+          pessoaId: current.pessoaId,
+          processedMessageIds: ['wamid.revoked-create'],
+          ...materialization,
+        })
+        : mutation === 'update'
+          ? adapter.updateOpen({
+            ...AI_PERMIT,
+            current,
+            expectedRevision: 1,
+            messageId: 'wamid.revoked-update',
+            materialization,
+            pessoaId: null,
+          })
+          : mutation === 'cancel'
+            ? adapter.cancelOpen({
+              ...AI_PERMIT,
+              current,
+              expectedRevision: 1,
+              messageId: 'wamid.revoked-cancel',
+            })
+            : adapter.confirmAtomically({
+              ...AI_PERMIT,
+              current,
+              expectedRevision: 1,
+              messageId: 'wamid.revoked-confirm',
+              tokenHash: null,
+              idempotencyKey: 'whatsapp:revoked-confirm',
+              pessoaId: null,
+            });
+
+      await expect(result).rejects.toMatchObject({
+        code: 'AI_TURN_REVOKED',
+        currentSnapshot: null,
+      });
+      expect(database).toEqual(before);
+    },
+  );
 });
 
 describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
@@ -460,18 +589,18 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
     expect(select).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
   });
 
-  it('seleciona e persiste requisitos e prontidao ao criar a sessao', async () => {
+  it('persiste requisitos e prontidao pela RPC cercada ao criar a sessao', async () => {
     const expected = record({
       requirements: [CUSTOMER_NAME_REQUIREMENT],
       readyForConfirmation: false,
     });
-    const returned = chainReturning({ data: sessionRow(expected), error: null });
-    const select = vi.fn(() => returned);
-    const insert = vi.fn(() => ({ select }));
-    const from = vi.fn(() => ({ insert }));
-    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+    const { adapter, rpc } = adapterWithRpc({
+      data: { outcome: 'applied', orderingId: expected.orderingId },
+      error: null,
+    }, expected);
 
     const created = await adapter.createOpen({
+      ...AI_PERMIT,
       empresaId: expected.empresaId,
       remoteJid: expected.remoteJid,
       pessoaId: expected.pessoaId,
@@ -486,35 +615,36 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
       readyForConfirmation: expected.readyForConfirmation,
     });
 
-    expect(select).toHaveBeenCalledWith(expect.stringContaining('requirements_snapshot'));
-    expect(select).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
-      requirements_snapshot: [CUSTOMER_NAME_REQUIREMENT],
-      ready_for_confirmation: false,
-    }));
+    expect(rpc).toHaveBeenCalledWith('zelomenu_open_whatsapp_order_with_ai_epoch_v1', {
+      p_empresa_id: expected.empresaId,
+      p_source_ref: expected.remoteJid,
+      p_conversation_control_id: AI_PERMIT.conversationControlId,
+      p_conversation_epoch: AI_PERMIT.conversationEpoch,
+      p_customer_snapshot: expected.customer,
+      p_cart_snapshot: expected.cart,
+      p_fulfillment_snapshot: expected.fulfillment,
+      p_pricing_snapshot: expected.pricing,
+      p_payment_snapshot: expected.payment,
+      p_metadata: { pessoaId: expected.pessoaId, processedMessageIds: expected.processedMessageIds },
+      p_last_revalidated_at: expected.revalidation.checkedAt,
+      p_last_revalidation: expected.revalidation,
+      p_requirements_snapshot: [CUSTOMER_NAME_REQUIREMENT],
+      p_ready_for_confirmation: false,
+    });
     expect(created).toMatchObject({
       requirements: [CUSTOMER_NAME_REQUIREMENT],
       readyForConfirmation: false,
     });
   });
 
-  it('persiste a nova materializacao e preserva o snapshot armazenado ao perder o CAS', async () => {
+  it('envia a nova materializacao para a RPC cercada e preserva o snapshot ao perder o CAS', async () => {
     const current = record({ requirements: [CUSTOMER_NAME_REQUIREMENT], readyForConfirmation: false });
     const stored = record({
       revision: 2,
       requirements: [PAYMENT_METHOD_REQUIREMENT],
       readyForConfirmation: false,
     });
-    const updateResult = chainReturning({ data: null, error: null });
-    const updateSelect = vi.fn(() => updateResult);
-    updateResult.select = updateSelect;
-    const update = vi.fn(() => updateResult);
-    const reloadResult = chainReturning({ data: sessionRow(stored), error: null });
-    const reloadSelect = vi.fn(() => reloadResult);
-    const from = vi.fn()
-      .mockReturnValueOnce({ update })
-      .mockReturnValueOnce({ select: reloadSelect });
-    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+    const { adapter, rpc } = adapterWithRpc({ data: { outcome: 'conflict' }, error: null }, stored);
     const materialization: DraftMaterialization = {
       cart: current.cart,
       customer: current.customer,
@@ -528,20 +658,32 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
 
     const result = await adapter.updateOpen({
       current,
+      ...AI_PERMIT,
       expectedRevision: current.revision,
       messageId: 'wamid.requirements-cas-conflict',
       materialization,
       pessoaId: current.pessoaId,
     });
 
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      requirements_snapshot: [PAYMENT_METHOD_REQUIREMENT],
-      ready_for_confirmation: false,
-    }));
-    expect(updateSelect).toHaveBeenCalledWith(expect.stringContaining('requirements_snapshot'));
-    expect(updateSelect).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
-    expect(reloadSelect).toHaveBeenCalledWith(expect.stringContaining('requirements_snapshot'));
-    expect(reloadSelect).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
+    expect(rpc).toHaveBeenCalledWith('zelomenu_update_whatsapp_order_with_ai_epoch_v1', {
+      p_empresa_id: current.empresaId,
+      p_source_ref: current.remoteJid,
+      p_conversation_control_id: AI_PERMIT.conversationControlId,
+      p_conversation_epoch: AI_PERMIT.conversationEpoch,
+      p_session_id: current.sessionId,
+      p_expected_revision: current.revision,
+      p_message_id: 'wamid.requirements-cas-conflict',
+      p_customer_snapshot: materialization.customer,
+      p_cart_snapshot: materialization.cart,
+      p_fulfillment_snapshot: materialization.fulfillment,
+      p_pricing_snapshot: materialization.pricing,
+      p_payment_snapshot: materialization.payment,
+      p_last_revalidated_at: materialization.revalidation.checkedAt,
+      p_last_revalidation: materialization.revalidation,
+      p_requirements_snapshot: [PAYMENT_METHOD_REQUIREMENT],
+      p_ready_for_confirmation: false,
+      p_metadata: { pessoaId: current.pessoaId, processedMessageIds: [...current.processedMessageIds, 'wamid.requirements-cas-conflict'] },
+    });
     expect(result).toMatchObject({
       kind: 'conflict',
       record: {
@@ -552,7 +694,39 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
     });
   });
 
-  it('limpa a prontidao ao cancelar uma sessao pronta', async () => {
+  it('aplica update quando o permit de epoch ainda e atual', async () => {
+    const current = record({ requirements: [CUSTOMER_NAME_REQUIREMENT], readyForConfirmation: false });
+    const updated = record({ revision: 2, requirements: [PAYMENT_METHOD_REQUIREMENT], readyForConfirmation: false });
+    const { adapter, rpc } = adapterWithRpc({ data: { outcome: 'applied' }, error: null }, updated);
+    const materialization: DraftMaterialization = {
+      cart: current.cart,
+      customer: current.customer,
+      fulfillment: current.fulfillment,
+      pricing: current.pricing,
+      payment: current.payment,
+      revalidation: current.revalidation,
+      requirements: updated.requirements,
+      readyForConfirmation: false,
+    };
+
+    await expect(adapter.updateOpen({
+      ...AI_PERMIT,
+      current,
+      expectedRevision: 1,
+      messageId: 'wamid.current-permit-update',
+      materialization,
+      pessoaId: null,
+    })).resolves.toEqual({ kind: 'applied', record: updated });
+    expect(rpc).toHaveBeenCalledWith(
+      'zelomenu_update_whatsapp_order_with_ai_epoch_v1',
+      expect.objectContaining({
+        p_conversation_control_id: AI_PERMIT.conversationControlId,
+        p_conversation_epoch: '42',
+      }),
+    );
+  });
+
+  it('limpa a prontidao pela RPC cercada ao cancelar uma sessao pronta', async () => {
     const current = record({ requirements: [], readyForConfirmation: true });
     const cancelled = record({
       state: 'cancelled',
@@ -560,25 +734,31 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
       requirements: [],
       readyForConfirmation: false,
     });
-    const updateResult = chainReturning({ data: sessionRow(cancelled), error: null });
-    const select = vi.fn(() => updateResult);
-    updateResult.select = select;
-    const update = vi.fn(() => updateResult);
-    const from = vi.fn(() => ({ update }));
-    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+    const { adapter, rpc } = adapterWithRpc({ data: { outcome: 'applied' }, error: null }, cancelled);
 
     await expect(adapter.cancelOpen({
       current,
+      ...AI_PERMIT,
       expectedRevision: current.revision,
       messageId: 'wamid.cancel-ready-order',
     })).resolves.toMatchObject({
       kind: 'applied',
       record: { state: 'cancelled', readyForConfirmation: false },
     });
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      state: 'cancelled',
-      ready_for_confirmation: false,
-    }));
+    expect(rpc).toHaveBeenCalledWith('zelomenu_cancel_whatsapp_order_with_ai_epoch_v1', {
+      p_empresa_id: current.empresaId,
+      p_source_ref: current.remoteJid,
+      p_conversation_control_id: AI_PERMIT.conversationControlId,
+      p_conversation_epoch: AI_PERMIT.conversationEpoch,
+      p_session_id: current.sessionId,
+      p_expected_revision: current.revision,
+      p_message_id: 'wamid.cancel-ready-order',
+      p_metadata: {
+        pessoaId: current.pessoaId,
+        processedMessageIds: [...current.processedMessageIds, 'wamid.cancel-ready-order'],
+        cancellationReason: 'explicit_command',
+      },
+    });
   });
 });
 
@@ -597,5 +777,35 @@ describe('migration de snapshots parciais', () => {
     expect(sql).toContain(`revoke all on function ${functionName} from public, anon, authenticated;`);
     expect(sql.indexOf('create trigger zelomenu_cart_sessions_clear_terminal_readiness'))
       .toBeLessThan(sql.indexOf('add constraint zelomenu_cart_sessions_ready_for_confirmation_state_check'));
+  });
+});
+
+describe('migration de fencing por epoch', () => {
+  it('trava o controle compartilhado real e cerca todas as escritas com RPCs server-only', () => {
+    const sql = readFileSync(
+      'supabase/migrations/20260902130000_fence_conversation_ordering_with_ai_epoch.sql',
+      'utf8',
+    );
+
+    expect(sql).toContain("to_regclass('public.zelochat_conversation_ai_control')");
+    expect(sql).toContain("to_regclass('public.zelochat_sessions')");
+    expect(sql).not.toContain('create table public.zelochat_conversation_control');
+    expect(sql).toMatch(/execute[\s\S]+from public\.zelochat_conversation_ai_control c[\s\S]+for update of c/is);
+    expect(sql).toMatch(/s\.empresa_id = \$1[\s\S]+s\.remote_jid = \$3[\s\S]+s\.conversation_control_id = c\.id/is);
+    expect(sql).toMatch(/v_epoch is distinct from p_conversation_epoch[\s\S]+v_mode is distinct from 'ai'/is);
+    expect(sql).toContain("message = 'AI_TURN_REVOKED'");
+
+    for (const functionName of [
+      'zelomenu_open_whatsapp_order_with_ai_epoch_v1',
+      'zelomenu_update_whatsapp_order_with_ai_epoch_v1',
+      'zelomenu_cancel_whatsapp_order_with_ai_epoch_v1',
+      'issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1',
+      'confirm_whatsapp_zelo_order_with_ai_epoch_v1',
+    ]) {
+      expect(sql).toContain(`create or replace function public.${functionName}(`);
+      expect(sql).toContain(`revoke all on function public.${functionName}`);
+      expect(sql).toMatch(new RegExp(`grant execute on function public\\.${functionName}[\\s\\S]+to service_role;`, 'i'));
+    }
+    expect(sql).toMatch(/confirm_whatsapp_zelo_order_atomic_v1[\s\S]+p_empresa_id[\s\S]+p_source_ref/is);
   });
 });

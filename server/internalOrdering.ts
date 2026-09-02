@@ -20,6 +20,13 @@ const JID = /^\d{8,20}@(s\.whatsapp\.net|c\.us)$/;
 const MESSAGE_ID = /^[\x21-\x7e]{8,200}$/;
 const OPTION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_BIGINT_DECIMAL = '9223372036854775807';
+
+function isConversationEpoch(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^(0|[1-9]\d{0,18})$/.test(value)
+    && (value.length < MAX_BIGINT_DECIMAL.length || value <= MAX_BIGINT_DECIMAL);
+}
 
 function text(value: unknown, max: number): string | null | undefined {
   if (value == null) return value === null ? null : undefined;
@@ -146,7 +153,19 @@ export function parseInternalOrderingCommand(input: unknown): ParseResult {
   if (typeof row.empresaId !== 'string' || !UUID.test(row.empresaId)) return { ok: false, message: 'Informe uma empresa válida.' };
   if (typeof row.remoteJid !== 'string' || !JID.test(row.remoteJid)) return { ok: false, message: 'Informe uma conversa válida.' };
   if (typeof row.messageId !== 'string' || !MESSAGE_ID.test(row.messageId)) return { ok: false, message: 'Informe uma mensagem válida.' };
-  const identity = { empresaId: row.empresaId, remoteJid: row.remoteJid, messageId: row.messageId };
+  if (typeof row.conversationControlId !== 'string' || !UUID.test(row.conversationControlId)) {
+    return { ok: false, message: 'Informe um controle válido para a conversa.' };
+  }
+  if (!isConversationEpoch(row.conversationEpoch)) {
+    return { ok: false, message: 'Informe uma versão válida da conversa.' };
+  }
+  const identity = {
+    empresaId: row.empresaId,
+    remoteJid: row.remoteJid,
+    messageId: row.messageId,
+    conversationControlId: row.conversationControlId,
+    conversationEpoch: row.conversationEpoch,
+  };
 
   if (row.type === 'open_or_update_draft') {
     const draft = parseDraft(row.draft);
@@ -169,7 +188,7 @@ export function parseInternalOrderingCommand(input: unknown): ParseResult {
 function sendOrderingError(error: unknown, res: Response): void {
   if (error instanceof ConversationOrderingError) {
     const status = error.code === 'PEDIDO_NAO_ENCONTRADO' ? 404
-      : error.code === 'REVISAO_DESATUALIZADA' || error.code === 'RESUMO_EXPIRADO' || error.code === 'PEDIDO_EM_ANDAMENTO' || error.code === 'PEDIDO_FECHADO' || error.code === 'CONFIRMACAO_INVALIDA' ? 409
+      : error.code === 'REVISAO_DESATUALIZADA' || error.code === 'RESUMO_EXPIRADO' || error.code === 'PEDIDO_EM_ANDAMENTO' || error.code === 'PEDIDO_FECHADO' || error.code === 'CONFIRMACAO_INVALIDA' || error.code === 'AI_TURN_REVOKED' ? 409
       : 400;
     res.status(status).json({ error: error.code, detail: error.message, current: error.currentSnapshot, requestId: res.locals.requestId });
     return;
