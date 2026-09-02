@@ -14,7 +14,7 @@ import { getServiceSupabase } from './supabaseServer.js';
 import { applyZeloMenuAutoAccept, materializeWhatsAppOrderDraft, type ZeloMenuCartState } from './zelomenuCartSessions.js';
 import { deriveConversationConfirmationToken, hashConversationConfirmationToken } from './conversationConfirmationToken.js';
 
-const SESSION_COLUMNS = 'id, empresa_id, ordering_id, context, state, source_ref, customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation, archived_at, updated_at';
+const SESSION_COLUMNS = 'id, empresa_id, ordering_id, context, state, source_ref, customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation, requirements_snapshot, ready_for_confirmation, archived_at, updated_at';
 
 type SessionRow = {
   id: string;
@@ -32,6 +32,8 @@ type SessionRow = {
   revision: number;
   last_revalidated_at: string | null;
   last_revalidation: ConversationOrderingRecord['revalidation'] | null;
+  requirements_snapshot: ConversationOrderingRecord['requirements'];
+  ready_for_confirmation: boolean;
   archived_at: string | null;
   updated_at: string;
 };
@@ -101,6 +103,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   private async mapRow(row: SessionRow): Promise<ConversationOrderingRecord> {
     const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
     const state = safeState(row.state);
+    const hasRequirementsSnapshot = Array.isArray(row.requirements_snapshot);
     return {
       sessionId: row.id,
       orderingId: row.ordering_id,
@@ -117,8 +120,8 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       pessoaId: typeof metadata.pessoaId === 'string' ? metadata.pessoaId : null,
       processedMessageIds: processedMessageIds(metadata),
       revalidation: row.last_revalidation ?? { checkedAt: row.last_revalidated_at ?? new Date(0).toISOString(), ok: true, issues: [] },
-      requirements: [],
-      readyForConfirmation: false,
+      requirements: hasRequirementsSnapshot ? row.requirements_snapshot : [],
+      readyForConfirmation: hasRequirementsSnapshot && row.ready_for_confirmation === true,
       order: state === 'cart_open' || state === 'cancelled' || state === 'archived' ? null : await this.loadOrder(row.id),
     };
   }
@@ -175,6 +178,8 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       revision: 1,
       last_revalidated_at: input.revalidation.checkedAt,
       last_revalidation: input.revalidation,
+      requirements_snapshot: input.requirements,
+      ready_for_confirmation: input.readyForConfirmation,
       created_at: now,
       updated_at: now,
     }).select(SESSION_COLUMNS).maybeSingle();
@@ -197,6 +202,8 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       payment_snapshot: input.materialization.payment,
       last_revalidated_at: input.materialization.revalidation.checkedAt,
       last_revalidation: input.materialization.revalidation,
+      requirements_snapshot: input.materialization.requirements,
+      ready_for_confirmation: input.materialization.readyForConfirmation,
       metadata: nextMetadata({ ...input.current, pessoaId: input.pessoaId }, input.messageId),
     });
   }

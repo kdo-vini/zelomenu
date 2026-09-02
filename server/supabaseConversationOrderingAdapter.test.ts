@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ConversationOrderingRecord } from './conversationOrdering';
+import type { ConversationOrderingRecord, DraftMaterialization } from './conversationOrdering';
 import { SupabaseConversationOrderingAdapter } from './supabaseConversationOrderingAdapter';
 import { deriveModifierRequirements } from './conversationOrderRequirements';
 import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog';
@@ -17,6 +17,20 @@ vi.mock('./zelomenuCartSessions', async (importOriginal) => ({
 }));
 
 const EMPRESA = '10000000-0000-4000-8000-000000000001';
+
+const CUSTOMER_NAME_REQUIREMENT: ConversationOrderingRecord['requirements'][number] = {
+  id: 'customer_name',
+  type: 'customer_name',
+  name: 'Informe o nome para o pedido.',
+  blocking: true,
+};
+
+const PAYMENT_METHOD_REQUIREMENT: ConversationOrderingRecord['requirements'][number] = {
+  id: 'payment_method',
+  type: 'payment_method',
+  name: 'Escolha a forma de pagamento.',
+  blocking: true,
+};
 
 function record(overrides: Partial<ConversationOrderingRecord> = {}): ConversationOrderingRecord {
   return {
@@ -47,6 +61,39 @@ function adapterWithRpc(result: { data: unknown; error: { message: string } | nu
   const adapter = new SupabaseConversationOrderingAdapter({ rpc } as never);
   Object.defineProperty(adapter, 'findRequired', { value: vi.fn(async () => refreshed) });
   return { adapter, rpc };
+}
+
+function sessionRow(snapshot: ConversationOrderingRecord) {
+  return {
+    id: snapshot.sessionId,
+    empresa_id: snapshot.empresaId,
+    ordering_id: snapshot.orderingId,
+    context: 'whatsapp_order',
+    state: snapshot.state,
+    source_ref: snapshot.remoteJid,
+    customer_snapshot: snapshot.customer,
+    cart_snapshot: snapshot.cart,
+    fulfillment_snapshot: snapshot.fulfillment,
+    pricing_snapshot: snapshot.pricing,
+    payment_snapshot: snapshot.payment,
+    metadata: { pessoaId: snapshot.pessoaId, processedMessageIds: snapshot.processedMessageIds },
+    revision: snapshot.revision,
+    last_revalidated_at: snapshot.revalidation.checkedAt,
+    last_revalidation: snapshot.revalidation,
+    requirements_snapshot: snapshot.requirements,
+    ready_for_confirmation: snapshot.readyForConfirmation,
+    archived_at: null,
+    updated_at: snapshot.updatedAt,
+  };
+}
+
+function chainReturning(result: { data: unknown; error: unknown }) {
+  const query: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const method of ['eq', 'contains', 'order', 'limit']) {
+    query[method] = vi.fn(() => query);
+  }
+  query.maybeSingle = vi.fn(async () => result);
+  return query;
 }
 
 describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
@@ -152,5 +199,130 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
 
     await expect(adapter.issueConfirmationToken({ current, tokenHash: 'b'.repeat(64), expiresAt: '2026-08-30T12:10:00.000Z' }))
       .resolves.toEqual({ kind: 'conflict', record: latest });
+  });
+});
+
+describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
+  it('mantem linhas legadas sem materializacao confiavel fechadas para confirmacao', async () => {
+    const stored = record({ requirements: [], readyForConfirmation: true });
+    const legacyRow = sessionRow(stored) as Record<string, unknown>;
+    delete legacyRow.requirements_snapshot;
+    delete legacyRow.ready_for_confirmation;
+    const returned = chainReturning({ data: legacyRow, error: null });
+    const select = vi.fn(() => returned);
+    const from = vi.fn(() => ({ select }));
+    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+
+    await expect(adapter.findByOrderingId(stored.orderingId)).resolves.toMatchObject({
+      requirements: [],
+      readyForConfirmation: false,
+    });
+  });
+
+  it('restaura requisitos e prontidao armazenados ao reler uma sessao materializada', async () => {
+    const stored = record({ requirements: [], readyForConfirmation: true });
+    const returned = chainReturning({ data: sessionRow(stored), error: null });
+    const select = vi.fn(() => returned);
+    const from = vi.fn(() => ({ select }));
+    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+
+    await expect(adapter.findByOrderingId(stored.orderingId)).resolves.toMatchObject({
+      requirements: [],
+      readyForConfirmation: true,
+    });
+    expect(select).toHaveBeenCalledWith(expect.stringContaining('requirements_snapshot'));
+    expect(select).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
+  });
+
+  it('seleciona e persiste requisitos e prontidao ao criar a sessao', async () => {
+    const expected = record({
+      requirements: [CUSTOMER_NAME_REQUIREMENT],
+      readyForConfirmation: false,
+    });
+    const returned = chainReturning({ data: sessionRow(expected), error: null });
+    const select = vi.fn(() => returned);
+    const insert = vi.fn(() => ({ select }));
+    const from = vi.fn(() => ({ insert }));
+    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+
+    const created = await adapter.createOpen({
+      empresaId: expected.empresaId,
+      remoteJid: expected.remoteJid,
+      pessoaId: expected.pessoaId,
+      processedMessageIds: expected.processedMessageIds,
+      customer: expected.customer,
+      cart: expected.cart,
+      fulfillment: expected.fulfillment,
+      pricing: expected.pricing,
+      payment: expected.payment,
+      revalidation: expected.revalidation,
+      requirements: expected.requirements,
+      readyForConfirmation: expected.readyForConfirmation,
+    });
+
+    expect(select).toHaveBeenCalledWith(expect.stringContaining('requirements_snapshot'));
+    expect(select).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
+      requirements_snapshot: [CUSTOMER_NAME_REQUIREMENT],
+      ready_for_confirmation: false,
+    }));
+    expect(created).toMatchObject({
+      requirements: [CUSTOMER_NAME_REQUIREMENT],
+      readyForConfirmation: false,
+    });
+  });
+
+  it('persiste a nova materializacao e preserva o snapshot armazenado ao perder o CAS', async () => {
+    const current = record({ requirements: [CUSTOMER_NAME_REQUIREMENT], readyForConfirmation: false });
+    const stored = record({
+      revision: 2,
+      requirements: [PAYMENT_METHOD_REQUIREMENT],
+      readyForConfirmation: false,
+    });
+    const updateResult = chainReturning({ data: null, error: null });
+    const updateSelect = vi.fn(() => updateResult);
+    updateResult.select = updateSelect;
+    const update = vi.fn(() => updateResult);
+    const reloadResult = chainReturning({ data: sessionRow(stored), error: null });
+    const reloadSelect = vi.fn(() => reloadResult);
+    const from = vi.fn()
+      .mockReturnValueOnce({ update })
+      .mockReturnValueOnce({ select: reloadSelect });
+    const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
+    const materialization: DraftMaterialization = {
+      cart: current.cart,
+      customer: current.customer,
+      fulfillment: current.fulfillment,
+      pricing: current.pricing,
+      payment: current.payment,
+      revalidation: current.revalidation,
+      requirements: [PAYMENT_METHOD_REQUIREMENT],
+      readyForConfirmation: false,
+    };
+
+    const result = await adapter.updateOpen({
+      current,
+      expectedRevision: current.revision,
+      messageId: 'wamid.requirements-cas-conflict',
+      materialization,
+      pessoaId: current.pessoaId,
+    });
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      requirements_snapshot: [PAYMENT_METHOD_REQUIREMENT],
+      ready_for_confirmation: false,
+    }));
+    expect(updateSelect).toHaveBeenCalledWith(expect.stringContaining('requirements_snapshot'));
+    expect(updateSelect).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
+    expect(reloadSelect).toHaveBeenCalledWith(expect.stringContaining('requirements_snapshot'));
+    expect(reloadSelect).toHaveBeenCalledWith(expect.stringContaining('ready_for_confirmation'));
+    expect(result).toMatchObject({
+      kind: 'conflict',
+      record: {
+        revision: 2,
+        requirements: [PAYMENT_METHOD_REQUIREMENT],
+        readyForConfirmation: false,
+      },
+    });
   });
 });
