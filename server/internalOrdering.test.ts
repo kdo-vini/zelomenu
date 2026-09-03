@@ -734,3 +734,42 @@ describe('rotas internas de ordering', () => {
     await expect(limited.json()).resolves.toMatchObject({ error: 'MUITAS_REQUISICOES', requestId: 'request-gerado' });
   });
 });
+describe('mapeamento de prontidao', () => {
+  it('mapeia confirmacao nao pronta para 400 com detalhe seguro e snapshot bloqueado', async () => {
+    const current = snapshot();
+    current.readyForConfirmation = false;
+    current.confirmationAction = null;
+    const ordering = {
+      apply: vi.fn(async () => {
+        throw new ConversationOrderingError(
+          'PEDIDO_INVALIDO',
+          'Revise os dados pendentes antes de confirmar.',
+          current,
+        );
+      }),
+      getSnapshot: vi.fn(async () => current),
+    };
+    const { baseUrl } = await start({ ordering });
+
+    const response = await fetch(baseUrl + '/internal/ordering/commands', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-request-id': 'req-not-ready-1', 'x-zelo-internal-key': 'valid' },
+      body: JSON.stringify({
+        ...validCommand(),
+        type: 'confirm_draft',
+        orderingId: ORDERING,
+        expectedRevision: 1,
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error: 'PEDIDO_INVALIDO',
+      detail: 'Revise os dados pendentes antes de confirmar.',
+      current: { readyForConfirmation: false, confirmationAction: null },
+      requestId: 'req-not-ready-1',
+    });
+    expect(JSON.stringify(body)).not.toMatch(/Supabase|RPC|ORDER_NOT_READY|token_hash/i);
+  });
+});

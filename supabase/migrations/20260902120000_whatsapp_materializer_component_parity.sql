@@ -12,6 +12,7 @@ as $$
 declare
   v_owner uuid;
   v_item jsonb;
+  v_line_id text;
   v_item_quantity integer;
   v_product record;
   v_group record;
@@ -77,6 +78,21 @@ begin
 
   for v_item in select value from jsonb_array_elements(p_cart->'items') loop
     v_item_issues := jsonb_array_length(v_issues);
+    v_line_id := nullif(v_item->>'lineId', '');
+    if coalesce(jsonb_typeof(v_item->'lineId') = 'string', false) = false
+       or v_line_id is null
+       or v_line_id !~ '^[A-Za-z0-9_-]{1,64}$'
+       or (
+         select count(*)
+           from jsonb_array_elements(p_cart->'items') duplicate_item
+          where duplicate_item->>'lineId' = v_line_id
+       ) > 1 then
+      v_issues := v_issues || jsonb_build_array(jsonb_build_object(
+        'code', 'line_id_invalid',
+        'lineId', v_item->>'lineId'
+      ));
+      continue;
+    end if;
     if coalesce(v_item->>'productId', '') !~ '^\d+$'
        or coalesce(v_item->>'quantity', '') !~ '^[1-9]\d{0,2}$' then
       v_issues := v_issues || jsonb_build_array(jsonb_build_object('code', 'item_invalid'));
@@ -315,6 +331,7 @@ begin
     v_unit_price := round(coalesce(v_base_override, v_base_price) + v_additions, 2);
     v_line_total := round(v_unit_price * v_item_quantity, 2);
     v_cart := jsonb_set(v_cart, '{items}', (v_cart->'items') || jsonb_build_array(jsonb_build_object(
+      'lineId', v_line_id,
       'productId', v_product.id,
       'productName', v_product.public_name,
       'baseUnitPrice', v_base_price,

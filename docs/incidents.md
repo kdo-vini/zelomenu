@@ -39,6 +39,14 @@ mesma confirmação atômica, sem manter uma segunda materialização —
 - Antes do deploy, executar todas as migrations/testes/lint em Supabase local;
   banco linked não é substituto autorizado para esse gate.
 
+### Correção de autoridade da confirmação conversacional (Fix 1)
+
+O fluxo mantém o `lineId` opaco de cada linha, rejeita IDs ausentes, inválidos ou
+duplicados e só permite emitir token ou confirmar uma revisão semanticamente pronta.
+O guard Node é de UX; a mesma validação ocorre na RPC server-only sob lock. A
+migration 140000 e os testes SQL são versionados, mas a execução local do banco
+permanece gate pré-deploy.
+
 ## 0. Visibilidade do PDV não é publicação online
 
 `produtos.ocultar_no_pdv` é somente o controle interno de venda manual do

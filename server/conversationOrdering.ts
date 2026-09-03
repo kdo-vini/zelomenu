@@ -202,22 +202,61 @@ function validateDraftLineIds(draft: ConversationOrderDraft): void {
 
 function requirementsWithFulfillment(
   requirements: readonly OrderingRequirement[] | undefined,
-  fulfillment: ConversationFulfillmentSnapshot,
+  fulfillment: ConversationFulfillmentSnapshot | null | undefined,
 ): OrderingRequirement[] {
-  const normalized = [...(requirements ?? [])];
-  if (fulfillment.type === null && !normalized.some((requirement) => requirement.type === 'fulfillment_type')) {
+  const normalized = Array.isArray(requirements) ? [...requirements] : [];
+  if (fulfillment?.type !== 'pickup' && fulfillment?.type !== 'delivery'
+    && !normalized.some((requirement) => Boolean(requirement)
+      && typeof requirement === 'object' && requirement.type === 'fulfillment_type')) {
     normalized.push(FULFILLMENT_TYPE_REQUIREMENT);
   }
   return normalized;
 }
 
+function isNonBlank(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasBooleanBlockingFlag(value: unknown): value is { blocking: boolean } {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+    && typeof (value as { blocking?: unknown }).blocking === 'boolean';
+}
+
 function normalizeReadiness<T extends DraftMaterialization>(materialization: T): T {
   const requirements = requirementsWithFulfillment(materialization.requirements, materialization.fulfillment);
+  const requirementsAreWellFormed = Array.isArray(materialization.requirements)
+    && materialization.requirements.every(hasBooleanBlockingFlag);
+  const fulfillment = materialization.fulfillment;
+  const hasCompleteDeliveryAddress = fulfillment?.type !== 'delivery'
+    || (
+      (isNonBlank(fulfillment?.deliveryAddress) || isNonBlank(fulfillment?.deliveryStreet))
+      && isNonBlank(fulfillment?.deliveryNumber)
+      && isNonBlank(fulfillment?.deliveryNeighborhood)
+    );
+  const hasCompleteSchedule = typeof fulfillment?.asap === 'boolean'
+    && (fulfillment.asap !== false
+    || (isNonBlank(fulfillment?.pickupDate) && isNonBlank(fulfillment?.pickupTime)));
+  const hasValidRevalidation = isNonBlank(materialization.revalidation?.checkedAt)
+    && materialization.revalidation?.ok === true
+    && Array.isArray(materialization.revalidation?.issues)
+    && materialization.revalidation.issues.length === 0;
+  const revalidationIssues = Array.isArray(materialization.revalidation?.issues)
+    ? materialization.revalidation.issues
+    : null;
+  const hasBlockingRequirement = requirements.some((requirement) => (
+    !hasBooleanBlockingFlag(requirement) || requirement.blocking
+  ));
   const readyForConfirmation = materialization.readyForConfirmation === true
-    && materialization.fulfillment.type !== null
-    && !materialization.fulfillment.deliveryFeeToConfirm
-    && materialization.revalidation.ok
-    && !requirements.some((requirement) => requirement.blocking);
+    && requirementsAreWellFormed
+    && (fulfillment?.type === 'pickup' || fulfillment?.type === 'delivery')
+    && hasCompleteDeliveryAddress
+    && hasCompleteSchedule
+    && isNonBlank(materialization.customer?.name)
+    && isNonBlank(materialization.payment?.declaredMethod)
+    && fulfillment?.deliveryFeeToConfirm === false
+    && hasValidRevalidation
+    && revalidationIssues !== null
+    && !hasBlockingRequirement;
   return { ...materialization, requirements, readyForConfirmation };
 }
 
@@ -476,6 +515,14 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (current.order) return toSnapshot(current);
     if (current.state !== 'cart_open') throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
 
+    const normalizedCurrent = normalizeReadiness(current);
+    if (!normalizedCurrent.readyForConfirmation) {
+      throw new ConversationOrderingError(
+        'PEDIDO_INVALIDO',
+        'Revise os dados pendentes antes de confirmar.',
+        toSnapshot(normalizedCurrent),
+      );
+    }
     const idempotencyKey = `whatsapp:${current.sessionId}:${command.messageId}`;
     const result = await adapter.confirmAtomically({
       current,

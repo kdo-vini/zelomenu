@@ -218,3 +218,12 @@ ZeloChat.
 - **Toast feedback:** Use `ToastContext` for all user-facing feedback (success/error/info); use `console.warn/error` for debugging
 - **Deployment:** Push to `master` → Dokploy auto-deploys. Ask before pushing.
 - **Type checking is the linter:** Run `npm run lint` (tsc --noEmit) to catch errors — there is no ESLint
+
+## Invariantes da confirmacao conversacional (Fix 1)
+
+Linhas do carrinho conversacional preservam o `lineId` opaco fornecido pelo chamador.
+O materializador SQL valida formato e unicidade e nunca reconstrói a identidade pela
+posição no array. Em qualquer confirmação, emissão de token e RPC atômica exigem,
+sob o lock da sessão, prontidão semântica: nome do cliente, forma de pagamento,
+modalidade explícita, endereço/agendamento aplicável, revalidação sem erros,
+nenhuma exigência bloqueante e taxa de entrega já resolvida.

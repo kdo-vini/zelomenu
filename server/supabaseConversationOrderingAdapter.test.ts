@@ -105,11 +105,11 @@ function record(overrides: Partial<ConversationOrderingRecord> = {}): Conversati
     updatedAt: '2026-08-30T12:00:00.000Z',
     pessoaId: null,
     processedMessageIds: ['wamid.open-atomic-contract'],
-    customer: { name: null, phone: null },
+    customer: { name: 'Cliente de teste', phone: null },
     cart: { items: [], observations: null },
     fulfillment: { type: 'pickup', asap: true, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryFee: 0, deliveryFeeToConfirm: false },
     pricing: { subtotal: 0, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 0 },
-    payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false },
+    payment: { declaredMethod: 'dinheiro', pixReceiptRequired: false, pixReceiptApproved: false },
     revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
     requirements: [],
     readyForConfirmation: true,
@@ -274,6 +274,7 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
     materializeWhatsAppOrderDraft.mockResolvedValueOnce({
       cart: {
         items: [{
+          lineId: 'line-1',
           productId: 1007,
           productName: 'Monte Sua Massa',
           baseUnitPrice: 0,
@@ -321,6 +322,53 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
     expect(result.requirements).toEqual(requirements);
     expect(result.readyForConfirmation).toBe(false);
     expect(result.cart.items[0].lineId).toBe('line-1');
+  });
+
+  it('falha quando o materializador não devolve lineId em vez de inferir pela posição', async () => {
+    materializeWhatsAppOrderDraft.mockResolvedValueOnce({
+      cart: { items: [{ productId: 1007, productName: 'Produto', baseUnitPrice: 1, selectedModifiers: [], modifierDeltaTotal: 0, quantity: 1, unitPrice: 1, lineTotal: 1, notes: null }], observations: null },
+      customer: { name: 'Ana', phone: null },
+      fulfillment: { type: 'pickup', asap: true, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryFee: 0, deliveryFeeToConfirm: false },
+      payment: { declaredMethod: 'dinheiro', pixReceiptRequired: false, pixReceiptApproved: false },
+      pricing: { subtotal: 1, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 1 },
+      revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
+      requirements: [],
+      readyForConfirmation: true,
+    });
+    const adapter = new SupabaseConversationOrderingAdapter({} as never);
+
+    await expect(adapter.materializeDraft(EMPRESA, {
+      items: [{ lineId: 'line-1', productId: 1007, quantity: 1 }],
+      fulfillment: { type: 'pickup' },
+    })).rejects.toThrow('MATERIALIZED_LINE_ID_MISSING');
+  });
+
+  it('falha quando o materializador devolve lineIds duplicados', async () => {
+    materializeWhatsAppOrderDraft.mockResolvedValueOnce({
+      cart: {
+        items: [
+          { lineId: 'same-line', productId: 1007, productName: 'Produto A', baseUnitPrice: 1, selectedModifiers: [], modifierDeltaTotal: 0, quantity: 1, unitPrice: 1, lineTotal: 1, notes: null },
+          { lineId: 'same-line', productId: 1007, productName: 'Produto B', baseUnitPrice: 1, selectedModifiers: [], modifierDeltaTotal: 0, quantity: 1, unitPrice: 1, lineTotal: 1, notes: null },
+        ],
+        observations: null,
+      },
+      customer: { name: 'Ana', phone: null },
+      fulfillment: { type: 'pickup', asap: true, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryFee: 0, deliveryFeeToConfirm: false },
+      payment: { declaredMethod: 'dinheiro', pixReceiptRequired: false, pixReceiptApproved: false },
+      pricing: { subtotal: 2, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 2 },
+      revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
+      requirements: [],
+      readyForConfirmation: true,
+    });
+    const adapter = new SupabaseConversationOrderingAdapter({} as never);
+
+    await expect(adapter.materializeDraft(EMPRESA, {
+      items: [
+        { lineId: 'line-1', productId: 1007, quantity: 1 },
+        { lineId: 'line-2', productId: 1007, quantity: 1 },
+      ],
+      fulfillment: { type: 'pickup' },
+    })).rejects.toThrow('MATERIALIZED_LINE_ID_DUPLICATE');
   });
 
   it.each([
@@ -410,6 +458,37 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
       tokenHash: 'd'.repeat(64),
       expiresAt: '2026-08-30T12:10:00.000Z',
     })).rejects.toMatchObject({ code: 'CONFIRMACAO_INDISPONIVEL', currentSnapshot: null });
+  });
+});
+
+describe('mapeamento de prontidão do SupabaseConversationOrderingAdapter', () => {
+  it.each(['issue', 'confirm'] as const)('mapeia ORDER_NOT_READY em $0 para o contrato público estável', async (operation) => {
+    const current = record();
+    const rpc = vi.fn(async () => ({ data: null, error: { message: 'ORDER_NOT_READY' } }));
+    const adapter = new SupabaseConversationOrderingAdapter({ rpc } as never);
+
+    const result = operation === 'issue'
+      ? adapter.issueConfirmationToken({
+        current,
+        ...AI_PERMIT,
+        tokenHash: 'r'.repeat(64),
+        expiresAt: '2026-08-30T12:10:00.000Z',
+      })
+      : adapter.confirmAtomically({
+        current,
+        ...AI_PERMIT,
+        expectedRevision: current.revision,
+        messageId: 'wamid.order-not-ready-123456',
+        tokenHash: null,
+        idempotencyKey: 'whatsapp:order-not-ready',
+        pessoaId: null,
+      });
+
+    await expect(result).rejects.toMatchObject({
+      code: 'PEDIDO_INVALIDO',
+      message: 'Revise os dados pendentes antes de confirmar.',
+      currentSnapshot: null,
+    });
   });
 });
 
@@ -892,6 +971,59 @@ describe('migration de snapshots parciais', () => {
     expect(sql).toContain(`revoke all on function ${functionName} from public, anon, authenticated;`);
     expect(sql.indexOf('create trigger zelomenu_cart_sessions_clear_terminal_readiness'))
       .toBeLessThan(sql.indexOf('add constraint zelomenu_cart_sessions_ready_for_confirmation_state_check'));
+  });
+});
+
+describe('migration de autoridade de confirmação', () => {
+  it('define readiness pura e aplica-a após os locks de sessão/token', () => {
+    const sql = readFileSync(
+      'supabase/migrations/20260902140000_harden_conversation_confirmation_authority.sql',
+      'utf8',
+    );
+    expect(sql).toMatch(/create or replace function public\.zelomenu_whatsapp_order_is_ready_v1\([\s\S]+returns boolean[\s\S]+immutable/is);
+    expect(sql).toMatch(/p_context = 'whatsapp_order'[\s\S]+p_state = 'cart_open'[\s\S]+p_ready_for_confirmation = true/is);
+    expect(sql).toMatch(/deliveryAddress[\s\S]+deliveryNumber[\s\S]+deliveryNeighborhood/is);
+    expect(sql).toMatch(/declaredMethod[\s\S]+pickupDate[\s\S]+pickupTime/is);
+    expect(sql).toMatch(/select coalesce\(\([\s\S]+\), false\)/is);
+    expect(sql).toMatch(/if public\.zelomenu_whatsapp_order_is_ready_v1\([\s\S]+\) is not true then/is);
+    expect(sql).toMatch(/create or replace function public\.issue_whatsapp_zelo_confirmation_token[\s\S]+ORDER_NOT_READY/is);
+    expect(sql).toMatch(/create or replace function public\.confirm_whatsapp_zelo_order_atomic_v1[\s\S]+ORDER_NOT_READY/is);
+    expect(sql).toMatch(/revoke all on function public\.zelomenu_whatsapp_order_is_ready_v1[\s\S]+grant execute on function public\.zelomenu_whatsapp_order_is_ready_v1[\s\S]+to service_role;/is);
+  });
+});
+
+describe('fixture de integridade da confirmação conversacional', () => {
+  const fixture = readFileSync(
+    'supabase/tests/conversation_order_confirmation_integrity.sql',
+    'utf8',
+  );
+
+  it('usa hashes SHA-256 hexadecimais literais e distintos para emissão', () => {
+    const issuedHashes = [...fixture.matchAll(
+      /issue_whatsapp_zelo_confirmation_token\(\s*'([^']+)'/g,
+    )].map((match) => match[1]);
+
+    expect(issuedHashes).toHaveLength(12);
+    expect(issuedHashes.every((hash) => /^[0-9a-f]{64}$/.test(hash))).toBe(true);
+    expect(new Set(issuedHashes).size).toBe(issuedHashes.length);
+    expect(fixture).not.toMatch(/repeat\(\s*'[^']+'\s*,\s*64\s*\)/);
+  });
+
+  it('prepara casos de lineId para atravessar readiness e materialização', () => {
+    const lineCasesStart = fixture.indexOf('with line_cases');
+    const serviceRoleStart = fixture.indexOf('set local role service_role;');
+    const lineCases = fixture.slice(lineCasesStart, serviceRoleStart);
+
+    expect(lineCasesStart).toBeGreaterThanOrEqual(0);
+    expect(serviceRoleStart).toBeGreaterThan(lineCasesStart);
+    expect(lineCases).not.toContain("where id = 'c1000000-0000-4000-8000-000000000102'");
+    expect(lineCases).toMatch(/line_cases\(id, ordering_id, source_ref, cart_snapshot\)/);
+    expect(lineCases).toMatch(/'invalid-line@s\.whatsapp\.net'[\s\S]+?"lineId":"bad id"/);
+    expect(lineCases).toMatch(/'missing-line@s\.whatsapp\.net'[\s\S]+?"productId":2147482801/);
+    expect(lineCases).toMatch(
+      /'duplicate-line@s\.whatsapp\.net'[\s\S]+?"lineId":"same"[\s\S]+?"lineId":"same"/,
+    );
+    expect(lineCases).toMatch(/requirements_snapshot[\s\S]+?'\[\]'::jsonb[\s\S]+?true/);
   });
 });
 

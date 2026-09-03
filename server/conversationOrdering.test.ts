@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createConversationOrdering as createProductionConversationOrdering,
   ConversationOrderingError,
@@ -56,7 +56,7 @@ function materialization(productId = 10, unitPrice = 20, lineId = 'line-1'): Dra
       }],
       observations: null,
     },
-    customer: { name: null, phone: null },
+    customer: { name: 'Cliente de teste', phone: null },
     fulfillment: {
       type: 'pickup',
       asap: true,
@@ -67,7 +67,7 @@ function materialization(productId = 10, unitPrice = 20, lineId = 'line-1'): Dra
       deliveryFee: 0,
       deliveryFeeToConfirm: false,
     },
-    payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false },
+    payment: { declaredMethod: 'dinheiro', pixReceiptRequired: false, pixReceiptApproved: false },
     pricing: { subtotal: unitPrice, deliveryFee: 0, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: unitPrice },
     revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
     requirements: [],
@@ -102,6 +102,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   nextRequirements: OrderingRequirement[] = [];
   deliveryFeeToConfirm = false;
   forceReadyForConfirmation: boolean | null = null;
+  customerName: string | null = 'Cliente de teste';
+  paymentMethod: string | null = 'dinheiro';
   controlMode: 'ai' | 'human' = 'ai';
   controlEpoch: string = AI_PERMIT.conversationEpoch;
   revokeBeforeMutation: 'create' | 'update' | 'cancel' | 'confirm' | 'token' | null = null;
@@ -174,6 +176,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     } else if (draft.fulfillment?.type === 'pickup') {
       resolved.fulfillment = { ...resolved.fulfillment, ...draft.fulfillment, type: 'pickup' };
     }
+    resolved.customer = { ...resolved.customer, name: this.customerName };
+    resolved.payment = { ...resolved.payment, declaredMethod: this.paymentMethod };
     resolved.requirements = [...this.nextRequirements];
     if (this.nextRevalidationIssues.length > 0) {
       resolved.revalidation = { checkedAt: '2026-08-30T12:01:00.000Z', ok: false, issues: this.nextRevalidationIssues };
@@ -409,6 +413,154 @@ describe('ConversationOrdering', () => {
       { mutation: 'token', ...AI_PERMIT },
       { mutation: 'confirm', ...AI_PERMIT },
     ]);
+  });
+
+  it('rejeita confirmação textual de revisão não pronta antes da RPC', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.customerName = null;
+    adapter.paymentMethod = null;
+    adapter.nextRequirements = [
+      {
+        id: 'customer_name', type: 'customer_name', name: 'Informe o nome para o pedido.', blocking: true,
+      },
+      {
+        id: 'payment_method', type: 'payment_method', name: 'Escolha a forma de pagamento.', blocking: true,
+      },
+    ];
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-incompleto',
+      hashConfirmationToken: () => 'i'.repeat(64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.incomplete-confirm-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+    const confirmAtomically = vi.spyOn(adapter, 'confirmAtomically');
+
+    const error = await ordering.apply({
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.incomplete-confirm-123456', orderingId: opened.orderingId,
+      expectedRevision: opened.revision,
+    }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(ConversationOrderingError);
+    expect(error).toMatchObject({ code: 'PEDIDO_INVALIDO', message: 'Revise os dados pendentes antes de confirmar.' });
+    expect(error.currentSnapshot).toMatchObject({
+      readyForConfirmation: false,
+      customer: { name: null, phone: null },
+      payment: { declaredMethod: null },
+    });
+    expect(confirmAtomically).not.toHaveBeenCalled();
+    expect(adapter.issuedHashes).toEqual([]);
+  });
+
+  it.each([
+    {
+      label: 'nome vazio',
+      mutate: (record: ConversationOrderingRecord) => { record.customer = { ...record.customer, name: '   ' }; },
+    },
+    {
+      label: 'pagamento nulo',
+      mutate: (record: ConversationOrderingRecord) => { record.payment = { ...record.payment, declaredMethod: null }; },
+    },
+    {
+      label: 'entrega sem endereço completo',
+      mutate: (record: ConversationOrderingRecord) => {
+        record.fulfillment = {
+          ...record.fulfillment,
+          type: 'delivery',
+          deliveryAddress: null,
+          deliveryStreet: null,
+          deliveryNumber: null,
+          deliveryNeighborhood: null,
+        };
+      },
+    },
+    {
+      label: 'agenda sem data e horário',
+      mutate: (record: ConversationOrderingRecord) => {
+        record.fulfillment = {
+          ...record.fulfillment,
+          type: 'pickup',
+          asap: false,
+          pickupDate: null,
+          pickupTime: null,
+        };
+      },
+    },
+  ])('falha fechado para prontidão verdadeira mas $label', async ({ mutate }) => {
+    const adapter = new MemoryAdapter();
+    adapter.forceReadyForConfirmation = false;
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-malicious-ready',
+      hashConfirmationToken: () => 'm'.repeat(64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.malicious-ready-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+    const stored = adapter.records[0]!;
+    mutate(stored);
+    stored.readyForConfirmation = true;
+    const confirmAtomically = vi.spyOn(adapter, 'confirmAtomically');
+
+    await expect(ordering.apply({
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.malicious-ready-confirm-123456', orderingId: opened.orderingId,
+      expectedRevision: opened.revision,
+    })).rejects.toMatchObject({
+      code: 'PEDIDO_INVALIDO',
+      message: 'Revise os dados pendentes antes de confirmar.',
+      currentSnapshot: expect.objectContaining({ readyForConfirmation: false }),
+    });
+    expect(confirmAtomically).not.toHaveBeenCalled();
+    expect(adapter.issuedHashes).toEqual([]);
+  });
+
+  it.each([
+    {
+      label: 'requirement sem blocking',
+      mutate: (record: ConversationOrderingRecord) => { record.requirements = [{} as never]; },
+    },
+    {
+      label: 'requirement nulo',
+      mutate: (record: ConversationOrderingRecord) => { record.requirements = [null as never]; },
+    },
+    {
+      label: 'blocking não booleano',
+      mutate: (record: ConversationOrderingRecord) => { record.requirements = [{ blocking: 'false' } as never]; },
+    },
+    {
+      label: 'revalidação com ok textual',
+      mutate: (record: ConversationOrderingRecord) => {
+        record.revalidation = { ...record.revalidation, ok: 'true' as never };
+      },
+    },
+  ])('falha fechado para fact malformado: $label', async ({ label, mutate }) => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: () => 'token-malformed-fact',
+      hashConfirmationToken: () => 'z'.repeat(64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.malformed-fact-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 1001, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+    mutate(adapter.records[0]!);
+    adapter.issuedHashes = [];
+
+    await expect(ordering.apply({
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: `wamid.malformed-fact-confirm-${label}`, orderingId: opened.orderingId,
+      expectedRevision: opened.revision,
+    })).rejects.toMatchObject({
+      code: 'PEDIDO_INVALIDO',
+      message: 'Revise os dados pendentes antes de confirmar.',
+      currentSnapshot: expect.objectContaining({ readyForConfirmation: false }),
+    });
+    expect(adapter.issuedHashes).toEqual([]);
   });
 
   it.each(['create', 'update', 'cancel', 'confirm'] as const)(
@@ -893,7 +1045,13 @@ describe('ConversationOrdering', () => {
         draft: {
           items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
           fulfillment: scenario.label === 'taxa' || scenario.label === 'cobertura'
-            ? { type: 'delivery', deliveryPostalCode: '01001000', deliveryNumber: '10' }
+            ? {
+              type: 'delivery',
+              deliveryPostalCode: '01001000',
+              deliveryAddress: 'Rua Teste',
+              deliveryNeighborhood: 'Centro',
+              deliveryNumber: '10',
+            }
             : PICKUP_FULFILLMENT,
         },
       });

@@ -226,6 +226,7 @@ select public.zelomenu_whatsapp_materialize_cart_v1(
   'b6000000-0000-4000-8000-000000000002',
   jsonb_build_object(
     'items', jsonb_build_array(jsonb_build_object(
+      'lineId', 'component-active-line',
       'productId', 2147482601,
       'quantity', 1,
       'notes', null,
@@ -277,6 +278,7 @@ set stock_materialized = public.zelomenu_whatsapp_materialize_cart_v1(
   jsonb_build_object(
     'items', jsonb_build_array(
       jsonb_build_object(
+        'lineId', 'stock-line-1',
         'productId', 2147482601,
         'quantity', 2,
         'notes', null,
@@ -298,6 +300,7 @@ set stock_materialized = public.zelomenu_whatsapp_materialize_cart_v1(
         )
       ),
       jsonb_build_object(
+        'lineId', 'stock-line-2',
         'productId', 2147482601,
         'quantity', 3,
         'notes', null,

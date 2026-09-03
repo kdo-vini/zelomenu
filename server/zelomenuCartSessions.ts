@@ -1195,7 +1195,9 @@ async function resolveSnapshots(
  * complementos, frete e totais são sempre reconstruídos do catálogo público.
  */
 export type WhatsAppOrderDraftMaterialization = {
-  cart: ZeloMenuCartSnapshot;
+  cart: Omit<ZeloMenuCartSnapshot, 'items'> & {
+    items: Array<ZeloMenuCartItemSnapshot & { lineId: string }>;
+  };
   customer: ZeloMenuCustomerSnapshot;
   fulfillment: ConversationFulfillmentSnapshot;
   payment: ZeloMenuPaymentSnapshot;
@@ -1204,6 +1206,8 @@ export type WhatsAppOrderDraftMaterialization = {
   requirements: OrderingRequirement[];
   readyForConfirmation: boolean;
 };
+
+const CONVERSATION_LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 function throwConversationModifierError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
@@ -1239,7 +1243,7 @@ export async function materializeWhatsAppOrderDraft(input: {
 }): Promise<WhatsAppOrderDraftMaterialization> {
   if (!Array.isArray(input.items) || input.items.length < 1) throw new Error('EMPTY_CART');
   if (input.items.length > 50) throw new Error('CART_LINE_LIMIT_EXCEEDED');
-  const items = input.items.map((item): ZeloMenuCartItemInput => {
+  const items = input.items.map((item) => {
     if (!Number.isSafeInteger(item.productId) || item.productId <= 0) throw new Error('PRODUCT_NOT_FOUND');
     if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 999) throw new Error('INVALID_QUANTITY');
     return {
@@ -1331,8 +1335,21 @@ export async function materializeWhatsAppOrderDraft(input: {
     }] : []),
   ];
   const revalidation = revalidationFromResolved(resolved);
+  const materializedItems = resolved.cart.items.map((item) => {
+    if (typeof item.lineId !== 'string' || !CONVERSATION_LINE_ID.test(item.lineId)) {
+      throw new Error('MATERIALIZED_LINE_ID_MISSING');
+    }
+    return { ...item, lineId: item.lineId };
+  });
+  if (new Set(materializedItems.map((item) => item.lineId)).size !== materializedItems.length) {
+    throw new Error('MATERIALIZED_LINE_ID_DUPLICATE');
+  }
   return {
     ...resolved,
+    cart: {
+      ...resolved.cart,
+      items: materializedItems,
+    },
     customer,
     revalidation,
     requirements,

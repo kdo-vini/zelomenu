@@ -174,6 +174,12 @@ beforeEach(() => {
 });
 
 describe('materializeWhatsAppOrderDraft', () => {
+  it('retorna o lineId produzido pela resolução, sem reparo posicional', () => {
+    const source = readFileSync('server/zelomenuCartSessions.ts', 'utf8');
+    expect(source).not.toContain('input.items[index]');
+    expect(source).toMatch(/const materializedItems = resolved\.cart\.items\.map[\s\S]+items:\s*materializedItems/i);
+  });
+
   it('materializa nomes, preços, complementos, subtotal e asap somente pelo servidor', async () => {
     const result = await materializeWhatsAppOrderDraft({
       empresaId: EMPRESA_ID,
@@ -561,10 +567,50 @@ describe('migração de paridade dos componentes na confirmação', () => {
       /coalesce\(link\.price_override, linked_product\.preco, o\.price_delta\)::numeric\(10,2\) as resolved_price/is,
     );
     expect(materializer).toMatch(
+      /v_line_id\s*:=\s*nullif\(v_item->>'lineId', ''\)[\s\S]*?line_id_invalid/is,
+    );
+    expect(materializer).toMatch(/jsonb_typeof\(v_item->'lineId'\)[\s\S]*?line_id_invalid/is);
+    expect(materializer).toMatch(
+      /jsonb_build_object\(\s*'lineId', v_line_id,\s*'productId'/is,
+    );
+    expect(materializer).toMatch(
       /if v_option\.linked_product_id is not null then\s+v_requirements := v_requirements/is,
     );
     expect(sql).toMatch(
       /revoke all on function public\.zelomenu_whatsapp_materialize_cart_v1\(uuid, jsonb\)\s+from public, anon, authenticated;[\s\S]*?grant execute on function public\.zelomenu_whatsapp_materialize_cart_v1\(uuid, jsonb\) to service_role;/is,
     );
+  });
+});
+
+describe('regressões da autoridade de prontidão', () => {
+  it('usa a assinatura completa do predicado (3 text, 5 jsonb, boolean) em ACL e comentário', () => {
+    const sql = readFileSync(
+      'supabase/migrations/20260902140000_harden_conversation_confirmation_authority.sql',
+      'utf8',
+    );
+    const signature = 'text, text, text, jsonb, jsonb, jsonb, jsonb, jsonb, boolean';
+    expect(sql).toContain(`revoke all on function public.zelomenu_whatsapp_order_is_ready_v1(${signature})`);
+    expect(sql).toContain(`grant execute on function public.zelomenu_whatsapp_order_is_ready_v1(${signature})`);
+    expect(sql).toContain(`comment on function public.zelomenu_whatsapp_order_is_ready_v1(${signature})`);
+  });
+
+  it('não usa casts de texto permissivos e rejeita facts JSON ausentes ou tipados incorretamente', () => {
+    const sql = readFileSync(
+      'supabase/migrations/20260902140000_harden_conversation_confirmation_authority.sql',
+      'utf8',
+    );
+    const predicate = sql.match(
+      /create or replace function public\.zelomenu_whatsapp_order_is_ready_v1\([\s\S]*?\n\$\$;/i,
+    )?.[0];
+    expect(predicate).toBeDefined();
+    expect(predicate).not.toMatch(/\(p_revalidation->>'ok'\)::boolean/i);
+    expect(predicate).toMatch(/jsonb_typeof\(p_revalidation\)/i);
+    expect(predicate).toMatch(/jsonb_typeof\(p_revalidation->'ok'\)\s*=\s*'boolean'/i);
+    expect(predicate).toMatch(/jsonb_array_length\(\s*case\s+when\s+jsonb_typeof\(p_revalidation->'issues'\)\s*=\s*'array'/is);
+    expect(predicate).toMatch(/jsonb_typeof\(requirement->'blocking'\)\s*=\s*'boolean'/i);
+    expect(predicate).toMatch(/case\s+when\s+jsonb_typeof\(p_requirements\)\s*=\s*'array'/is);
+    expect(predicate).toMatch(/jsonb_typeof\(p_fulfillment\)\s*=\s*'object'/i);
+    expect(predicate).toMatch(/jsonb_typeof\(p_payment\)\s*=\s*'object'/i);
+    expect(predicate).toMatch(/jsonb_typeof\(p_customer\)\s*=\s*'object'/i);
   });
 });

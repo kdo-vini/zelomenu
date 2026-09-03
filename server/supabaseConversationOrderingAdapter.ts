@@ -17,6 +17,7 @@ import { applyZeloMenuAutoAccept, materializeWhatsAppOrderDraft, type ZeloMenuCa
 import { deriveConversationConfirmationToken, hashConversationConfirmationToken } from './conversationConfirmationToken.js';
 
 const SESSION_COLUMNS = 'id, empresa_id, ordering_id, context, state, source_ref, customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation, requirements_snapshot, ready_for_confirmation, archived_at, updated_at';
+const CONVERSATION_LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 type SessionRow = {
   id: string;
@@ -184,23 +185,26 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     if (materialized.cart.items.length !== draft.items.length) {
       throw new Error('MATERIALIZED_LINE_COUNT_MISMATCH');
     }
+    if (!materialized.cart.items.every((item) => typeof item.lineId === 'string' && CONVERSATION_LINE_ID.test(item.lineId))) {
+      throw new Error('MATERIALIZED_LINE_ID_MISSING');
+    }
+    if (new Set(materialized.cart.items.map((item) => item.lineId)).size !== materialized.cart.items.length) {
+      throw new Error('MATERIALIZED_LINE_ID_DUPLICATE');
+    }
     const upstream = materialized as typeof materialized & Partial<Pick<
       DraftMaterialization,
       'requirements' | 'readyForConfirmation'
     >>;
+    const revalidationReady = Boolean(upstream.revalidation)
+      && upstream.revalidation.ok === true
+      && Array.isArray(upstream.revalidation.issues)
+      && upstream.revalidation.issues.length === 0;
     return {
       ...upstream,
-      cart: {
-        ...upstream.cart,
-        items: upstream.cart.items.map((item, index) => ({
-          ...item,
-          lineId: draft.items[index]!.lineId,
-        })),
-      },
       requirements: upstream.requirements ?? [],
       readyForConfirmation: upstream.readyForConfirmation === true
-        && upstream.revalidation.ok
-        && !upstream.fulfillment.deliveryFeeToConfirm,
+        && revalidationReady
+        && upstream.fulfillment.deliveryFeeToConfirm === false,
     };
   }
 
@@ -462,6 +466,9 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   private rpcError(message: string): ConversationOrderingError {
     if (/AI_TURN_REVOKED/.test(message)) {
       return new ConversationOrderingError('AI_TURN_REVOKED', 'Esta conversa mudou de atendimento. Vou deixar a equipe continuar por aqui.');
+    }
+    if (/ORDER_NOT_READY/.test(message)) {
+      return new ConversationOrderingError('PEDIDO_INVALIDO', 'Revise os dados pendentes antes de confirmar.');
     }
     if (/CONFIRMATION_TOKEN_RPC_UNAVAILABLE|issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1|confirm_whatsapp_zelo_order_(?:with_ai_epoch|atomic)_v1|function .* does not exist|42883/i.test(message)) {
       return new ConversationOrderingError('CONFIRMACAO_INDISPONIVEL', 'A confirmação de pedidos não está disponível agora.');
