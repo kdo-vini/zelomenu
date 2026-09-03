@@ -113,6 +113,7 @@ function record(overrides: Partial<ConversationOrderingRecord> = {}): Conversati
     revalidation: { checkedAt: '2026-08-30T12:00:00.000Z', ok: true, issues: [] },
     requirements: [],
     readyForConfirmation: true,
+    reviewRequired: false,
     order: null,
     ...overrides,
   };
@@ -138,7 +139,11 @@ function sessionRow(snapshot: ConversationOrderingRecord) {
     fulfillment_snapshot: snapshot.fulfillment,
     pricing_snapshot: snapshot.pricing,
     payment_snapshot: snapshot.payment,
-    metadata: { pessoaId: snapshot.pessoaId, processedMessageIds: snapshot.processedMessageIds },
+    metadata: {
+      pessoaId: snapshot.pessoaId,
+      processedMessageIds: snapshot.processedMessageIds,
+      ...(snapshot.reviewRequired ? { conversationReview: { required: true, revision: snapshot.revision, messageId: 'wamid.review-marker', cause: 'issues' } } : {}),
+    },
     revision: snapshot.revision,
     last_revalidated_at: snapshot.revalidation.checkedAt,
     last_revalidation: snapshot.revalidation,
@@ -229,6 +234,21 @@ function createOpenInput(snapshot: ConversationOrderingRecord, processedMessageI
 }
 
 describe('colisao cross-replica ao criar pedido', () => {
+  it('aplica pedido, empresa, JID e contexto antes de mapear a leitura', async () => {
+    const filters: Array<[string, unknown]> = [];
+    const query: Record<string, any> = {};
+    query.eq = vi.fn((column: string, value: unknown) => { filters.push([column, value]); return query; });
+    query.maybeSingle = vi.fn(async () => ({ data: null, error: null }));
+    const adapter = new SupabaseConversationOrderingAdapter({ from: vi.fn(() => ({ select: vi.fn(() => query) })) } as never);
+    await adapter.findByOrderingId({ orderingId: '30000000-0000-4000-8000-000000000001', empresaId: EMPRESA, remoteJid: '5511999999999@s.whatsapp.net' });
+    expect(filters).toEqual([
+      ['ordering_id', '30000000-0000-4000-8000-000000000001'],
+      ['empresa_id', EMPRESA],
+      ['source_ref', '5511999999999@s.whatsapp.net'],
+      ['context', 'whatsapp_order'],
+    ]);
+  });
+
   it('retorna o carrinho do mesmo tenant e JID quando a mensagem ja venceu a corrida', async () => {
     const replayed = record({ processedMessageIds: ['wamid.same-message'] });
     const otherTenant = record({
@@ -314,7 +334,7 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
     });
     const adapter = new SupabaseConversationOrderingAdapter({} as never);
 
-    const result = await adapter.materializeDraft(EMPRESA, {
+    const result = await adapter.materializeDraft({ empresaId: EMPRESA, remoteJid: '5511999999999@s.whatsapp.net' }, {
       items: [{ lineId: 'line-1', productId: 1007, quantity: 1 }],
       fulfillment: { type: 'pickup' },
     });
@@ -337,7 +357,7 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
     });
     const adapter = new SupabaseConversationOrderingAdapter({} as never);
 
-    await expect(adapter.materializeDraft(EMPRESA, {
+    await expect(adapter.materializeDraft({ empresaId: EMPRESA, remoteJid: '5511999999999@s.whatsapp.net' }, {
       items: [{ lineId: 'line-1', productId: 1007, quantity: 1 }],
       fulfillment: { type: 'pickup' },
     })).rejects.toThrow('MATERIALIZED_LINE_ID_MISSING');
@@ -362,7 +382,7 @@ describe('SupabaseConversationOrderingAdapter confirmação atômica', () => {
     });
     const adapter = new SupabaseConversationOrderingAdapter({} as never);
 
-    await expect(adapter.materializeDraft(EMPRESA, {
+    await expect(adapter.materializeDraft({ empresaId: EMPRESA, remoteJid: '5511999999999@s.whatsapp.net' }, {
       items: [
         { lineId: 'line-1', productId: 1007, quantity: 1 },
         { lineId: 'line-2', productId: 1007, quantity: 1 },
@@ -681,7 +701,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
     row.requirements_snapshot = requirements;
     row.ready_for_confirmation = true;
 
-    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+    await expect(adapterReading(row).findByOrderingId({ orderingId: String(row.ordering_id), empresaId: String(row.empresa_id), remoteJid: String(row.source_ref) })).resolves.toMatchObject({
       requirements: [],
       readyForConfirmation: false,
     });
@@ -693,7 +713,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
       readyForConfirmation: true,
     })) as Record<string, unknown>;
 
-    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+    await expect(adapterReading(row).findByOrderingId({ orderingId: String(row.ordering_id), empresaId: String(row.empresa_id), remoteJid: String(row.source_ref) })).resolves.toMatchObject({
       requirements: [],
       readyForConfirmation: false,
     });
@@ -709,7 +729,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
       readyForConfirmation: false,
     })) as Record<string, unknown>;
 
-    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+    await expect(adapterReading(row).findByOrderingId({ orderingId: String(row.ordering_id), empresaId: String(row.empresa_id), remoteJid: String(row.source_ref) })).resolves.toMatchObject({
       requirements: [],
       readyForConfirmation: false,
     });
@@ -722,7 +742,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
       readyForConfirmation: true,
     })) as Record<string, unknown>;
 
-    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+    await expect(adapterReading(row).findByOrderingId({ orderingId: String(row.ordering_id), empresaId: String(row.empresa_id), remoteJid: String(row.source_ref) })).resolves.toMatchObject({
       requirements: [],
       readyForConfirmation: false,
     });
@@ -734,7 +754,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
       readyForConfirmation: false,
     })) as Record<string, unknown>;
 
-    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+    await expect(adapterReading(row).findByOrderingId({ orderingId: String(row.ordering_id), empresaId: String(row.empresa_id), remoteJid: String(row.source_ref) })).resolves.toMatchObject({
       requirements: VALID_REQUIREMENTS,
       readyForConfirmation: false,
     });
@@ -746,7 +766,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
       readyForConfirmation: true,
     })) as Record<string, unknown>;
 
-    await expect(adapterReading(row).findByOrderingId(String(row.ordering_id))).resolves.toMatchObject({
+    await expect(adapterReading(row).findByOrderingId({ orderingId: String(row.ordering_id), empresaId: String(row.empresa_id), remoteJid: String(row.source_ref) })).resolves.toMatchObject({
       requirements: [VALID_MODIFIER_REQUIREMENT],
       readyForConfirmation: true,
     });
@@ -762,7 +782,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
     const from = vi.fn(() => ({ select }));
     const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
 
-    await expect(adapter.findByOrderingId(stored.orderingId)).resolves.toMatchObject({
+    await expect(adapter.findByOrderingId({ orderingId: stored.orderingId, empresaId: stored.empresaId, remoteJid: stored.remoteJid })).resolves.toMatchObject({
       requirements: [],
       readyForConfirmation: false,
     });
@@ -775,7 +795,7 @@ describe('SupabaseConversationOrderingAdapter snapshots parciais', () => {
     const from = vi.fn(() => ({ select }));
     const adapter = new SupabaseConversationOrderingAdapter({ from } as never);
 
-    await expect(adapter.findByOrderingId(stored.orderingId)).resolves.toMatchObject({
+    await expect(adapter.findByOrderingId({ orderingId: stored.orderingId, empresaId: stored.empresaId, remoteJid: stored.remoteJid })).resolves.toMatchObject({
       requirements: [],
       readyForConfirmation: true,
     });
@@ -988,6 +1008,9 @@ describe('migration de autoridade de confirmação', () => {
     expect(sql).toMatch(/if public\.zelomenu_whatsapp_order_is_ready_v1\([\s\S]+\) is not true then/is);
     expect(sql).toMatch(/create or replace function public\.issue_whatsapp_zelo_confirmation_token[\s\S]+ORDER_NOT_READY/is);
     expect(sql).toMatch(/create or replace function public\.confirm_whatsapp_zelo_order_atomic_v1[\s\S]+ORDER_NOT_READY/is);
+    expect(sql).toMatch(/modifier_groups[\s\S]+modifier_options[\s\S]+modifier_option_products[\s\S]+linked_product[\s\S]+zelomenu_product_publications/is);
+    expect(sql).toMatch(/jsonb_build_object\('required', true, 'revision', s\.revision \+ 1,[\s\S]+'cause', case when jsonb_array_length\(v_issues\) > 0 then 'issues' else 'snapshot_changed' end\)/is);
+    expect(sql).toMatch(/update public\.zelomenu_whatsapp_confirmation_tokens[\s\S]+where session_id = s\.id and revision < s\.revision \+ 1[\s\S]+invalidated_at is null and consumed_at is null;/is);
     expect(sql).toMatch(/revoke all on function public\.zelomenu_whatsapp_order_is_ready_v1[\s\S]+grant execute on function public\.zelomenu_whatsapp_order_is_ready_v1[\s\S]+to service_role;/is);
   });
 });
@@ -1003,7 +1026,7 @@ describe('fixture de integridade da confirmação conversacional', () => {
       /issue_whatsapp_zelo_confirmation_token\(\s*'([^']+)'/g,
     )].map((match) => match[1]);
 
-    expect(issuedHashes).toHaveLength(12);
+    expect(issuedHashes).toHaveLength(13);
     expect(issuedHashes.every((hash) => /^[0-9a-f]{64}$/.test(hash))).toBe(true);
     expect(new Set(issuedHashes).size).toBe(issuedHashes.length);
     expect(fixture).not.toMatch(/repeat\(\s*'[^']+'\s*,\s*64\s*\)/);
@@ -1018,12 +1041,15 @@ describe('fixture de integridade da confirmação conversacional', () => {
     expect(serviceRoleStart).toBeGreaterThan(lineCasesStart);
     expect(lineCases).not.toContain("where id = 'c1000000-0000-4000-8000-000000000102'");
     expect(lineCases).toMatch(/line_cases\(id, ordering_id, source_ref, cart_snapshot\)/);
-    expect(lineCases).toMatch(/'invalid-line@s\.whatsapp\.net'[\s\S]+?"lineId":"bad id"/);
-    expect(lineCases).toMatch(/'missing-line@s\.whatsapp\.net'[\s\S]+?"productId":2147482801/);
+    expect(lineCases).toMatch(/'5511900000022@s\.whatsapp\.net'[\s\S]+?"lineId":"bad id"/);
+    expect(lineCases).toMatch(/'5511900000023@s\.whatsapp\.net'[\s\S]+?"productId":2147482801/);
     expect(lineCases).toMatch(
-      /'duplicate-line@s\.whatsapp\.net'[\s\S]+?"lineId":"same"[\s\S]+?"lineId":"same"/,
+      /'5511900000024@s\.whatsapp\.net'[\s\S]+?"lineId":"same"[\s\S]+?"lineId":"same"/,
     );
     expect(lineCases).toMatch(/requirements_snapshot[\s\S]+?'\[\]'::jsonb[\s\S]+?true/);
+    expect(fixture).toMatch(/jsonb_set\([\s\S]+to_jsonb\(public\.zelomenu_whatsapp_phone_from_source_ref_v1\(source_ref\)\)/);
+    expect(fixture).toContain("'c1000000-0000-4000-8000-000000000117'");
+    expect(fixture).toContain('phone divergent from scoped JID blocks token issuance');
   });
 });
 

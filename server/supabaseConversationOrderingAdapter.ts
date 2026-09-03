@@ -5,7 +5,9 @@ import {
   type CanonicalOrderReference,
   type AtomicConfirmationResult,
   type ConversationAiPermit,
-  type ConversationOrderDraft,
+  type ConversationScope,
+  type ConversationOrderLookup,
+  type ConversationOrderCreateDraft,
   type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
   type DraftMaterialization,
@@ -53,6 +55,13 @@ function nextMetadata(current: ConversationOrderingRecord, messageId: string, ex
     processedMessageIds: [...new Set([...current.processedMessageIds, messageId])],
     ...extra,
   };
+}
+
+function validReviewMarker(value: unknown, revision: number): boolean {
+  if (!isObject(value) || value.required !== true || !Number.isSafeInteger(value.revision) || !Number.isSafeInteger(revision) || value.revision !== revision
+    || !isNonEmptyString(value.messageId)
+    || (value.cause !== 'issues' && value.cause !== 'snapshot_changed')) return false;
+  return true;
 }
 
 function safeState(state: ZeloMenuCartState): ConversationOrderingRecord['state'] {
@@ -173,9 +182,10 @@ function validatedRequirementsSnapshot(value: unknown): OrderingRequirement[] | 
 export class SupabaseConversationOrderingAdapter implements ConversationOrderingAdapter {
   constructor(private readonly supabase: SupabaseClient = getServiceSupabase()) {}
 
-  async materializeDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
+  async materializeDraft(scope: ConversationScope, draft: ConversationOrderCreateDraft): Promise<DraftMaterialization> {
     const materialized = await materializeWhatsAppOrderDraft({
-      empresaId,
+      empresaId: scope.empresaId,
+      remoteJid: scope.remoteJid,
       items: draft.items,
       observations: draft.observations,
       customer: draft.customer,
@@ -247,6 +257,8 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       revalidation: row.last_revalidation ?? { checkedAt: row.last_revalidated_at ?? new Date(0).toISOString(), ok: true, issues: [] },
       requirements: trustedRequirements,
       readyForConfirmation: hasTrustworthyReadiness && row.ready_for_confirmation === true,
+      reviewRequired: row.context === 'whatsapp_order' && state === 'cart_open'
+        && validReviewMarker(metadata.conversationReview, Number(row.revision)),
       order: state === 'cart_open' || state === 'cancelled' || state === 'archived' ? null : await this.loadOrder(row.id),
     };
   }
@@ -277,17 +289,19 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     return data ? this.mapRow(data as SessionRow) : null;
   }
 
-  async findByOrderingId(orderingId: string): Promise<ConversationOrderingRecord | null> {
+  async findByOrderingId(lookup: ConversationOrderLookup): Promise<ConversationOrderingRecord | null> {
     const { data, error } = await this.supabase.from('zelomenu_cart_sessions')
       .select(SESSION_COLUMNS)
-      .eq('ordering_id', orderingId)
+      .eq('ordering_id', lookup.orderingId)
+      .eq('empresa_id', lookup.empresaId)
+      .eq('source_ref', lookup.remoteJid)
       .eq('context', 'whatsapp_order')
       .maybeSingle();
     if (error) throw error;
     return data ? this.mapRow(data as SessionRow) : null;
   }
 
-  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
+  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order' | 'reviewRequired'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
     const { data, error } = await this.supabase.rpc('zelomenu_open_whatsapp_order_with_ai_epoch_v1', {
       p_empresa_id: input.empresaId,
       p_source_ref: input.remoteJid,
@@ -307,7 +321,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     if (!error) {
       const result = data as { outcome?: unknown; orderingId?: unknown } | null;
       if (result?.outcome === 'applied' && typeof result.orderingId === 'string') {
-        return this.findRequired(result.orderingId);
+        return this.findRequired({ orderingId: result.orderingId, empresaId: input.empresaId, remoteJid: input.remoteJid });
       }
       throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível iniciar o pedido agora. Tente novamente.');
     }
@@ -368,7 +382,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     if (result?.outcome !== 'applied' && result?.outcome !== 'conflict') {
       throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível atualizar o pedido agora. Tente novamente.');
     }
-    const latest = await this.findRequired(current.orderingId);
+    const latest = await this.findRequired({ orderingId: current.orderingId, empresaId: current.empresaId, remoteJid: current.remoteJid });
     if (result.outcome === 'applied') return { kind: 'applied', record: latest };
     return latest.processedMessageIds.includes(messageId)
       ? { kind: 'duplicate', record: latest }
@@ -393,7 +407,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     });
     if (error) {
       if (/REVISION|REVISAO/.test(error.message)) {
-        return { kind: 'conflict' as const, record: await this.findRequired(input.current.orderingId) };
+        return { kind: 'conflict' as const, record: await this.findRequired({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid }) };
       }
       throw this.rpcError(error.message);
     }
@@ -426,7 +440,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     if (result?.outcome !== 'confirmed' && result?.outcome !== 'requires_review' && result?.outcome !== 'conflict') {
       throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível concluir o pedido agora. Tente novamente.');
     }
-    const record = await this.findRequired(input.current.orderingId);
+    const record = await this.findRequired({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (result.outcome === 'confirmed') {
       if (!record.order || typeof result.alreadyConfirmed !== 'boolean') {
         throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível concluir o pedido agora. Tente novamente.');
@@ -444,7 +458,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       status: record.order.status,
       revision: record.order.revision,
     });
-    const refreshed = await this.findRequired(record.orderingId);
+    const refreshed = await this.findRequired({ orderingId: record.orderingId, empresaId: record.empresaId, remoteJid: record.remoteJid });
     const alreadyConfirmed = record.order.alreadyConfirmed;
     if (result.accepted) {
       refreshed.state = 'accepted';
@@ -457,8 +471,8 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     return refreshed;
   }
 
-  private async findRequired(orderingId: string): Promise<ConversationOrderingRecord> {
-    const record = await this.findByOrderingId(orderingId);
+  private async findRequired(lookup: ConversationOrderLookup): Promise<ConversationOrderingRecord> {
+    const record = await this.findByOrderingId(lookup);
     if (!record) throw new ConversationOrderingError('PEDIDO_NAO_ENCONTRADO', 'Não encontrei este pedido.');
     return record;
   }

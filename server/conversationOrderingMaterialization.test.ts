@@ -40,7 +40,8 @@ vi.mock('./zelomenuDeliveryService.js', () => ({
   findDeliveryQuoteRequest: vi.fn(),
 }));
 
-import { materializeWhatsAppOrderDraft } from './zelomenuCartSessions';
+import { materializeWhatsAppOrderDraft as materializeWhatsAppOrderDraftBase } from './zelomenuCartSessions';
+const materializeWhatsAppOrderDraft = (input: Omit<Parameters<typeof materializeWhatsAppOrderDraftBase>[0], 'remoteJid'>) => materializeWhatsAppOrderDraftBase({ remoteJid: '5511999999999@s.whatsapp.net', ...input });
 
 function product(overrides: Partial<CatalogProduct> = {}): CatalogProduct {
   return {
@@ -557,6 +558,8 @@ describe('migração de paridade dos componentes na confirmação', () => {
     expect(requiredGroupViability).toMatch(
       /link\.id_componente is not null\s+and linked_component\.id is not null\s+and not coalesce\(linked_component\.pausado_manualmente, false\)/is,
     );
+    expect(requiredGroupViability).toMatch(/linked_publication\.pausado_manualmente/is);
+    expect(materializer).toMatch(/linked_product\.id is null\s+or coalesce\(linked_publication\.pausado_manualmente, false\)/is);
     expect(materializer).toMatch(
       /link\.id_componente is not null and \(\s+linked_component\.id is null\s+or coalesce\(linked_component\.pausado_manualmente, false\)/is,
     );

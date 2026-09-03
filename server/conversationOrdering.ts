@@ -27,15 +27,34 @@ export type ConversationOrderItemSelection = {
   }>;
 };
 
-export type ConversationOrderDraft = {
+export type ConversationOrderCreateDraft = {
   items: ConversationOrderItemSelection[];
-  removedLineIds?: string[];
   observations?: string | null;
-  customer?: { name?: string | null; phone?: string | null };
+  customer?: { name?: string | null };
   pessoaId?: string | null;
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
 };
+
+export type ConversationOrderLinePatch = {
+  lineId: string;
+  productId?: number;
+  quantity?: number;
+  notes?: string | null;
+  selectedOptions?: NonNullable<ConversationOrderItemSelection['selectedOptions']>;
+};
+
+export type ConversationOrderPatch = {
+  items?: ConversationOrderLinePatch[];
+  removedLineIds?: string[];
+  observations?: string | null;
+  customer?: { name?: string | null } | null;
+  pessoaId?: string | null;
+  fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
+  paymentMethod?: string | null;
+};
+
+export type ConversationOrderDraft = ConversationOrderCreateDraft | ConversationOrderPatch;
 
 export type ConversationOrderCartItemSnapshot = ZeloMenuCartItemSnapshot & {
   lineId: string;
@@ -52,6 +71,9 @@ type CommandIdentity = {
   remoteJid: string;
   messageId: string;
 };
+
+export type ConversationScope = Pick<CommandIdentity, 'empresaId' | 'remoteJid'>;
+export type ConversationOrderLookup = ConversationScope & { orderingId: string };
 
 export type ConversationAiPermit = {
   conversationControlId: string;
@@ -99,9 +121,10 @@ export type ConversationOrderingRecord = DraftMaterialization & {
   pessoaId: string | null;
   processedMessageIds: string[];
   order: CanonicalOrderReference | null;
+  reviewRequired: boolean;
 };
 
-export type OrderingSnapshot = Omit<ConversationOrderingRecord, 'sessionId' | 'processedMessageIds'> & {
+export type OrderingSnapshot = Omit<ConversationOrderingRecord, 'sessionId' | 'processedMessageIds' | 'reviewRequired'> & {
   confirmationAction: {
     type: 'confirm_order';
     token: string;
@@ -126,11 +149,11 @@ export type TokenIssuanceResult =
   | { kind: 'conflict'; record: ConversationOrderingRecord };
 
 export interface ConversationOrderingAdapter {
-  materializeDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization>;
+  materializeDraft(scope: ConversationScope, draft: ConversationOrderCreateDraft): Promise<DraftMaterialization>;
   findOpen(empresaId: string, remoteJid: string): Promise<ConversationOrderingRecord | null>;
   findByMessageId(empresaId: string, remoteJid: string, messageId: string): Promise<ConversationOrderingRecord | null>;
-  findByOrderingId(orderingId: string): Promise<ConversationOrderingRecord | null>;
-  createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'> & ConversationAiPermit): Promise<ConversationOrderingRecord>;
+  findByOrderingId(lookup: ConversationOrderLookup): Promise<ConversationOrderingRecord | null>;
+  createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order' | 'reviewRequired'> & ConversationAiPermit): Promise<ConversationOrderingRecord>;
   updateOpen(input: {
     current: ConversationOrderingRecord;
     expectedRevision: number;
@@ -174,9 +197,9 @@ type ConversationOrderingOptions = {
 };
 
 const LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
-function validateDraftLineIds(draft: ConversationOrderDraft): void {
+function validateDraftLineIds(draft: { items?: readonly { lineId: string }[]; removedLineIds?: readonly string[] }): void {
   const lineIds = new Set<string>();
-  for (const item of draft.items) {
+  for (const item of draft.items ?? []) {
     if (!LINE_ID.test(item.lineId)) {
       throw new ConversationOrderingError('ITEM_INVALIDO', 'Revise a identificação dos itens do pedido.');
     }
@@ -261,7 +284,7 @@ function normalizeReadiness<T extends DraftMaterialization>(materialization: T):
 }
 
 function normalizeDraftMaterialization(
-  draft: ConversationOrderDraft,
+  draft: ConversationOrderCreateDraft,
   materialization: DraftMaterialization,
 ): DraftMaterialization {
   return normalizeReadiness({
@@ -276,6 +299,15 @@ function fulfillmentFromSnapshot(
   fulfillment: ConversationFulfillmentSnapshot,
 ): ConversationOrderDraft['fulfillment'] {
   return fulfillment.type === null ? null : { ...fulfillment, type: fulfillment.type };
+}
+
+function mergeFulfillment(
+  current: ConversationFulfillmentSnapshot,
+  patch: ConversationOrderPatch['fulfillment'],
+): ConversationOrderCreateDraft['fulfillment'] {
+  if (patch === null) return null;
+  if (patch === undefined) return fulfillmentFromSnapshot(current);
+  return { ...current, ...patch, type: patch.type ?? current.type } as Partial<ZeloMenuFulfillmentSnapshot>;
 }
 
 function selectionFromCartItem(item: ConversationOrderCartItemSnapshot): ConversationOrderItemSelection {
@@ -299,7 +331,7 @@ function selectionFromCartItem(item: ConversationOrderCartItemSnapshot): Convers
 
 function mergeDraftLines(
   current: ConversationOrderCartSnapshot,
-  incoming: readonly ConversationOrderItemSelection[],
+  incoming: readonly ConversationOrderLinePatch[],
   removedLineIds: readonly string[],
 ): ConversationOrderItemSelection[] {
   const incomingByLineId = new Map(incoming.map((item) => [item.lineId, item]));
@@ -308,11 +340,45 @@ function mergeDraftLines(
     throw new ConversationOrderingError('ITEM_INVALIDO', 'Não encontrei um item informado para remoção.');
   }
   const removed = new Set(removedLineIds);
+  if (incomingByLineId.size !== incoming.length || removedLineIds.some((id) => incomingByLineId.has(id))) {
+    throw new ConversationOrderingError('ITEM_INVALIDO', 'Revise os itens informados.');
+  }
+  for (const patch of incoming) {
+    if (patch.productId === undefined && patch.quantity === undefined
+      && patch.notes === undefined && patch.selectedOptions === undefined) {
+      throw new ConversationOrderingError(
+        'PEDIDO_INVALIDO',
+        'Informe produto, quantidade, observação ou complementos para alterar o item.',
+      );
+    }
+    if (!currentLineIds.has(patch.lineId)
+      && (patch.productId === undefined || patch.quantity === undefined)) {
+      throw new ConversationOrderingError('ITEM_INVALIDO', 'Novos itens precisam de produto e quantidade.');
+    }
+  }
   const merged = [
     ...current.items
       .filter((item) => !removed.has(item.lineId))
-      .map((item) => incomingByLineId.get(item.lineId) ?? selectionFromCartItem(item)),
-    ...incoming.filter((item) => !currentLineIds.has(item.lineId)),
+      .map((item) => {
+        const patch = incomingByLineId.get(item.lineId);
+        if (!patch) return selectionFromCartItem(item);
+        const base = selectionFromCartItem(item);
+        return {
+          lineId: item.lineId,
+          productId: patch.productId ?? base.productId,
+          quantity: patch.quantity ?? base.quantity,
+          notes: Object.prototype.hasOwnProperty.call(patch, 'notes') ? patch.notes : base.notes,
+          selectedOptions: Object.prototype.hasOwnProperty.call(patch, 'selectedOptions')
+            ? patch.selectedOptions : base.selectedOptions,
+        };
+      }),
+    ...incoming.filter((item) => !currentLineIds.has(item.lineId)).map((item) => ({
+      lineId: item.lineId,
+      productId: item.productId!,
+      quantity: item.quantity!,
+      notes: item.notes,
+      selectedOptions: item.selectedOptions,
+    })),
   ];
   if (merged.length === 0) {
     throw new ConversationOrderingError(
@@ -323,13 +389,13 @@ function mergeDraftLines(
   return merged;
 }
 
-function toSnapshot(record: ConversationOrderingRecord, confirmationAction: OrderingSnapshot['confirmationAction'] = null, requiresReview = false): OrderingSnapshot {
+function toSnapshot(record: ConversationOrderingRecord, confirmationAction: OrderingSnapshot['confirmationAction'] = null): OrderingSnapshot {
   const normalized = normalizeReadiness(record);
-  const { sessionId: _sessionId, processedMessageIds: _processedMessageIds, ...publicRecord } = normalized;
+  const { sessionId: _sessionId, processedMessageIds: _processedMessageIds, reviewRequired: _reviewRequired, ...publicRecord } = normalized;
   return {
     ...publicRecord,
     confirmationAction: normalized.readyForConfirmation ? confirmationAction : null,
-    requiresReview,
+    requiresReview: normalized.reviewRequired === true,
   };
 }
 
@@ -372,11 +438,10 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
   async function withConfirmationAction(
     record: ConversationOrderingRecord,
     permit: ConversationAiPermit,
-    requiresReview = false,
   ): Promise<OrderingSnapshot> {
     const normalized = normalizeReadiness(record);
     if (normalized.state !== 'cart_open' || !normalized.readyForConfirmation) {
-      return toSnapshot(normalized, null, requiresReview);
+      return toSnapshot(normalized);
     }
     const revisionTime = Date.parse(normalized.updatedAt);
     const expiresAt = new Date((Number.isFinite(revisionTime) ? revisionTime : now().getTime()) + ttlMs).toISOString();
@@ -384,7 +449,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       throw new ConversationOrderingError(
         'RESUMO_EXPIRADO',
         'Este resumo expirou. Atualize o pedido para receber uma nova confirmação.',
-        toSnapshot(normalized, null, true),
+        toSnapshot(normalized),
       );
     }
     const token = options.createRawConfirmationToken(normalized, expiresAt);
@@ -403,7 +468,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       );
     }
     const action = { type: 'confirm_order' as const, token, revision: normalized.revision, expiresAt };
-    return toSnapshot(normalized, action, requiresReview);
+    return toSnapshot(normalized, action);
   }
 
   async function applyOnce(command: ConversationOrderCommand): Promise<OrderingSnapshot> {
@@ -411,11 +476,12 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (historical) return historical.state === 'cart_open' ? withConfirmationAction(historical, command) : toSnapshot(historical);
 
     if (command.type === 'open_or_update_draft' && !command.orderingId) {
+      const createDraft = command.draft as ConversationOrderCreateDraft;
       validateDraftLineIds(command.draft);
-      if ((command.draft.removedLineIds?.length ?? 0) > 0) {
+      if (((command.draft as ConversationOrderPatch).removedLineIds?.length ?? 0) > 0) {
         throw new ConversationOrderingError('ITEM_INVALIDO', 'Não encontrei um item informado para remoção.');
       }
-      if (command.draft.items.length === 0) {
+      if (createDraft.items.length === 0) {
         throw new ConversationOrderingError(
           'PEDIDO_VAZIO',
           'O pedido precisa ter pelo menos um item. Para encerrar tudo, cancele o pedido.',
@@ -429,8 +495,8 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       let materialized: DraftMaterialization;
       try {
         materialized = normalizeDraftMaterialization(
-          command.draft,
-          await adapter.materializeDraft(command.empresaId, command.draft),
+          createDraft,
+          await adapter.materializeDraft(command, createDraft),
         );
       } catch (error) {
         throw asFriendlyMaterializationError(error);
@@ -441,14 +507,15 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
         conversationEpoch: command.conversationEpoch,
         empresaId: command.empresaId,
         remoteJid: command.remoteJid,
-        pessoaId: command.draft.pessoaId ?? null,
+        pessoaId: createDraft.pessoaId ?? null,
         processedMessageIds: [command.messageId],
       });
       return withConfirmationAction(record, command);
     }
 
-    const current = await adapter.findByOrderingId(command.orderingId!);
-    if (!current || current.empresaId !== command.empresaId || current.remoteJid !== command.remoteJid) {
+    const lookup = { orderingId: command.orderingId!, empresaId: command.empresaId, remoteJid: command.remoteJid };
+    const current = await adapter.findByOrderingId(lookup);
+    if (!current) {
       throw new ConversationOrderingError('PEDIDO_NAO_ENCONTRADO', 'Não encontrei este pedido para a conversa informada.');
     }
     if (current.processedMessageIds.includes(command.messageId)) return withConfirmationAction(current, command);
@@ -459,24 +526,39 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (command.type === 'open_or_update_draft') {
       if (current.state !== 'cart_open') throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
       validateDraftLineIds(command.draft);
+      const patch = command.draft as ConversationOrderPatch;
+      const hasCustomerChange = Object.prototype.hasOwnProperty.call(patch, 'customer')
+        && (patch.customer === null || Object.prototype.hasOwnProperty.call(patch.customer ?? {}, 'name'));
+      const hasFulfillmentChange = Object.prototype.hasOwnProperty.call(patch, 'fulfillment')
+        && (patch.fulfillment === null || Object.keys(patch.fulfillment ?? {}).length > 0);
+      if ((patch.items?.length ?? 0) === 0 && (patch.removedLineIds?.length ?? 0) === 0
+        && !hasCustomerChange && !hasFulfillmentChange
+        && !Object.prototype.hasOwnProperty.call(patch, 'observations')
+        && !Object.prototype.hasOwnProperty.call(patch, 'paymentMethod')
+        && !Object.prototype.hasOwnProperty.call(patch, 'pessoaId')) {
+        throw new ConversationOrderingError('PEDIDO_INVALIDO', 'Informe pelo menos uma alteração.');
+      }
       const mergedItems = mergeDraftLines(
         current.cart,
-        command.draft.items,
-        command.draft.removedLineIds ?? [],
+        patch.items ?? [],
+        patch.removedLineIds ?? [],
       );
       let materialized: DraftMaterialization;
       try {
-        const materializationDraft: ConversationOrderDraft = {
-          ...command.draft,
+        const materializationDraft: ConversationOrderCreateDraft = {
+          observations: Object.prototype.hasOwnProperty.call(patch, 'observations') ? patch.observations : current.cart.observations,
+          customer: Object.prototype.hasOwnProperty.call(patch, 'customer')
+            ? { name: patch.customer?.name ?? null }
+            : { name: current.customer.name },
+          paymentMethod: Object.prototype.hasOwnProperty.call(patch, 'paymentMethod')
+            ? patch.paymentMethod : current.payment.declaredMethod,
+          pessoaId: Object.prototype.hasOwnProperty.call(patch, 'pessoaId') ? patch.pessoaId : current.pessoaId,
           items: mergedItems,
-          removedLineIds: undefined,
-          fulfillment: command.draft.fulfillment === undefined
-            ? fulfillmentFromSnapshot(current.fulfillment)
-            : command.draft.fulfillment,
+          fulfillment: mergeFulfillment(current.fulfillment, patch.fulfillment),
         };
         materialized = normalizeDraftMaterialization(
           materializationDraft,
-          await adapter.materializeDraft(command.empresaId, materializationDraft),
+          await adapter.materializeDraft(command, materializationDraft),
         );
       } catch (error) {
         throw asFriendlyMaterializationError(error);
@@ -488,7 +570,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
         expectedRevision: command.expectedRevision,
         messageId: command.messageId,
         materialization: materialized,
-        pessoaId: command.draft.pessoaId ?? current.pessoaId,
+        pessoaId: Object.prototype.hasOwnProperty.call(patch, 'pessoaId') ? patch.pessoaId ?? null : current.pessoaId,
       });
       if (result.kind === 'conflict') {
         throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(result.record));
@@ -537,7 +619,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (result.kind === 'conflict') {
       throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(result.record));
     }
-    if (result.kind === 'requires_review') return withConfirmationAction(result.record, command, true);
+    if (result.kind === 'requires_review') return withConfirmationAction(result.record, command);
     const originalAlreadyConfirmed = result.record.order?.alreadyConfirmed;
     // Confirmation already committed under the permit. Auto-accept is the
     // restaurant's independent CAS-protected order policy, so a later chat
@@ -556,8 +638,8 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       inFlight.set(key, pending);
       return pending;
     },
-    async getSnapshot(orderingId: string): Promise<OrderingSnapshot | null> {
-      const record = await adapter.findByOrderingId(orderingId);
+    async getSnapshot(lookup: ConversationOrderLookup): Promise<OrderingSnapshot | null> {
+      const record = await adapter.findByOrderingId(lookup);
       return record ? toSnapshot(record) : null;
     },
   };

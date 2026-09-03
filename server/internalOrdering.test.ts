@@ -239,6 +239,7 @@ function massRecord(complete: boolean): ConversationOrderingRecord {
     pessoaId: snapshot.pessoaId,
     processedMessageIds: complete ? ['wamid.mass-open-123456', 'wamid.mass-complete-123456'] : ['wamid.mass-open-123456'],
     order: snapshot.order,
+    reviewRequired: false,
   };
 }
 
@@ -423,7 +424,7 @@ describe('parseInternalOrderingCommand', () => {
 
     const parsed = parseInternalOrderingCommand(validCommand());
     expect(parsed.ok && parsed.value.type === 'open_or_update_draft'
-      ? parsed.value.draft.items[0].lineId
+      ? parsed.value.draft.items?.[0]?.lineId ?? null
       : null).toBe('line-1');
   });
 
@@ -435,25 +436,69 @@ describe('parseInternalOrderingCommand', () => {
       draft: { items: [], removedLineIds: ['line-1'] },
     });
     expect(removalOnly.ok && removalOnly.value.type === 'open_or_update_draft'
-      ? removalOnly.value.draft.removedLineIds
+      ? ('removedLineIds' in removalOnly.value.draft ? removalOnly.value.draft.removedLineIds : undefined)
       : null).toEqual(['line-1']);
 
     expect(parseInternalOrderingCommand({
-      ...validCommand(), draft: { items: [], removedLineIds: ['line.1'] },
+      ...validCommand(), orderingId: ORDERING, expectedRevision: 1, draft: { items: [], removedLineIds: ['line.1'] },
     })).toEqual({ ok: false, message: 'Revise a identificação dos itens removidos.' });
     expect(parseInternalOrderingCommand({
-      ...validCommand(), draft: { items: [], removedLineIds: ['line-1', 'line-1'] },
+      ...validCommand(), orderingId: ORDERING, expectedRevision: 1, draft: { items: [], removedLineIds: ['line-1', 'line-1'] },
     })).toEqual({ ok: false, message: 'Cada item removido precisa de uma identificação diferente.' });
     expect(parseInternalOrderingCommand({
       ...validCommand(),
+      orderingId: ORDERING,
+      expectedRevision: 1,
       draft: {
         items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
         removedLineIds: ['line-1'],
       },
     })).toEqual({ ok: false, message: 'Um item não pode ser atualizado e removido ao mesmo tempo.' });
     expect(parseInternalOrderingCommand({
-      ...validCommand(), draft: { items: [], removedLineIds: [] },
+      ...validCommand(), orderingId: ORDERING, expectedRevision: 1, draft: { items: [], removedLineIds: [] },
     })).toEqual({ ok: false, message: 'Informe pelo menos um item para atualizar ou remover.' });
+  });
+
+  it('rejeita patch com apenas lineId e preserva updates só de detalhes ou telefone legado compatível', () => {
+    expect(parseInternalOrderingCommand({
+      ...validCommand(),
+      orderingId: ORDERING,
+      expectedRevision: 1,
+      draft: { items: [{ lineId: 'line-1' }] },
+    })).toEqual({
+      ok: false,
+      message: 'Informe produto, quantidade, observação ou complementos para alterar o item.',
+    });
+
+    const detailsOnly = parseInternalOrderingCommand({
+      ...validCommand(),
+      orderingId: ORDERING,
+      expectedRevision: 1,
+      draft: {
+        items: [],
+        observations: 'Sem talher',
+        customer: { name: 'Ana', phone: '(11) 99999-9999' },
+        paymentMethod: 'pix',
+        pessoaId: '40000000-0000-4000-8000-000000000001',
+      },
+    });
+
+    expect(detailsOnly.ok && detailsOnly.value.type === 'open_or_update_draft'
+      ? detailsOnly.value.draft
+      : null).toEqual({
+      items: [],
+      observations: 'Sem talher',
+      customer: { name: 'Ana' },
+      paymentMethod: 'pix',
+      pessoaId: '40000000-0000-4000-8000-000000000001',
+    });
+
+    expect(parseInternalOrderingCommand({
+      ...validCommand(),
+      orderingId: ORDERING,
+      expectedRevision: 1,
+      draft: { items: [], customer: { phone: null } },
+    })).toEqual({ ok: false, message: 'Informe pelo menos uma alteração.' });
   });
 });
 
@@ -487,7 +532,7 @@ describe('rotas internas de ordering', () => {
           ? stored
           : null
       )),
-      findByOrderingId: vi.fn(async (orderingId) => stored.orderingId === orderingId ? stored : null),
+      findByOrderingId: vi.fn(async (lookup) => stored.orderingId === lookup.orderingId ? stored : null),
       async createOpen() { throw new Error('createOpen não deveria ser chamado'); },
       updateOpen: vi.fn(async (input) => {
         if (stored.processedMessageIds.includes(input.messageId)) return { kind: 'duplicate' as const, record: stored };
@@ -547,6 +592,11 @@ describe('rotas internas de ordering', () => {
     await expect(replay.json()).resolves.toEqual(expectedMassSnapshot(true));
     expect(adapter.materializeDraft).toHaveBeenCalledOnce();
     expect(adapter.updateOpen).toHaveBeenCalledOnce();
+    expect(adapter.findByOrderingId).toHaveBeenCalledWith({
+      orderingId: ORDERING,
+      empresaId: EMPRESA,
+      remoteJid: JID,
+    });
   });
 
   it('serializa exatamente o conflito de revisão com o snapshot atual', async () => {
@@ -626,9 +676,37 @@ describe('rotas internas de ordering', () => {
     expect(postBody).not.toHaveProperty('link');
     expect(postBody).not.toHaveProperty('menuToken');
 
-    const loaded = await fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${EMPRESA}`, { headers: { 'x-zelo-internal-key': 'valid' } });
+    const loaded = await fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${EMPRESA}&remoteJid=${encodeURIComponent(JID)}`, { headers: { 'x-zelo-internal-key': 'valid' } });
     expect(loaded.status).toBe(200);
-    expect(ordering.getSnapshot).toHaveBeenCalledWith(ORDERING);
+    expect(ordering.getSnapshot).toHaveBeenCalledWith({ orderingId: ORDERING, empresaId: EMPRESA, remoteJid: JID });
+  });
+
+  it('falha fechado no GET quando o JID é inválido ou o pedido não existe', async () => {
+    const ordering = {
+      apply: vi.fn(async () => snapshot()),
+      getSnapshot: vi.fn(async () => null),
+    };
+    const { baseUrl } = await start({ ordering });
+
+    const invalidJid = await fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${EMPRESA}&remoteJid=telefone`, {
+      headers: { 'x-zelo-internal-key': 'valid' },
+    });
+    expect(invalidJid.status).toBe(400);
+    await expect(invalidJid.json()).resolves.toMatchObject({
+      error: 'CONVERSA_INVALIDA',
+      requestId: 'request-gerado',
+    });
+
+    const missing = await fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${EMPRESA}&remoteJid=${encodeURIComponent(JID)}`, {
+      headers: { 'x-zelo-internal-key': 'valid' },
+    });
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({
+      error: 'PEDIDO_NAO_ENCONTRADO',
+      detail: 'Não encontrei este pedido.',
+      requestId: 'request-gerado',
+    });
+    expect(ordering.getSnapshot).toHaveBeenCalledWith({ orderingId: ORDERING, empresaId: EMPRESA, remoteJid: JID });
   });
 
   it('devolve revogacao sem snapshot ou dados da conversa e com texto amigavel', async () => {
@@ -723,7 +801,7 @@ describe('rotas internas de ordering', () => {
   it('aplica quota por empresa também na consulta GET', async () => {
     const { baseUrl } = await start({ quotaMax: 1 });
     const empresaB = '10000000-0000-4000-8000-000000000002';
-    const get = (empresaId: string) => fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${empresaId}`, {
+    const get = (empresaId: string) => fetch(`${baseUrl}/internal/ordering/${ORDERING}?empresaId=${empresaId}&remoteJid=${encodeURIComponent(JID)}`, {
       headers: { 'x-zelo-internal-key': 'valid' },
     });
 

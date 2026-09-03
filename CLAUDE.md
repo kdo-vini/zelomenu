@@ -141,14 +141,14 @@ grupo ou opção preservam o produto-pai; opções não são itens avulsos.
 ### Pedidos conversacionais internos
 
 `POST /internal/ordering/commands` e
-`GET /internal/ordering/:orderingId?empresaId=<uuid>`
+`GET /internal/ordering/:orderingId?empresaId=<uuid>&remoteJid=<validated-jid>`
 expõem o módulo profundo `ConversationOrdering` ao ZeloChat. As duas rotas usam
 `x-zelo-internal-key`/`ZELO_INTERNAL_API_KEY`, falham fechadas, devolvem
 `requestId`, aplicam limite coarse de falhas e quota por empresa. Erros para o
 chamador são sempre amigáveis em PT-BR.
 
 A interface pública do módulo é somente `apply(command)` +
-`getSnapshot(orderingId)`. O adapter Supabase é injetável; sessões deste fluxo
+`getSnapshot({ orderingId, empresaId, remoteJid })`. O adapter Supabase é injetável; sessões deste fluxo
 são exclusivamente `context='whatsapp_order'` e `state='cart_open'`. Itens de
 entrada carregam somente IDs, quantidades e observações. Nomes, preços,
 complementos, estoque, taxa/cobertura, horário e totais são reconstruídos pela
@@ -220,6 +220,10 @@ ZeloChat.
 - **Type checking is the linter:** Run `npm run lint` (tsc --noEmit) to catch errors — there is no ESLint
 
 ## Invariantes da confirmacao conversacional (Fix 1)
+
+F2-F5 preservam replay de revisao, pausa de produtos vinculados sob lock unico,
+patches por presenca e telefone derivado do JID. O GET exige a tupla completa
+`{ orderingId, empresaId, remoteJid }`; rollout depende do consumidor ZeloChat.
 
 Linhas do carrinho conversacional preservam o `lineId` opaco fornecido pelo chamador.
 O materializador SQL valida formato e unicidade e nunca reconstrói a identidade pela

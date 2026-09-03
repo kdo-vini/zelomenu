@@ -70,6 +70,26 @@ begin
 end;
 $function$;
 
+create or replace function public.zelomenu_whatsapp_phone_from_source_ref_v1(p_source_ref text)
+returns text
+language plpgsql
+immutable
+security definer
+set search_path = public, pg_temp
+as $function$
+declare
+  v_digits text;
+begin
+  if p_source_ref is null or p_source_ref !~ '^\d+@(s\.whatsapp\.net|c\.us)$' then
+    raise exception using errcode = 'ZL400', message = 'INVALID_WHATSAPP_JID';
+  end if;
+  v_digits := split_part(p_source_ref, '@', 1);
+  if length(v_digits) in (10, 11) then return '55' || v_digits; end if;
+  if v_digits ~ '^55\d{10,11}$' then return v_digits; end if;
+  raise exception using errcode = 'ZL400', message = 'INVALID_WHATSAPP_JID';
+end;
+$function$;
+
 create or replace function public.zelomenu_open_whatsapp_order_with_ai_epoch_v1(
   p_empresa_id uuid,
   p_source_ref text,
@@ -101,6 +121,8 @@ begin
     p_conversation_epoch
   );
 
+  if p_customer_snapshot is null then raise exception using errcode = 'ZL400', message = 'INVALID_ORDER_SNAPSHOT'; end if;
+  p_customer_snapshot := jsonb_set(p_customer_snapshot, '{phone}', to_jsonb(public.zelomenu_whatsapp_phone_from_source_ref_v1(p_source_ref)), true);
   if p_customer_snapshot is null
      or p_cart_snapshot is null
      or p_fulfillment_snapshot is null
@@ -186,6 +208,8 @@ begin
     p_conversation_epoch
   );
 
+  if p_customer_snapshot is null then raise exception using errcode = 'ZL400', message = 'INVALID_ORDER_MUTATION'; end if;
+  p_customer_snapshot := jsonb_set(p_customer_snapshot, '{phone}', to_jsonb(public.zelomenu_whatsapp_phone_from_source_ref_v1(p_source_ref)), true);
   if p_session_id is null
      or p_expected_revision is null
      or p_expected_revision < 1
@@ -392,6 +416,8 @@ $function$;
 
 revoke all on function public.zelomenu_assert_ai_conversation_permit_v1(uuid, text, uuid, text)
   from public, anon, authenticated;
+revoke all on function public.zelomenu_whatsapp_phone_from_source_ref_v1(text)
+  from public, anon, authenticated, service_role;
 revoke all on function public.zelomenu_open_whatsapp_order_with_ai_epoch_v1(uuid, text, uuid, text, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, timestamptz, jsonb, jsonb, boolean)
   from public, anon, authenticated;
 revoke all on function public.zelomenu_update_whatsapp_order_with_ai_epoch_v1(uuid, text, uuid, text, uuid, integer, text, jsonb, jsonb, jsonb, jsonb, jsonb, timestamptz, jsonb, jsonb, boolean, jsonb)

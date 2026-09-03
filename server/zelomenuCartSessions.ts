@@ -53,6 +53,7 @@ import { buildCanonicalOrderSnapshots, usesDirectCanonicalOrderEngine } from '..
 import { shouldAutoAcceptPublicOrder } from '../src/domain/zelomenuOrderAcceptance.js';
 import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
 import { normalizePhoneNumber } from '../src/domain/chat.js';
+import { deriveConversationCustomerPhone } from './conversationOrderingIdentity.js';
 import { hasZeloMenuAccessForEmpresa } from './zelomenuAccess.js';
 import {
   CUSTOMER_NAME_REQUIREMENT,
@@ -1229,6 +1230,7 @@ function throwConversationModifierError(error: unknown): never {
 
 export async function materializeWhatsAppOrderDraft(input: {
   empresaId: string;
+  remoteJid: string;
   items: Array<{
     lineId: string;
     productId: number;
@@ -1237,7 +1239,7 @@ export async function materializeWhatsAppOrderDraft(input: {
     selectedOptions?: ZeloMenuModifierSelectionInput[];
   }>;
   observations?: string | null;
-  customer?: { name?: string | null; phone?: string | null };
+  customer?: { name?: string | null };
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
 }): Promise<WhatsAppOrderDraftMaterialization> {
@@ -1292,7 +1294,7 @@ export async function materializeWhatsAppOrderDraft(input: {
   }, config);
   const customer: ZeloMenuCustomerSnapshot = {
     name: sanitizeText(input.customer?.name, 120),
-    phone: sanitizeText(input.customer?.phone, 40),
+    phone: deriveConversationCustomerPhone(input.remoteJid),
   };
   const missingDeliveryAddressFields: DeliveryAddressRequirementField[] = [];
   if (resolved.fulfillment.type === 'delivery') {

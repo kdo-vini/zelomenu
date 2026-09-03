@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(38);
+select plan(40);
 
 insert into auth.users (
   id, email, aud, role, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -116,7 +116,7 @@ insert into public.zelomenu_cart_sessions (
   'c1000000-0000-4000-8000-000000000101',
   'c1000000-0000-4000-8000-000000000201',
   'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
-  'valid-text@s.whatsapp.net',
+  '5511900000011@s.whatsapp.net',
   '{"name":"Ana","phone":null}'::jsonb,
   '{"items":[{"lineId":"line-1","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null},{"lineId":"line-2","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":"segunda linha"}],"observations":null}'::jsonb,
   '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
@@ -130,7 +130,7 @@ insert into public.zelomenu_cart_sessions (
   'c1000000-0000-4000-8000-000000000102',
   'c1000000-0000-4000-8000-000000000202',
   'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
-  'not-ready@s.whatsapp.net',
+  '5511900000012@s.whatsapp.net',
   '{"name":"Ana","phone":null}'::jsonb,
   '{"items":[{"lineId":"line-ready","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null}],"observations":null}'::jsonb,
   '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
@@ -144,7 +144,7 @@ insert into public.zelomenu_cart_sessions (
   'c1000000-0000-4000-8000-000000000103',
   'c1000000-0000-4000-8000-000000000203',
   'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
-  'blank-name@s.whatsapp.net',
+  '5511900000013@s.whatsapp.net',
   '{"name":"   ","phone":null}'::jsonb,
   '{"items":[{"lineId":"line-ready","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null}],"observations":null}'::jsonb,
   '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
@@ -158,7 +158,7 @@ insert into public.zelomenu_cart_sessions (
   'c1000000-0000-4000-8000-000000000104',
   'c1000000-0000-4000-8000-000000000204',
   'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
-  'null-payment@s.whatsapp.net',
+  '5511900000014@s.whatsapp.net',
   '{"name":"Ana","phone":null}'::jsonb,
   '{"items":[{"lineId":"line-ready","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null}],"observations":null}'::jsonb,
   '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
@@ -172,7 +172,7 @@ insert into public.zelomenu_cart_sessions (
   'c1000000-0000-4000-8000-000000000105',
   'c1000000-0000-4000-8000-000000000205',
   'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
-  'blocking-requirement@s.whatsapp.net',
+  '5511900000015@s.whatsapp.net',
   '{"name":"Ana","phone":null}'::jsonb,
   '{"items":[{"lineId":"line-ready","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null}],"observations":null}'::jsonb,
   '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
@@ -186,7 +186,7 @@ insert into public.zelomenu_cart_sessions (
   'c1000000-0000-4000-8000-000000000106',
   'c1000000-0000-4000-8000-000000000206',
   'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
-  'delivery-incomplete@s.whatsapp.net',
+  '5511900000016@s.whatsapp.net',
   '{"name":"Ana","phone":null}'::jsonb,
   '{"items":[{"lineId":"line-ready","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null}],"observations":null}'::jsonb,
   '{"type":"delivery","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryNumber":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
@@ -200,10 +200,40 @@ insert into public.zelomenu_cart_sessions (
   'c1000000-0000-4000-8000-000000000107',
   'c1000000-0000-4000-8000-000000000207',
   'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
-  'scheduled-incomplete@s.whatsapp.net',
+  '5511900000017@s.whatsapp.net',
   '{"name":"Ana","phone":null}'::jsonb,
   '{"items":[{"lineId":"line-ready","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null}],"observations":null}'::jsonb,
   '{"type":"pickup","asap":false,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
+  '{"subtotal":10,"deliveryFee":0,"discount":0,"total":10}'::jsonb,
+  '{"declaredMethod":"dinheiro","pixReceiptRequired":false,"pixReceiptApproved":false}'::jsonb,
+  '{"processedMessageIds":[]}'::jsonb, 1, now(),
+  '{"checkedAt":"2026-09-02T12:00:00Z","ok":true,"issues":[]}'::jsonb,
+  '[]'::jsonb, true
+);
+
+-- Canonical conversation fixtures never trust caller phone data; derive it from
+-- each scoped JID exactly as the open/update wrappers do.
+update public.zelomenu_cart_sessions
+   set customer_snapshot = jsonb_set(
+     customer_snapshot,
+     '{phone}',
+     to_jsonb(public.zelomenu_whatsapp_phone_from_source_ref_v1(source_ref)),
+     true
+   );
+
+insert into public.zelomenu_cart_sessions (
+  id, ordering_id, empresa_id, context, state, source_ref,
+  customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot,
+  payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation,
+  requirements_snapshot, ready_for_confirmation
+) values (
+  'c1000000-0000-4000-8000-000000000117',
+  'c1000000-0000-4000-8000-000000000217',
+  'c1000000-0000-4000-8000-000000000002', 'whatsapp_order', 'cart_open',
+  '5511900000026@s.whatsapp.net',
+  '{"name":"Ana","phone":"5511900000999"}'::jsonb,
+  '{"items":[{"lineId":"line-ready","productId":2147482801,"productName":"Produto de integridade","baseUnitPrice":10,"selectedModifiers":[],"modifierDeltaTotal":0,"quantity":1,"unitPrice":10,"lineTotal":10,"notes":null}],"observations":null}'::jsonb,
+  '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
   '{"subtotal":10,"deliveryFee":0,"discount":0,"total":10}'::jsonb,
   '{"declaredMethod":"dinheiro","pixReceiptRequired":false,"pixReceiptApproved":false}'::jsonb,
   '{"processedMessageIds":[]}'::jsonb, 1, now(),
@@ -215,10 +245,10 @@ insert into public.zelomenu_cart_sessions (
 -- be exercised without changing the baseline complete revision.
 with corrupt_cases(id, ordering_id, source_ref, requirements_snapshot, last_revalidation) as (
   values
-    ('c1000000-0000-4000-8000-000000000108'::uuid, 'c1000000-0000-4000-8000-000000000208'::uuid, 'missing-blocking@s.whatsapp.net', '[{"id":"bad"}]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":true,"issues":[]}'::jsonb),
-    ('c1000000-0000-4000-8000-000000000109'::uuid, 'c1000000-0000-4000-8000-000000000209'::uuid, 'null-blocking@s.whatsapp.net', '[{"blocking":null}]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":true,"issues":[]}'::jsonb),
-    ('c1000000-0000-4000-8000-000000000110'::uuid, 'c1000000-0000-4000-8000-000000000210'::uuid, 'string-blocking@s.whatsapp.net', '[{"blocking":"false"}]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":true,"issues":[]}'::jsonb),
-    ('c1000000-0000-4000-8000-000000000111'::uuid, 'c1000000-0000-4000-8000-000000000211'::uuid, 'string-revalidation@s.whatsapp.net', '[]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":"true","issues":[]}'::jsonb)
+    ('c1000000-0000-4000-8000-000000000108'::uuid, 'c1000000-0000-4000-8000-000000000208'::uuid, '5511900000018@s.whatsapp.net', '[{"id":"bad"}]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":true,"issues":[]}'::jsonb),
+    ('c1000000-0000-4000-8000-000000000109'::uuid, 'c1000000-0000-4000-8000-000000000209'::uuid, '5511900000019@s.whatsapp.net', '[{"blocking":null}]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":true,"issues":[]}'::jsonb),
+    ('c1000000-0000-4000-8000-000000000110'::uuid, 'c1000000-0000-4000-8000-000000000210'::uuid, '5511900000020@s.whatsapp.net', '[{"blocking":"false"}]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":true,"issues":[]}'::jsonb),
+    ('c1000000-0000-4000-8000-000000000111'::uuid, 'c1000000-0000-4000-8000-000000000211'::uuid, '5511900000021@s.whatsapp.net', '[]'::jsonb, '{"checkedAt":"2026-09-02T12:00:00Z","ok":"true","issues":[]}'::jsonb)
 )
 insert into public.zelomenu_cart_sessions (
   id, ordering_id, empresa_id, context, state, source_ref,
@@ -241,19 +271,19 @@ with line_cases(id, ordering_id, source_ref, cart_snapshot) as (
     (
       'c1000000-0000-4000-8000-000000000114'::uuid,
       'c1000000-0000-4000-8000-000000000214'::uuid,
-      'invalid-line@s.whatsapp.net',
+      '5511900000022@s.whatsapp.net',
       '{"items":[{"lineId":"bad id","productId":2147482801,"quantity":1,"selectedModifiers":[]}],"observations":null}'::jsonb
     ),
     (
       'c1000000-0000-4000-8000-000000000115'::uuid,
       'c1000000-0000-4000-8000-000000000215'::uuid,
-      'missing-line@s.whatsapp.net',
+      '5511900000023@s.whatsapp.net',
       '{"items":[{"productId":2147482801,"quantity":1,"selectedModifiers":[]}],"observations":null}'::jsonb
     ),
     (
       'c1000000-0000-4000-8000-000000000116'::uuid,
       'c1000000-0000-4000-8000-000000000216'::uuid,
-      'duplicate-line@s.whatsapp.net',
+      '5511900000024@s.whatsapp.net',
       '{"items":[{"lineId":"same","productId":2147482801,"quantity":1,"selectedModifiers":[]},{"lineId":"same","productId":2147482801,"quantity":1,"selectedModifiers":[]}],"observations":null}'::jsonb
     )
 )
@@ -274,6 +304,19 @@ select c.id, c.ordering_id, 'c1000000-0000-4000-8000-000000000002'::uuid,
   '[]'::jsonb, true
 from line_cases c;
 
+update public.zelomenu_cart_sessions
+   set customer_snapshot = jsonb_set(
+     customer_snapshot,
+     '{phone}',
+     to_jsonb(public.zelomenu_whatsapp_phone_from_source_ref_v1(source_ref)),
+     true
+   )
+ where id in (
+   'c1000000-0000-4000-8000-000000000114',
+   'c1000000-0000-4000-8000-000000000115',
+   'c1000000-0000-4000-8000-000000000116'
+ );
+
 insert into public.zelomenu_cart_sessions (
   id, ordering_id, empresa_id, context, state, source_ref,
   customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot,
@@ -282,26 +325,30 @@ insert into public.zelomenu_cart_sessions (
 )
 select
   'c1000000-0000-4000-8000-000000000112', 'c1000000-0000-4000-8000-000000000212',
-  empresa_id, context, state, 'button@s.whatsapp.net', customer_snapshot,
+  empresa_id, context, state, '5511900000025@s.whatsapp.net', customer_snapshot,
   cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot,
   metadata, revision, last_revalidated_at, last_revalidation,
   requirements_snapshot, ready_for_confirmation
 from public.zelomenu_cart_sessions
 where id = 'c1000000-0000-4000-8000-000000000101';
 
+update public.zelomenu_cart_sessions
+   set customer_snapshot = jsonb_set(customer_snapshot, '{phone}', to_jsonb(public.zelomenu_whatsapp_phone_from_source_ref_v1(source_ref)), true)
+ where id = 'c1000000-0000-4000-8000-000000000112';
+
 set local role service_role;
 
 select lives_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     'f77e3ef1c60015a3bce4d2f81401f549a8b3b56f30c7f4b4e20d1607f63e9480', 'c1000000-0000-4000-8000-000000000002',
-    'valid-text@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000101', 1, now() + interval '10 minutes'
+    '5511900000011@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000101', 1, now() + interval '10 minutes'
   ) $sql$,
   'complete ready revision issues a confirmation token'
 );
 
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'valid-text@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000011@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000101', 1, 'message-valid', 'idem-valid', null, null
   )->>'outcome'),
   'confirmed',
@@ -317,13 +364,13 @@ select ok(
 select lives_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     '1617eac6dadb9bdcb2004d85fd9c8b9d0a11f85ca19b50c6d67f5b04968d5705', 'c1000000-0000-4000-8000-000000000002',
-    'button@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000112', 1, now() + interval '10 minutes'
+    '5511900000025@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000112', 1, now() + interval '10 minutes'
   ) $sql$,
   'complete ready revision issues a live button token'
 );
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'button@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000025@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000112', 1, 'message-button', 'idem-button', null, '1617eac6dadb9bdcb2004d85fd9c8b9d0a11f85ca19b50c6d67f5b04968d5705'
   )->>'outcome'),
   'confirmed',
@@ -333,7 +380,7 @@ select is(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     'a08663301e123a40d1162222e94854078f06ec383c60789455e0a4698d534dca', 'c1000000-0000-4000-8000-000000000002',
-    'not-ready@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000102', 1, now() + interval '10 minutes'
+    '5511900000012@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000102', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
   'stored false readiness blocks token issuance'
@@ -341,7 +388,7 @@ select throws_ok(
 
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'not-ready@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000012@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000102', 1, 'message-not-ready', 'idem-not-ready', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
@@ -351,14 +398,14 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     'e0f67bbda9022940293d103c2a6a83cc1133da9c9f36f418cdbf83a8aa204d26', 'c1000000-0000-4000-8000-000000000002',
-    'blank-name@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000103', 1, now() + interval '10 minutes'
+    '5511900000013@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000103', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'blank customer name blocks token issuance'
 );
 
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'blank-name@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000013@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000103', 1, 'message-blank-name', 'idem-blank-name', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
@@ -367,7 +414,7 @@ select throws_ok(
 
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'null-payment@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000014@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000104', 1, 'message-null-payment', 'idem-null-payment', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
@@ -377,14 +424,14 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     '771080a5b60047c896f6f2c2ef8ce4061e661f14d3252150f0908401018d191a', 'c1000000-0000-4000-8000-000000000002',
-    'null-payment@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000104', 1, now() + interval '10 minutes'
+    '5511900000014@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000104', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'null payment method blocks token issuance'
 );
 
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'blocking-requirement@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000015@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000105', 1, 'message-blocking', 'idem-blocking', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
@@ -394,14 +441,14 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     '73c02b534d1f0456191965ac51576bfde31b61a79f7744d796ea1324cac88749', 'c1000000-0000-4000-8000-000000000002',
-    'blocking-requirement@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000105', 1, now() + interval '10 minutes'
+    '5511900000015@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000105', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'blocking requirement blocks token issuance'
 );
 
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'delivery-incomplete@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000016@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000106', 1, 'message-delivery', 'idem-delivery', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
@@ -411,14 +458,14 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     'cea9702a5ca49f4fdd01fad4afe21cbce52b8bebc64de73b7652c31f62fe5491', 'c1000000-0000-4000-8000-000000000002',
-    'delivery-incomplete@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000106', 1, now() + interval '10 minutes'
+    '5511900000016@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000106', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'incomplete delivery address blocks token issuance'
 );
 
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'scheduled-incomplete@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000017@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000107', 1, 'message-schedule', 'idem-schedule', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
@@ -428,21 +475,36 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     '3ff76f900f3b75cd4a3980a394b39b2c417710ccbbecb2e445bdeb78002bf219', 'c1000000-0000-4000-8000-000000000002',
-    'scheduled-incomplete@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000107', 1, now() + interval '10 minutes'
+    '5511900000017@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000107', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'missing scheduled date/time blocks token issuance'
 );
 
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
+    '42f7befeb0f14ce8d7d05fe3c6c0442360e8a9bb512cc84dbf1a2d7ef2658c03', 'c1000000-0000-4000-8000-000000000002',
+    '5511900000026@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000117', 1, now() + interval '10 minutes'
+  ) $sql$,
+  'ZL409', 'ORDER_NOT_READY', 'phone divergent from scoped JID blocks token issuance'
+);
+select throws_ok(
+  $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000026@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000117', 1, 'message-phone-mismatch', 'idem-phone-mismatch', null, null
+  ) $sql$,
+  'ZL409', 'ORDER_NOT_READY', 'phone divergent from scoped JID blocks tokenless confirmation'
+);
+
+select throws_ok(
+  $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     'e8c815f844e7e6b76c19264b41f4591ec46bb388855ca75d308e3d06c21a9b8f', 'c1000000-0000-4000-8000-000000000002',
-    'missing-blocking@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000108', 1, now() + interval '10 minutes'
+    '5511900000018@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000108', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'missing blocking flag blocks token issuance'
 );
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'missing-blocking@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000018@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000108', 1, 'message-missing-blocking', 'idem-missing-blocking', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'missing blocking flag blocks tokenless confirmation'
@@ -451,13 +513,13 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     '1f22ea5c029bf889f1b92f1831267ea8077fa512590cb3404135d08d7b66b01b', 'c1000000-0000-4000-8000-000000000002',
-    'null-blocking@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000109', 1, now() + interval '10 minutes'
+    '5511900000019@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000109', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'null blocking flag blocks token issuance'
 );
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'null-blocking@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000019@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000109', 1, 'message-null-blocking', 'idem-null-blocking', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'null blocking flag blocks tokenless confirmation'
@@ -466,13 +528,13 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     '30481b27bfbbfef6bfac8c7f1dd4a7df464ec46cd27ad9c782015da84694ef5b', 'c1000000-0000-4000-8000-000000000002',
-    'string-blocking@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000110', 1, now() + interval '10 minutes'
+    '5511900000020@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000110', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'string blocking flag blocks token issuance'
 );
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'string-blocking@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000020@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000110', 1, 'message-string-blocking', 'idem-string-blocking', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'string blocking flag blocks tokenless confirmation'
@@ -481,13 +543,13 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
     '2299babab22153f37214e4b583007f2f84cc3199b22fa6bf47a58118a57bfa54', 'c1000000-0000-4000-8000-000000000002',
-    'string-revalidation@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000111', 1, now() + interval '10 minutes'
+    '5511900000021@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000111', 1, now() + interval '10 minutes'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'string revalidation flag blocks token issuance without a cast error'
 );
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'string-revalidation@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000021@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000111', 1, 'message-string-revalidation', 'idem-string-revalidation', null, null
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'string revalidation flag blocks tokenless confirmation without a cast error'
@@ -499,7 +561,8 @@ select ok(
     'c1000000-0000-4000-8000-000000000104', 'c1000000-0000-4000-8000-000000000105',
     'c1000000-0000-4000-8000-000000000106', 'c1000000-0000-4000-8000-000000000107',
     'c1000000-0000-4000-8000-000000000108', 'c1000000-0000-4000-8000-000000000109',
-    'c1000000-0000-4000-8000-000000000110', 'c1000000-0000-4000-8000-000000000111'
+    'c1000000-0000-4000-8000-000000000110', 'c1000000-0000-4000-8000-000000000111',
+    'c1000000-0000-4000-8000-000000000117'
   )) = 0
   and (select count(*) from public.zelo_orders where empresa_id = 'c1000000-0000-4000-8000-000000000002') = 2
   and (select estoque_atual from public.produtos where id = 2147482801) = 0
@@ -508,28 +571,29 @@ select ok(
     'c1000000-0000-4000-8000-000000000104', 'c1000000-0000-4000-8000-000000000105',
     'c1000000-0000-4000-8000-000000000106', 'c1000000-0000-4000-8000-000000000107',
     'c1000000-0000-4000-8000-000000000108', 'c1000000-0000-4000-8000-000000000109',
-    'c1000000-0000-4000-8000-000000000110', 'c1000000-0000-4000-8000-000000000111'
+    'c1000000-0000-4000-8000-000000000110', 'c1000000-0000-4000-8000-000000000111',
+    'c1000000-0000-4000-8000-000000000117'
   ) and (state <> 'cart_open' or revision <> 1))
   , 'all malformed readiness cases are write-free (token/order/stock/state/revision)'
 );
 
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'invalid-line@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000022@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000114', 1, 'message-invalid-line', 'idem-invalid-line', null, null
   )->>'outcome'),
   'requires_review', 'invalid lineId cannot create an order'
 );
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'missing-line@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000023@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000115', 1, 'message-missing-line', 'idem-missing-line', null, null
   )->>'outcome'),
   'requires_review', 'missing lineId cannot create an order'
 );
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
-    'c1000000-0000-4000-8000-000000000002', 'duplicate-line@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000002', '5511900000024@s.whatsapp.net',
     'c1000000-0000-4000-8000-000000000116', 1, 'message-duplicate-line', 'idem-duplicate-line', null, null
   )->>'outcome'),
   'requires_review', 'duplicate lineId cannot create an order'

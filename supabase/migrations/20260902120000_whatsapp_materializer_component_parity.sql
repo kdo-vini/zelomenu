@@ -151,6 +151,8 @@ begin
                on link.id_opcao = available_option.id and link.id_usuario = v_owner
              left join public.produtos linked_product
                on linked_product.id = link.id_produto and linked_product.id_usuario = v_owner
+             left join public.zelomenu_product_publications linked_publication
+               on linked_publication.id_produto = linked_product.id and linked_publication.id_usuario = v_owner
              left join public.zelomenu_modifier_components linked_component
                on linked_component.id = link.id_componente
               and linked_component.id_usuario = v_owner
@@ -162,6 +164,7 @@ begin
                 or (
                   link.id_produto is not null
                   and linked_product.id is not null
+                  and not coalesce(linked_publication.pausado_manualmente, false)
                   and (not coalesce(linked_product.controlar_estoque, false) or coalesce(linked_product.estoque_atual, 0) > 0)
                 )
                 or (
@@ -210,6 +213,8 @@ begin
             on link.id_opcao = o.id and link.id_usuario = v_owner
           left join public.produtos linked_product
             on linked_product.id = link.id_produto and linked_product.id_usuario = v_owner
+          left join public.zelomenu_product_publications linked_publication
+            on linked_publication.id_produto = linked_product.id and linked_publication.id_usuario = v_owner
           left join public.zelomenu_modifier_components linked_component
             on linked_component.id = link.id_componente
            and linked_component.id_usuario = v_owner
@@ -224,6 +229,7 @@ begin
               (link.id_produto is null and link.id_componente is null)
               or (link.id_produto is not null and (
                 linked_product.id is null
+                or coalesce(linked_publication.pausado_manualmente, false)
                 or (coalesce(linked_product.controlar_estoque, false) and coalesce(linked_product.estoque_atual, 0) <= 0)
               ))
               or (link.id_componente is not null and (

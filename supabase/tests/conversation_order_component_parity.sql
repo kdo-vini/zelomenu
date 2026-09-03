@@ -351,7 +351,7 @@ select
   'whatsapp_order',
   'cart_open',
   source_ref,
-  '{"name":"Ana"}'::jsonb,
+  jsonb_build_object('name', 'Ana', 'phone', public.zelomenu_whatsapp_phone_from_source_ref_v1(source_ref)),
   results.materialized->'cart',
   '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
   jsonb_build_object(
@@ -369,8 +369,8 @@ select
   true
 from component_parity_results results
 cross join (values
-  ('b6000000-0000-4000-8000-000000000051'::uuid, 'component-active@s.whatsapp.net'),
-  ('b6000000-0000-4000-8000-000000000052'::uuid, 'component-paused@s.whatsapp.net')
+  ('b6000000-0000-4000-8000-000000000051'::uuid, '5511900000001@s.whatsapp.net'),
+  ('b6000000-0000-4000-8000-000000000052'::uuid, '5511900000002@s.whatsapp.net')
 ) sessions(session_id, source_ref);
 
 insert into public.zelomenu_cart_sessions (
@@ -384,7 +384,7 @@ select
   'whatsapp_order',
   'cart_open',
   source_ref,
-  '{"name":"Ana"}'::jsonb,
+  jsonb_build_object('name', 'Ana', 'phone', public.zelomenu_whatsapp_phone_from_source_ref_v1(source_ref)),
   results.stock_materialized->'cart',
   '{"type":"pickup","asap":true,"pickupDate":null,"pickupTime":null,"deliveryAddress":null,"deliveryNeighborhood":null,"deliveryFee":0,"deliveryFeeToConfirm":false}'::jsonb,
   jsonb_build_object(
@@ -402,8 +402,8 @@ select
   true
 from component_parity_results results
 cross join (values
-  ('b6000000-0000-4000-8000-000000000053'::uuid, 'stock-six@s.whatsapp.net'),
-  ('b6000000-0000-4000-8000-000000000054'::uuid, 'stock-seven@s.whatsapp.net')
+  ('b6000000-0000-4000-8000-000000000053'::uuid, '5511900000003@s.whatsapp.net'),
+  ('b6000000-0000-4000-8000-000000000054'::uuid, '5511900000004@s.whatsapp.net')
 ) sessions(session_id, source_ref);
 
 set local role service_role;
@@ -411,7 +411,7 @@ set local role service_role;
 update component_parity_results
 set active_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
-  'component-active@s.whatsapp.net',
+  '5511900000001@s.whatsapp.net',
   'b6000000-0000-4000-8000-000000000051',
   1,
   'message-component-active',
@@ -436,7 +436,7 @@ set local role service_role;
 update component_parity_results
 set stock_six_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
-  'stock-six@s.whatsapp.net',
+  '5511900000003@s.whatsapp.net',
   'b6000000-0000-4000-8000-000000000053',
   1,
   'message-stock-six',
@@ -473,7 +473,7 @@ set local role service_role;
 update component_parity_results
 set stock_seven_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
-  'stock-seven@s.whatsapp.net',
+  '5511900000004@s.whatsapp.net',
   'b6000000-0000-4000-8000-000000000054',
   1,
   'message-stock-seven',
@@ -503,7 +503,7 @@ set local role service_role;
 update component_parity_results
 set paused_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
-  'component-paused@s.whatsapp.net',
+  '5511900000002@s.whatsapp.net',
   'b6000000-0000-4000-8000-000000000052',
   1,
   'message-component-paused',

@@ -47,6 +47,7 @@ as $$
      and p_fulfillment->'deliveryFeeToConfirm' = 'false'::jsonb
      and jsonb_typeof(p_customer->'name') = 'string'
      and nullif(btrim(p_customer->>'name'), '') is not null
+     and p_customer->>'phone' = public.zelomenu_whatsapp_phone_from_source_ref_v1(p_source_ref)
      and jsonb_typeof(p_payment->'declaredMethod') = 'string'
      and nullif(btrim(p_payment->>'declaredMethod'), '') is not null
      and jsonb_typeof(p_fulfillment->'type') = 'string'
@@ -266,6 +267,10 @@ declare
   v_message_ids jsonb;
   v_changed boolean;
   v_updated integer;
+  v_revalidation jsonb;
+  v_requirements jsonb;
+  v_ready boolean;
+  v_review_marker jsonb;
 begin
   if not v_service_role then
     raise exception using errcode = '42501', message = 'SERVICE_ROLE_REQUIRED';
@@ -326,30 +331,9 @@ begin
   -- Lock every mutable fact consumed below. Each table is locked in a stable
   -- table/id order; the profile lock covers hours, scheduling and delivery config.
   perform 1 from public.empresa_perfil where id = p_empresa_id for update;
-  for v_lock in
-    select p.id
-      from public.produtos p
-      join public.empresa_perfil ep on ep.id = p_empresa_id and ep.user_id = p.id_usuario
-      join jsonb_array_elements(coalesce(s.cart_snapshot->'items', '[]'::jsonb)) item
-        on item->>'productId' ~ '^\d+$' and p.id = (item->>'productId')::bigint
-     order by p.id for update of p
-  loop null; end loop;
-  for v_lock in
-    select category.id
-      from public.categorias category
-      join public.produtos p on p.id_categoria = category.id and p.id_usuario = category.id_usuario
-      join jsonb_array_elements(coalesce(s.cart_snapshot->'items', '[]'::jsonb)) item
-        on item->>'productId' ~ '^\d+$' and p.id = (item->>'productId')::bigint
-     order by category.id for update of category
-  loop null; end loop;
-  for v_lock in
-    select publication.id
-      from public.zelomenu_product_publications publication
-      join jsonb_array_elements(coalesce(s.cart_snapshot->'items', '[]'::jsonb)) item
-        on item->>'productId' ~ '^\d+$' and publication.id_produto = (item->>'productId')::bigint
-     where publication.id_usuario = (select user_id from public.empresa_perfil where id = p_empresa_id)
-     order by publication.id for update of publication
-  loop null; end loop;
+  -- Relation rows are locked before deriving the publication set. This keeps
+  -- the reachable-link set stable and gives every confirmation the same lock
+  -- order, including carts whose products are linked to one another.
   for v_lock in
     select modifier_group.id
       from public.zelomenu_modifier_groups modifier_group
@@ -387,6 +371,44 @@ begin
         on item->>'productId' ~ '^\d+$' and modifier_group.id_produto = (item->>'productId')::bigint
      where linked_product.id_usuario = (select user_id from public.empresa_perfil where id = p_empresa_id)
      order by linked_product.id for update of linked_product
+  loop null; end loop;
+  for v_lock in
+    select p.id
+      from public.produtos p
+      join public.empresa_perfil ep on ep.id = p_empresa_id and ep.user_id = p.id_usuario
+      join jsonb_array_elements(coalesce(s.cart_snapshot->'items', '[]'::jsonb)) item
+        on item->>'productId' ~ '^\d+$' and p.id = (item->>'productId')::bigint
+     order by p.id for update of p
+  loop null; end loop;
+  for v_lock in
+    select category.id
+      from public.categorias category
+      join public.produtos p on p.id_categoria = category.id and p.id_usuario = category.id_usuario
+      join jsonb_array_elements(coalesce(s.cart_snapshot->'items', '[]'::jsonb)) item
+        on item->>'productId' ~ '^\d+$' and p.id = (item->>'productId')::bigint
+     order by category.id for update of category
+  loop null; end loop;
+  -- There is deliberately one publication phase. The UNION is deduplicated,
+  -- then rows are locked by publication id before the materializer reads pause.
+  for v_lock in
+    select publication.id
+      from public.zelomenu_product_publications publication
+     where publication.id_usuario = (select user_id from public.empresa_perfil where id = p_empresa_id)
+       and publication.id_produto in (
+         select (item->>'productId')::bigint
+           from jsonb_array_elements(coalesce(s.cart_snapshot->'items', '[]'::jsonb)) item
+          where item->>'productId' ~ '^\d+$'
+         union
+         select link.id_produto
+           from public.zelomenu_modifier_option_products link
+           join public.zelomenu_modifier_options modifier_option on modifier_option.id = link.id_opcao
+           join public.zelomenu_modifier_groups modifier_group on modifier_group.id = modifier_option.id_grupo
+           join jsonb_array_elements(coalesce(s.cart_snapshot->'items', '[]'::jsonb)) item
+             on item->>'productId' ~ '^\d+$' and modifier_group.id_produto = (item->>'productId')::bigint
+          where link.id_usuario = (select user_id from public.empresa_perfil where id = p_empresa_id)
+            and link.id_produto is not null
+       )
+     order by publication.id for update of publication
   loop null; end loop;
   for v_lock in select id from public.zelomenu_delivery_ranges where company_id = p_empresa_id order by id for update loop null; end loop;
   for v_lock in select id from public.zelomenu_delivery_pricing_rules where company_id = p_empresa_id order by id for update loop null; end loop;
@@ -437,16 +459,26 @@ begin
     or jsonb_array_length(v_issues) > 0;
   if v_changed then
     v_message_ids := coalesce(s.metadata->'processedMessageIds', '[]'::jsonb) || to_jsonb(p_message_id);
+    v_revalidation := jsonb_build_object(
+      'checkedAt', now(), 'ok', jsonb_array_length(v_issues) = 0, 'issues', v_issues,
+      'previewCart', v_cart, 'previewFulfillment', v_fulfillment, 'previewPricing', v_pricing
+    );
+    v_requirements := case when jsonb_array_length(v_issues) > 0 then '[]'::jsonb else s.requirements_snapshot end;
+    v_ready := case when jsonb_array_length(v_issues) > 0 then false else public.zelomenu_whatsapp_order_is_ready_v1(
+      s.context, s.state, s.source_ref, s.customer_snapshot, v_fulfillment,
+      s.payment_snapshot, v_revalidation, v_requirements, true
+    ) end;
+    v_review_marker := jsonb_build_object('required', true, 'revision', s.revision + 1,
+      'messageId', p_message_id, 'cause', case when jsonb_array_length(v_issues) > 0 then 'issues' else 'snapshot_changed' end);
     update public.zelomenu_cart_sessions
        set cart_snapshot = v_cart,
            fulfillment_snapshot = v_fulfillment,
            pricing_snapshot = v_pricing,
            last_revalidated_at = now(),
-           last_revalidation = jsonb_build_object(
-             'checkedAt', now(), 'ok', false, 'issues', v_issues,
-             'previewCart', v_cart, 'previewFulfillment', v_fulfillment, 'previewPricing', v_pricing
-           ),
-           metadata = coalesce(s.metadata, '{}'::jsonb) || jsonb_build_object('processedMessageIds', v_message_ids),
+           last_revalidation = v_revalidation,
+           requirements_snapshot = v_requirements,
+           ready_for_confirmation = v_ready,
+           metadata = (coalesce(s.metadata, '{}'::jsonb) - 'conversationReview') || jsonb_build_object('processedMessageIds', v_message_ids, 'conversationReview', v_review_marker),
            revision = s.revision + 1,
            updated_at = now()
      where id = s.id and revision = s.revision;
@@ -454,11 +486,10 @@ begin
     if v_updated <> 1 then
       return jsonb_build_object('outcome', 'conflict', 'revision', s.revision, 'snapshot', to_jsonb(s));
     end if;
-    if p_token_hash is not null then
-      update public.zelomenu_whatsapp_confirmation_tokens
-         set invalidated_at = now()
-       where id = v_token.id and invalidated_at is null and consumed_at is null;
-    end if;
+    update public.zelomenu_whatsapp_confirmation_tokens
+       set invalidated_at = now()
+     where session_id = s.id and revision < s.revision + 1
+       and invalidated_at is null and consumed_at is null;
     return jsonb_build_object(
       'outcome', 'requires_review', 'alreadyConfirmed', false,
       'revision', s.revision + 1, 'issues', v_issues,
@@ -468,7 +499,7 @@ begin
 
   v_result := public.create_zelo_order(s.id, s.revision, p_idempotency_key, '{}'::jsonb, p_pessoa_id);
   update public.zelomenu_cart_sessions
-     set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+     set metadata = (coalesce(metadata, '{}'::jsonb) - 'conversationReview') || jsonb_build_object(
            'processedMessageIds', coalesce(metadata->'processedMessageIds', '[]'::jsonb) || to_jsonb(p_message_id)
          ), updated_at = now()
    where id = s.id;

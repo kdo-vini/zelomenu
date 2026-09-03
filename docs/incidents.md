@@ -47,6 +47,22 @@ O guard Node é de UX; a mesma validação ocorre na RPC server-only sob lock. A
 migration 140000 e os testes SQL são versionados, mas a execução local do banco
 permanece gate pré-deploy.
 
+### Correções F2–F5 e rollout coordenado (não implantado)
+
+O lote seguinte fechou replay determinístico de `requires_review`, separando
+`issues` de `snapshot_changed` e invalidando todos os tokens antigos; alinhou a
+pausa manual de produtos vinculados entre Node/SQL sob um único lock ordenado;
+preservou patches por presença (inclusive detalhes sem itens) e derivou o
+telefone exclusivamente do JID; e passou a exigir o tuple completo
+`{ orderingId, empresaId, remoteJid }` em cada leitura do pedido.
+
+Essas correções ainda dependem de rollout coordenado com o consumidor ZeloChat,
+que precisa enviar `remoteJid` no GET, além da validação em schema descartável
+local (G1) e do exercício concorrente de duas sessões (G2). Não há aplicação de
+migration, push ou deploy registrado neste worktree; o estado é
+**IMPLEMENTAÇÃO CORRIGIDA / ROLLOUT BLOQUEADO** até esses gates e a entrega
+companheira serem aprovados.
+
 ## 0. Visibilidade do PDV não é publicação online
 
 `produtos.ocultar_no_pdv` é somente o controle interno de venda manual do

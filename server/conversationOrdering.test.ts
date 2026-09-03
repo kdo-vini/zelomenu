@@ -5,7 +5,7 @@ import {
   jsonbSemanticallyEqual,
   type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
-  type ConversationOrderDraft,
+  type ConversationOrderCreateDraft,
   type ConversationAiPermit,
   type ConversationOrderCommand,
   type DraftMaterialization,
@@ -150,7 +150,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     return reordered;
   }
 
-  async materializeDraft(_empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
+  async materializeDraft(_scope: { empresaId: string; remoteJid: string }, draft: ConversationOrderCreateDraft): Promise<DraftMaterialization> {
     const first = draft.items[0];
     const resolved = materialization(first?.productId ?? 10, this.currentPrice, first?.lineId ?? 'line-1');
     resolved.cart.items = draft.items.map((item) => ({
@@ -194,8 +194,8 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     return resolved;
   }
 
-  async revalidateDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
-    const resolved = await this.materializeDraft(empresaId, draft);
+  async revalidateDraft(empresaId: string, draft: ConversationOrderCreateDraft): Promise<DraftMaterialization> {
+    const resolved = await this.materializeDraft({ empresaId, remoteJid: '5511999999999@s.whatsapp.net' }, draft);
     if (this.nextRevalidationIssues.length > 0) {
       resolved.revalidation = { checkedAt: '2026-08-30T12:01:00.000Z', ok: false, issues: this.nextRevalidationIssues };
     }
@@ -214,11 +214,11 @@ class MemoryAdapter implements ConversationOrderingAdapter {
       && record.processedMessageIds.includes(messageId)) ?? null);
   }
 
-  async findByOrderingId(orderingId: string): Promise<ConversationOrderingRecord | null> {
-    return this.roundTrip(this.records.find((record) => record.orderingId === orderingId) ?? null);
+  async findByOrderingId(lookup: { orderingId: string; empresaId: string; remoteJid: string }): Promise<ConversationOrderingRecord | null> {
+    return this.roundTrip(this.records.find((record) => record.orderingId === lookup.orderingId && record.empresaId === lookup.empresaId && record.remoteJid === lookup.remoteJid) ?? null);
   }
 
-  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
+  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order' | 'reviewRequired'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
     await Promise.resolve();
     this.fenceAiMutation('create', input);
     const existing = await this.findOpen(input.empresaId, input.remoteJid);
@@ -232,6 +232,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
       revision: 1,
       updatedAt: this.writeTime ?? new Date().toISOString(),
       order: null,
+      reviewRequired: false,
     };
     this.records.push(record);
     return record;
@@ -245,7 +246,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     pessoaId: string | null;
   } & ConversationAiPermit): Promise<DraftMutationResult> {
     this.fenceAiMutation('update', input);
-    const latest = await this.findByOrderingId(input.current.orderingId);
+    const latest = await this.findByOrderingId({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (!latest) throw new Error('missing');
     if (latest.processedMessageIds.includes(input.messageId)) return { kind: 'duplicate', record: latest };
     if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict', record: latest };
@@ -253,6 +254,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
       revision: latest.revision + 1,
       updatedAt: this.writeTime ?? new Date(Date.parse(latest.updatedAt) + 1_000).toISOString(),
       pessoaId: input.pessoaId,
+      reviewRequired: false,
       processedMessageIds: [...latest.processedMessageIds, input.messageId],
     });
     return { kind: 'applied', record: latest };
@@ -260,7 +262,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
 
   async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string } & ConversationAiPermit): Promise<DraftMutationResult> {
     this.fenceAiMutation('cancel', input);
-    const latest = await this.findByOrderingId(input.current.orderingId);
+    const latest = await this.findByOrderingId({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (!latest) throw new Error('missing');
     if (latest.processedMessageIds.includes(input.messageId)) return { kind: 'duplicate', record: latest };
     if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict', record: latest };
@@ -300,7 +302,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     tokenHash: string | null; pessoaId: string | null;
   } & ConversationAiPermit) {
     this.fenceAiMutation('confirm', input);
-    const latest = await this.findByOrderingId(input.current.orderingId);
+    const latest = await this.findByOrderingId({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (!latest) throw new Error('missing');
     if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict' as const, record: latest };
     if (input.tokenHash && this.tokenHashes.get(input.current.sessionId) !== input.tokenHash) {
@@ -310,7 +312,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
       this.currentPrice = this.changePriceAfterRevalidate;
       this.changePriceAfterRevalidate = null;
     }
-    const draft: ConversationOrderDraft = {
+    const draft: ConversationOrderCreateDraft = {
       items: latest.cart.items.flatMap((item) => item.productId == null ? [] : [{
         lineId: item.lineId,
         productId: item.productId,
@@ -342,6 +344,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
         current: latest, expectedRevision: input.expectedRevision, messageId: input.messageId,
         materialization: revalidated, pessoaId: input.pessoaId,
       });
+      if (persisted.kind !== 'conflict') persisted.record.reviewRequired = true;
       return { kind: persisted.kind === 'conflict' ? 'conflict' as const : 'requires_review' as const, record: persisted.record };
     }
     latest.processedMessageIds.push(input.messageId);
@@ -753,7 +756,7 @@ describe('ConversationOrdering', () => {
           fulfillment: PICKUP_FULFILLMENT,
         },
       }), scenario.label).rejects.toMatchObject({ code: 'ITEM_INVALIDO', message: scenario.message });
-      expect((await ordering.getSnapshot(opened.orderingId))?.revision, scenario.label).toBe(1);
+      expect((await ordering.getSnapshot({ orderingId: opened.orderingId, empresaId: opened.empresaId, remoteJid: opened.remoteJid }))?.revision, scenario.label).toBe(1);
     }
   });
 
@@ -777,7 +780,7 @@ describe('ConversationOrdering', () => {
       code: 'ITEM_INVALIDO',
       message: 'Não encontrei um item informado para remoção.',
     });
-    expect((await ordering.getSnapshot(opened.orderingId))?.revision).toBe(1);
+    expect((await ordering.getSnapshot({ orderingId: opened.orderingId, empresaId: opened.empresaId, remoteJid: opened.remoteJid }))?.revision).toBe(1);
   });
 
   it('rejeita remoção que deixaria o carrinho vazio e orienta cancelamento total', async () => {
@@ -800,7 +803,7 @@ describe('ConversationOrdering', () => {
       code: 'PEDIDO_VAZIO',
       message: 'O pedido precisa ter pelo menos um item. Para encerrar tudo, cancele o pedido.',
     });
-    expect((await ordering.getSnapshot(opened.orderingId))?.revision).toBe(1);
+    expect((await ordering.getSnapshot({ orderingId: opened.orderingId, empresaId: opened.empresaId, remoteJid: opened.remoteJid }))?.revision).toBe(1);
   });
 
   it('não emite confirmação quando a materialização tem requisito bloqueante', async () => {
@@ -1163,7 +1166,7 @@ describe('ConversationOrdering', () => {
     currentTime = new Date('2026-08-30T12:11:00.000Z');
     await expect(ordering.apply(command)).rejects.toMatchObject({
       code: 'RESUMO_EXPIRADO',
-      currentSnapshot: expect.objectContaining({ requiresReview: true, confirmationAction: null, revision: 1 }),
+      currentSnapshot: expect.objectContaining({ requiresReview: false, confirmationAction: null, revision: 1 }),
     });
     expect(adapter.issuedHashes).toHaveLength(1);
 
@@ -1254,7 +1257,7 @@ describe('ConversationOrdering', () => {
       type: 'cancel_draft', empresaId: '10000000-0000-4000-8000-000000000002', remoteJid: JID_A,
       messageId: 'wamid.cancel-wrong-company', orderingId: opened.orderingId, expectedRevision: 1,
     })).rejects.toMatchObject({ code: 'PEDIDO_NAO_ENCONTRADO' });
-    expect((await ordering.getSnapshot(opened.orderingId))?.state).toBe('cart_open');
+    expect((await ordering.getSnapshot({ orderingId: opened.orderingId, empresaId: opened.empresaId, remoteJid: opened.remoteJid }))?.state).toBe('cart_open');
 
     const cancelled = await ordering.apply({
       type: 'cancel_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
