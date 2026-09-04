@@ -3,6 +3,7 @@ import {
   resolveEarliestPickup,
   validateScheduling,
   availablePickupSlots,
+  canSelectAsap,
   type SchedulingConfig,
 } from './zelomenuScheduling';
 import type { WeeklyHours } from './businessHours';
@@ -24,6 +25,15 @@ function cfg(overrides?: Partial<SchedulingConfig>): SchedulingConfig {
 }
 
 describe('zelomenuScheduling', () => {
+  describe('canSelectAsap', () => {
+    it('requires an editable cart and an open configured store', () => {
+      expect(canSelectAsap(true, { configured: true, openNow: true })).toBe(true);
+      expect(canSelectAsap(true, { configured: true, openNow: false })).toBe(false);
+      expect(canSelectAsap(false, { configured: true, openNow: true })).toBe(false);
+      expect(canSelectAsap(true, null)).toBe(true);
+    });
+  });
+
   describe('resolveEarliestPickup', () => {
     it('returns current time when scheduling is disabled', () => {
       const now = new Date('2026-07-15T10:30:00.000Z'); // Wed 07:30 BRT

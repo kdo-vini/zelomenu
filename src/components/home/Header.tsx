@@ -3,15 +3,18 @@ import { Menu, X, ChevronRight, User } from 'lucide-react';
 import { PwaInstallButton } from './PwaInstallButton.tsx';
 import { PushNotificationButton } from './PushNotificationButton.tsx';
 
-const navItems = [
+const homeNavItems = [
   { label: 'Empresas', href: '#empresas' },
   { label: 'Categorias', href: '#categorias' },
   { label: 'Destaques', href: '#destaques' },
   { label: 'Sobre', href: '#sobre' },
 ];
 
-export function Header() {
+const infoNavItems = [{ label: 'Voltar ao início', href: '/' }];
+
+export function Header({ context = 'home' }: { context?: 'home' | 'info' }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const navItems = context === 'info' ? infoNavItems : homeNavItems;
 
   return (
     <header className="home-header">

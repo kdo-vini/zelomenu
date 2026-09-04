@@ -36,8 +36,7 @@
   color: var(--zelo-purple-700);
   font-size: 0.75rem;
   font-weight: 850;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
 }
 
 .zelo-info-hero h1 {
@@ -183,7 +182,7 @@
 .zelo-info-card__eyebrow {
   margin-top: 34px;
   color: var(--zelo-text-muted);
-  font-size: 0.7rem;
+  font-size: 0.78rem;
 }
 
 .zelo-info-card h3 {

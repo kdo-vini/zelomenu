@@ -89,8 +89,8 @@ export default function HomePage() {
             <SectionHeader
               title="Explore por categorias"
               description="Encontre rapidamente o tipo de comida ou negócio que procura."
+              titleId="categories-title"
             />
-            <h2 id="categories-title" className="sr-only">Categorias</h2>
             <CategoryFilters
               categories={categories}
               activeCategoryId={discovery.categoryId}
@@ -127,8 +127,8 @@ export default function HomePage() {
                     ? `${discovery.filteredBusinesses.length} empresa${discovery.filteredBusinesses.length === 1 ? '' : 's'} encontrada${discovery.filteredBusinesses.length === 1 ? '' : 's'}.`
                     : 'Acesse o cardápio e peça direto pelo WhatsApp.'
                 }
+                titleId="all-businesses-title"
               />
-              <h2 id="all-businesses-title" className="sr-only">Lista de empresas</h2>
 
               <div className="home-results-meta" aria-live="polite">
                 {discovery.hasActiveFilters ? (

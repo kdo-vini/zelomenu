@@ -1,10 +1,10 @@
-import { BookOpen, ShoppingBag, Tags, Package } from 'lucide-react';
+import { BookOpen, ShoppingBag, Tags, Store } from 'lucide-react';
 
 const actions = [
   { label: 'Cardápio Digital', icon: BookOpen, desc: 'Veja o cardápio completo', href: '#empresas' },
   { label: 'Pedidos Online', icon: ShoppingBag, desc: 'Peça direto pelo app', href: '#empresas' },
   { label: 'Destaques', icon: Tags, desc: 'Escolhas especiais das empresas', href: '#destaques' },
-  { label: 'Acompanhar Pedido', icon: Package, desc: 'Acompanhe em tempo real', href: '#' },
+  { label: 'Para empresas', icon: Store, desc: 'Conheça o ZeloMenu', href: '/conhecer-zelomenu' },
 ];
 
 export function QuickActions() {

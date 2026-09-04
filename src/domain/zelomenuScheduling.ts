@@ -137,6 +137,21 @@ function portugueseDayName(dayKey: DayKey): string {
   return map[dayKey] ?? 'neste dia';
 }
 
+export type PublicBusinessHoursAvailability = {
+  configured?: boolean;
+  openNow?: boolean;
+};
+
+/** Whether the public cart may select immediate fulfillment. */
+export function canSelectAsap(
+  cartOpen: boolean,
+  businessHours?: PublicBusinessHoursAvailability | null,
+): boolean {
+  if (!cartOpen) return false;
+  if (!businessHours || businessHours.configured !== true) return true;
+  return businessHours.openNow === true;
+}
+
 /**
  * Derive a DayKey from a civil YYYY-MM-DD date safely.
  * Uses noon UTC so negative-offset timezones don't flip the day.

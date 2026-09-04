@@ -51,6 +51,7 @@ import {
   validateScheduling,
   resolveEarliestPickup,
   availablePickupSlots,
+  canSelectAsap,
 } from '../domain/zelomenuScheduling';
 import type { DayKey } from '../domain/businessHours';
 import {
@@ -645,7 +646,9 @@ function ZeloMenuCartPageContent() {
   );
 
   const isStale = payload?.link.tokenStatus === 'stale';
-  const isOpen = payload?.session.state === 'cart_open';
+  const isCartOpen = payload?.session.state === 'cart_open';
+  const businessHours = payload?.business?.businessHours;
+  const asapAvailable = canSelectAsap(isCartOpen, businessHours);
   const isPublicOrder = payload?.session.context === 'public_order';
   const isTableOrder = payload?.session.context === 'table_order';
   const isConfirmed = payload?.session.state === 'confirmed_waiting_review' || payload?.session.state === 'confirmed_waiting_payment';
@@ -655,15 +658,15 @@ function ZeloMenuCartPageContent() {
 
   // ── Auto-switch to scheduled mode when store is closed but scheduling is on ──
   useEffect(() => {
-    const bh = payload?.business?.businessHours;
-    if (!bh || !isOpen || isConfirmed) return;
+    const bh = businessHours;
+    if (!bh || !isCartOpen || isConfirmed) return;
     if (scheduleMode === 'asap' && bh.configured === true && bh.openNow === false && bh.schedulingEnabled === true) {
       const canSchedule = bh.nextOpen || (Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0);
       if (canSchedule) {
         setScheduleMode('scheduled');
       }
     }
-  }, [payload?.business?.businessHours, isOpen, isConfirmed]);
+  }, [businessHours, isCartOpen, isConfirmed]);
 
   const paymentSelection = draft?.paymentMethod && isKnownPaymentMethod(draft.paymentMethod)
     ? draft.paymentMethod
@@ -735,7 +738,7 @@ function ZeloMenuCartPageContent() {
   const deliveryQuoteState = resolveDeliveryQuoteUiState(draft, payload, saveStatus === 'error');
   const deliveryQuoteModalOpen = deliveryQuoteState === 'calculating' && saveStatus === 'saving';
   const deliveryQuoteReady = !draft || draft.fulfillmentType !== 'delivery' || deliveryQuoteState === 'ready';
-  const canConfirm = isOpen
+  const canConfirm = isCartOpen
     && !isStale
     && (draft?.items.length ?? 0) > 0
     && deliveryQuoteReady;
@@ -794,7 +797,7 @@ function ZeloMenuCartPageContent() {
   }, [autosavePayload]);
 
   useEffect(() => {
-    if (!autosavePayload || !isOpen || isStale || deliveryAddressEditing || deliveryCepLoading) return;
+    if (!autosavePayload || !isCartOpen || isStale || deliveryAddressEditing || deliveryCepLoading) return;
     if (!autosaveReadyRef.current) {
       autosaveReadyRef.current = true;
       if (!customerCacheHydratedRef.current) return;
@@ -822,7 +825,7 @@ function ZeloMenuCartPageContent() {
         autosaveTimerRef.current = null;
       }
     };
-  }, [autosaveSignature, deliveryAddressEditing, deliveryCepLoading, enqueueAutosave, isOpen, isStale]);
+  }, [autosaveSignature, deliveryAddressEditing, deliveryCepLoading, enqueueAutosave, isCartOpen, isStale]);
 
   useEffect(() => {
     const flushAutosave = () => {
@@ -859,7 +862,7 @@ function ZeloMenuCartPageContent() {
   }, [isConfirmed, isTableOrder, token]);
 
   const confirmCart = async () => {
-    if (!draft || !payload || !isOpen || isStale) return;
+    if (!draft || !payload || !isCartOpen || isStale) return;
     if (draft.fulfillmentType === 'delivery' && !deliveryQuoteReady) {
       setStep(1);
       toast.info(
@@ -984,7 +987,7 @@ function ZeloMenuCartPageContent() {
   };
 
   const changeItemQuantity = (itemKey: string, nextQuantity: number) => {
-    if (!isOpen) return;
+    if (!isCartOpen) return;
     setQuantityDrafts((current) => {
       if (!(itemKey in current)) return current;
       const { [itemKey]: _removed, ...rest } = current;
@@ -1010,7 +1013,7 @@ function ZeloMenuCartPageContent() {
   };
 
   const editItemQuantity = (itemKey: string, rawValue: string) => {
-    if (!isOpen) return;
+    if (!isCartOpen) return;
     const digits = rawValue.replace(/\D/g, '').slice(0, 4);
     setQuantityDrafts((current) => ({ ...current, [itemKey]: digits }));
     if (!digits) return;
@@ -1033,7 +1036,7 @@ function ZeloMenuCartPageContent() {
   };
 
   const updateField = <K extends keyof DraftState>(key: K, value: DraftState[K]) => {
-    if (!isOpen) return;
+    if (!isCartOpen) return;
     setDraft((current) => {
       if (!current) return current;
       const next = {
@@ -1211,7 +1214,7 @@ function ZeloMenuCartPageContent() {
   }
 
   // Context-aware CTA labels based on step and store state
-  const bh = payload?.business?.businessHours;
+  const bh = businessHours;
   const storeClosedWithSchedule = bh?.configured && !bh.openNow && (bh.nextOpen || (Array.isArray(bh.todayWindows) && bh.todayWindows.length > 0));
   const ctaLabel = isTableOrder
     ? (confirming ? 'Enviando…' : 'Enviar pedido')
@@ -1713,7 +1716,7 @@ function ZeloMenuCartPageContent() {
                                   onKeyDown={(event) => {
                                     if (event.key === 'Enter') event.currentTarget.blur();
                                   }}
-                                  readOnly={!isOpen}
+                                  readOnly={!isCartOpen}
                                   className="h-9 w-9 border-x border-[var(--zm-line)] bg-transparent px-0 text-center text-[13px] font-semibold tabular-nums text-[var(--zm-ink)] outline-none focus:bg-[var(--zm-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--zm-brand)]"
                                 />
                                 <button
@@ -1765,7 +1768,7 @@ function ZeloMenuCartPageContent() {
                                 <p className="mt-0.5 text-[11px] tabular-nums text-[var(--zm-ink-soft)]">{toBRL(p.basePrice)}</p>
                                 <button
                                   type="button"
-                                  disabled={!isOpen}
+                                  disabled={!isCartOpen}
                                   onClick={() => {
                                     const hasRequired = p.modifierGroups.some((g) =>
                                       g.active && (g.minSelections > 0 || (g.allowsQuantity && g.minTotalQuantity > 0)),
@@ -1811,7 +1814,7 @@ function ZeloMenuCartPageContent() {
                         <textarea
                           value={draft.observations}
                           onChange={(event) => updateField('observations', event.target.value)}
-                          readOnly={!isOpen}
+                        readOnly={!isCartOpen}
                           placeholder="Ex: sem cebola, ponto da carne bem passado…"
                           rows={3}
                           className="w-full resize-none rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 py-2.5 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)]"
@@ -1829,7 +1832,7 @@ function ZeloMenuCartPageContent() {
                       <div className="flex gap-1 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface-muted)] p-1">
                         <button
                           type="button"
-                          disabled={!isOpen || !deliveryEnabled}
+                          disabled={!isCartOpen || !deliveryEnabled}
                           onClick={() => updateField('fulfillmentType', 'delivery')}
                           aria-pressed={isDelivery}
                           className={segCls(isDelivery)}
@@ -1839,7 +1842,7 @@ function ZeloMenuCartPageContent() {
                         </button>
                         <button
                           type="button"
-                          disabled={!isOpen}
+                          disabled={!isCartOpen}
                           onClick={() => updateField('fulfillmentType', 'pickup')}
                           aria-pressed={!isDelivery}
                           className={segCls(!isDelivery)}
@@ -1858,7 +1861,7 @@ function ZeloMenuCartPageContent() {
                       <input
                         value={draft.customerName}
                         onChange={(event) => updateField('customerName', event.target.value)}
-                        readOnly={!isOpen}
+                        readOnly={!isCartOpen}
                         required
                         aria-invalid={showErrors && Boolean(detailErrors.customerName)}
                         className={`${inputCls} ${showErrors && detailErrors.customerName ? invalidInputCls : ''}`}
@@ -1873,7 +1876,7 @@ function ZeloMenuCartPageContent() {
                         value={draft.customerPhone}
                         onChange={(event) => updateField('customerPhone', event.target.value)}
                         inputMode="tel"
-                        readOnly={!isOpen || !isPublicOrder}
+                        readOnly={!isCartOpen || !isPublicOrder}
                         required
                         aria-invalid={showErrors && Boolean(detailErrors.customerPhone)}
                         className={`${inputCls} ${isPublicOrder ? '' : 'bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]'} ${showErrors && detailErrors.customerPhone ? invalidInputCls : ''}`}
@@ -1934,7 +1937,7 @@ function ZeloMenuCartPageContent() {
                             <input
                               value={draft.deliveryPostalCode}
                               onChange={(event) => updateField('deliveryPostalCode', event.target.value.replace(/\D/g, '').slice(0, 8))}
-                              readOnly={!isOpen}
+                              readOnly={!isCartOpen}
                               inputMode="numeric"
                               required
                               onFocus={beginDeliveryAddressEdit}
@@ -1953,7 +1956,7 @@ function ZeloMenuCartPageContent() {
                             <input
                               value={draft.deliveryStreet}
                               onChange={(event) => updateField('deliveryStreet', event.target.value)}
-                              readOnly={!isOpen}
+                              readOnly={!isCartOpen}
                               required
                               className={inputCls}
                               placeholder="Rua, avenida..."
@@ -1963,11 +1966,11 @@ function ZeloMenuCartPageContent() {
                           <div className="grid grid-cols-2 gap-3">
                             <label className="flex flex-col gap-1.5">
                               <span className={labelCls}>Número {requiredMark}</span>
-                              <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} readOnly={!isOpen} required className={inputCls} placeholder="123" />
+                              <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} readOnly={!isCartOpen} required className={inputCls} placeholder="123" />
                             </label>
                             <label className="flex flex-col gap-1.5">
                               <span className={labelCls}>Complemento</span>
-                              <input value={draft.deliveryComplement} onChange={(event) => updateField('deliveryComplement', event.target.value)} onFocus={beginDeliveryAddressEdit} onBlur={endDeliveryAddressEdit} readOnly={!isOpen} className={inputCls} placeholder="Apto, bloco..." />
+                              <input value={draft.deliveryComplement} onChange={(event) => updateField('deliveryComplement', event.target.value)} onFocus={beginDeliveryAddressEdit} onBlur={endDeliveryAddressEdit} readOnly={!isCartOpen} className={inputCls} placeholder="Apto, bloco..." />
                             </label>
                           </div>
 
@@ -2059,15 +2062,20 @@ function ZeloMenuCartPageContent() {
                     <div className="mt-4 flex flex-col gap-2">
                       <span className={labelCls}>Quando?</span>
                       <div className="flex gap-1 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface-muted)] p-1">
-                        <button type="button" disabled={!isOpen} onClick={enableAsap} aria-pressed={scheduleMode === 'asap'} className={segCls(scheduleMode === 'asap')}>
+                        <button type="button" disabled={!asapAvailable} onClick={enableAsap} aria-pressed={scheduleMode === 'asap'} className={segCls(scheduleMode === 'asap')}>
                           <Zap className="h-4 w-4" strokeWidth={1.8} />
                           Pra já
                         </button>
-                        <button type="button" disabled={!isOpen} onClick={enableScheduled} aria-pressed={scheduleMode === 'scheduled'} className={segCls(scheduleMode === 'scheduled')}>
+                        <button type="button" disabled={!isCartOpen} onClick={enableScheduled} aria-pressed={scheduleMode === 'scheduled'} className={segCls(scheduleMode === 'scheduled')}>
                           <CalendarClock className="h-4 w-4" strokeWidth={1.8} />
                           Agendar
                         </button>
                       </div>
+                      {isCartOpen && businessHours?.configured === true && businessHours.openNow === false ? (
+                        <p className="text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">
+                          A loja está fechada agora. O pedido para já fica disponível quando a loja estiver aberta; escolha um horário em <span className="font-semibold text-[var(--zm-ink-soft)]">Agendar</span>.
+                        </p>
+                      ) : null}
                       {scheduleMode === 'asap' ? (
                         <p className="text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">
                           {isDelivery ? 'Entrega o quanto antes.' : 'Retirada o quanto antes.'} Data e horário serão preenchidos automaticamente. É uma encomenda para outro momento? Toque em <span className="font-semibold text-[var(--zm-ink-soft)]">Agendar</span>.
@@ -2128,7 +2136,7 @@ function ZeloMenuCartPageContent() {
                                   const m = availableSlots?.minutesByHour[h]?.[0] ?? 0;
                                   updateField('pickupTime', `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
                                 }}
-                                disabled={!isOpen || !availableSlots}
+                                disabled={!isCartOpen || !availableSlots}
                                 required
                                 className={`${inputCls} ${showErrors && detailErrors.pickupTime ? invalidInputCls : ''}`}
                                 style={{ minHeight: '44px' }}
@@ -2148,7 +2156,7 @@ function ZeloMenuCartPageContent() {
                                   const [hourPart] = (draft.pickupTime ?? ':').split(':');
                                   updateField('pickupTime', `${hourPart}:${String(Number(e.target.value)).padStart(2, '0')}`);
                                 }}
-                                disabled={!isOpen || !availableSlots}
+                                disabled={!isCartOpen || !availableSlots}
                                 required
                                 className={`${inputCls} ${showErrors && detailErrors.pickupTime ? invalidInputCls : ''}`}
                                 style={{ minHeight: '44px' }}
@@ -2182,7 +2190,7 @@ function ZeloMenuCartPageContent() {
                           <button
                             key={opt}
                             type="button"
-                            disabled={!isOpen}
+                            disabled={!isCartOpen}
                             onClick={() => updateField('paymentMethod', opt === 'Outro' ? '' : opt)}
                             aria-pressed={selected}
                             className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-[var(--zm-brand)] bg-[var(--zm-brand-soft)]' : 'border-[var(--zm-line)] bg-[var(--zm-surface)]'}`}
@@ -2203,7 +2211,7 @@ function ZeloMenuCartPageContent() {
                         <input
                           value={draft.paymentMethod}
                           onChange={(event) => updateField('paymentMethod', event.target.value)}
-                          readOnly={!isOpen}
+                          readOnly={!isCartOpen}
                           className={inputCls}
                           placeholder="Ex.: Vale alimentação"
                         />
@@ -2226,7 +2234,7 @@ function ZeloMenuCartPageContent() {
                       <textarea
                         value={draft.observations}
                         onChange={(event) => updateField('observations', event.target.value)}
-                        readOnly={!isOpen}
+                          readOnly={!isCartOpen}
                         rows={3}
                         className="w-full rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 py-3 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)]"
                         placeholder="Ex.: sem cebola, troco para R$ 100, deixar na portaria"
@@ -2244,7 +2252,7 @@ function ZeloMenuCartPageContent() {
                           value={draft.couponCode}
                           onChange={(e) => setDraft((prev) => prev ? { ...prev, couponCode: e.target.value.toUpperCase() } : prev)}
                           placeholder="Código do cupom"
-                          disabled={!isOpen}
+                          disabled={!isCartOpen}
                           maxLength={30}
                           className="block w-full rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 py-3 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)] disabled:opacity-50"
                         />

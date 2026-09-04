@@ -11,8 +11,8 @@ export function CTASection() {
           <h2>Não encontrou sua empresa favorita?</h2>
           <p>Solicite o link do cardápio diretamente ao estabelecimento e peça pelo WhatsApp.</p>
         </div>
-        <a href="/">
-          Saiba como
+        <a href="/conhecer-zelomenu">
+          Veja como começar
           <ArrowRight size={18} strokeWidth={2} />
         </a>
       </div>
