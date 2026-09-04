@@ -1240,7 +1240,7 @@ function throwConversationModifierError(error: unknown): never {
 
 /**
  * Injectable seams for `materializeWhatsAppOrderDraft`'s persistence
- * boundary. Both default to the real implementation for every production
+ * boundary. All dependencies default to production behavior for every production
  * call site (`SupabaseConversationOrderingAdapter.materializeDraft` never
  * passes this parameter). Exists so a fixture/test caller can drive the REAL
  * materialization — pricing, requirement derivation, readiness, phone
