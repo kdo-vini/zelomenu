@@ -65,8 +65,10 @@ async function start(options: {
     res.setHeader('x-request-id', res.locals.requestId);
     next();
   });
-  app.use('/internal/ordering', createInternalCatalogFailureLimiter({ isInternalKeyValid: (key) => key === 'valid' }));
+  const failureLimiter = createInternalCatalogFailureLimiter({ isInternalKeyValid: (key) => key === 'valid' });
+  app.use('/internal/ordering', failureLimiter.preParse);
   app.use(express.json({ limit: '4kb' }));
+  app.use('/internal/ordering', failureLimiter.postParse);
   app.use('/internal/ordering', createInternalOrderingRouter(ordering, { quotaMax: options.quotaMax }));
   const server = createServer(app);
   servers.push(server);

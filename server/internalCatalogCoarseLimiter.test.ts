@@ -12,11 +12,13 @@ async function startServer(options?: InternalCatalogFailureLimiterOptions): Prom
     res.locals.requestId = req.header('x-request-id') ?? 'generated-request-id';
     next();
   });
-  app.use('/internal/catalog/search', createInternalCatalogFailureLimiter({
+  const limiter = createInternalCatalogFailureLimiter({
     ...options,
     isInternalKeyValid: (provided) => provided === 'valid',
-  }));
+  });
+  app.use('/internal/catalog/search', limiter.preParse);
   app.use(express.json({ limit: '1kb' }));
+  app.use('/internal/catalog/search', limiter.postParse);
   app.post('/internal/catalog/search', (req, res) => {
     const respond = () => {
       if (req.header('x-test-fail') === 'true') return res.status(401).json({ error: 'NAO_AUTORIZADO', requestId: res.locals.requestId });
@@ -25,8 +27,10 @@ async function startServer(options?: InternalCatalogFailureLimiterOptions): Prom
     if (req.header('x-test-delay') === 'true') return setTimeout(respond, 30);
     return respond();
   });
-  app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
     const status = typeof error === 'object' && error !== null && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+    const isBodyParseFailure = (error instanceof SyntaxError && status === 400) || status === 413;
+    if (isBodyParseFailure && res.locals.internalCatalogKeyValid === true) limiter.recordAuthenticatedParseFailure(req);
     if (error instanceof SyntaxError && status === 400) return res.status(400).json({ error: 'JSON_INVALIDO', requestId: res.locals.requestId });
     if (status === 413) return res.status(413).json({ error: 'PAYLOAD_MUITO_GRANDE', requestId: res.locals.requestId });
     return next(error);
@@ -101,5 +105,37 @@ describe('createInternalCatalogFailureLimiter', () => {
     expect((await post(running, '{}', { 'x-test-fail': 'true' })).status).toBe(429);
     now += 101;
     expect((await post(running, '{}', { 'x-test-fail': 'true' })).status).toBe(401);
+  });
+
+  it('CT#10: isola falhas autenticadas por empresa (corpo já interpretado a jusante) — uma empresa esgotada não bloqueia outra atrás do mesmo IP', async () => {
+    const running = await startServer({ maxFailures: 5 });
+    const postForEmpresa = (empresaId: string) => post(running, JSON.stringify({ empresaId }), {
+      'x-zelo-internal-key': 'valid',
+      'x-test-fail': 'true',
+    });
+
+    const statusesA: number[] = [];
+    for (let index = 0; index < 5; index += 1) statusesA.push((await postForEmpresa('empresa-a')).status);
+    expect(statusesA).toEqual(Array(5).fill(401));
+    expect((await postForEmpresa('empresa-a')).status).toBe(429);
+
+    // empresa-b shares the same IP but never sent a failure — it must not be
+    // throttled by empresa-a's exhausted bucket.
+    expect((await postForEmpresa('empresa-b')).status).toBe(401);
+  });
+
+  it('CT#10: falhas não autenticadas continuam por IP mesmo se o corpo (ainda não interpretado) alega empresas diferentes', async () => {
+    const running = await startServer({ maxFailures: 3 });
+    const postUnauthenticated = (claimedEmpresaId: string) => post(running, JSON.stringify({ empresaId: claimedEmpresaId }), {
+      'x-test-fail': 'true',
+      // no x-zelo-internal-key: reserved immediately, IP-only, before the
+      // body is ever parsed — an unauthenticated caller cannot claim an
+      // empresaId to spread its floods across separate buckets.
+    });
+
+    expect((await postUnauthenticated('empresa-a')).status).toBe(401);
+    expect((await postUnauthenticated('empresa-b')).status).toBe(401);
+    expect((await postUnauthenticated('empresa-c')).status).toBe(401);
+    expect((await postUnauthenticated('empresa-d')).status).toBe(429);
   });
 });

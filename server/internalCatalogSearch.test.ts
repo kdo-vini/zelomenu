@@ -91,8 +91,10 @@ async function startHttp(search?: NonNullable<Parameters<typeof createInternalCa
     res.setHeader('x-request-id', res.locals.requestId);
     next();
   });
-  app.use('/internal/catalog/search', createInternalCatalogFailureLimiter({ isInternalKeyValid: (key) => key === 'valid' }));
+  const failureLimiter = createInternalCatalogFailureLimiter({ isInternalKeyValid: (key) => key === 'valid' });
+  app.use('/internal/catalog/search', failureLimiter.preParse);
   app.use(express.json());
+  app.use('/internal/catalog/search', failureLimiter.postParse);
   app.post('/internal/catalog/search', createInternalCatalogSearchHandler({
     rateLimit: (_req, _res, next) => next(),
     ...(search ? { search } : {}),

@@ -64,12 +64,15 @@ async function startOrderingHarness(options: { ordering?: OrderingStub; quotaMax
     res.locals.requestId = req.header('x-request-id') ?? 'request-de-teste';
     next();
   });
-  // Mirrors server/index.ts: the coarse failure limiter runs before JSON
-  // parsing and is mounted on /internal/ordering.
-  app.use('/internal/ordering', createInternalCatalogFailureLimiter({ isInternalKeyValid: (key) => key === 'valid' }));
+  // Mirrors server/index.ts: the coarse failure limiter's pre-parse stage
+  // runs before JSON parsing, its post-parse stage right after.
+  const failureLimiter = createInternalCatalogFailureLimiter({ isInternalKeyValid: (key) => key === 'valid' });
+  app.use('/internal/ordering', failureLimiter.preParse);
   app.use(express.json({ limit: options.bodyLimit ?? '1mb' }));
-  app.use((error: unknown, _req: express.Request, res: Response, next: (error: unknown) => void) => {
+  app.use((error: unknown, req: express.Request, res: Response, next: (error: unknown) => void) => {
     const status = typeof error === 'object' && error !== null && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+    const isBodyParseFailure = (error instanceof SyntaxError && status === 400) || status === 413;
+    if (isBodyParseFailure && res.locals.internalCatalogKeyValid === true) failureLimiter.recordAuthenticatedParseFailure(req);
     if (error instanceof SyntaxError && status === 400) {
       return res.status(400).json({ error: 'JSON_INVALIDO', detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
     }
@@ -78,6 +81,7 @@ async function startOrderingHarness(options: { ordering?: OrderingStub; quotaMax
     }
     return next(error);
   });
+  app.use('/internal/ordering', failureLimiter.postParse);
   app.use('/internal/ordering', createInternalOrderingRouter(ordering as never, { quotaMax: options.quotaMax }));
   const server = createServer(app);
   servers.push(server);

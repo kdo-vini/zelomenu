@@ -45,15 +45,28 @@ app.use((req, res, next) => {
 
 // This route-specific guard intentionally runs before JSON parsing. Invalid
 // bodies and oversized requests must be counted without affecting other APIs.
-app.use('/internal/catalog/search', internalCatalogFailureLimiter);
-app.use('/internal/ordering', internalOrderingFailureLimiter);
+// Its pre-parse stage never knows the empresaId, so it is always keyed by IP
+// (see internalCatalogRateLimit.ts).
+app.use('/internal/catalog/search', internalCatalogFailureLimiter.preParse);
+app.use('/internal/ordering', internalOrderingFailureLimiter.preParse);
 
 // Production is same-origin by default. Separate frontend origins must be
 // explicitly allowlisted instead of inheriting a wildcard CORS policy.
 app.use(cors({ origin: corsOrigins.length > 0 ? corsOrigins : false }));
 app.use(express.json({ limit: '1mb' }));
-app.use((error: unknown, _req: Request, res: Response, next: (error: unknown) => void) => {
+app.use((error: unknown, req: Request, res: Response, next: (error: unknown) => void) => {
   const status = typeof error === 'object' && error !== null && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+  const isBodyParseFailure = (error instanceof SyntaxError && status === 400) || status === 413;
+  if (isBodyParseFailure && res.locals.internalCatalogKeyValid === true) {
+    // A malformed/oversized body throws before postParse ever runs (Express
+    // skips every regular middleware once an error is thrown), so it must be
+    // recorded here instead — see recordAuthenticatedParseFailure's docstring.
+    if (req.path === '/internal/catalog/search' || req.path.startsWith('/internal/catalog/search/')) {
+      internalCatalogFailureLimiter.recordAuthenticatedParseFailure(req);
+    } else if (req.path === '/internal/ordering' || req.path.startsWith('/internal/ordering/')) {
+      internalOrderingFailureLimiter.recordAuthenticatedParseFailure(req);
+    }
+  }
   if (error instanceof SyntaxError && status === 400) {
     return res.status(400).json({ error: 'JSON_INVALIDO', detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
   }
@@ -62,6 +75,13 @@ app.use((error: unknown, _req: Request, res: Response, next: (error: unknown) =>
   }
   return next(error);
 });
+
+// CT#10 fix: mounted AFTER JSON parsing so it can key an authenticated
+// caller's failures by its own empresaId (falling back to IP), instead of
+// letting one tenant's guaranteed 4xx traffic throttle every other tenant
+// sharing this single Dokploy container's egress IP.
+app.use('/internal/catalog/search', internalCatalogFailureLimiter.postParse);
+app.use('/internal/ordering', internalOrderingFailureLimiter.postParse);
 
 // Trust proxy headers when behind a reverse proxy
 app.set('trust proxy', 1);
