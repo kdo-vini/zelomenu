@@ -395,6 +395,13 @@ function toSnapshot(record: ConversationOrderingRecord, confirmationAction: Orde
   const { sessionId: _sessionId, processedMessageIds: _processedMessageIds, reviewRequired: _reviewRequired, ...publicRecord } = normalized;
   return {
     ...publicRecord,
+    // FIX 2026-09-04 (G2): o spread é shallow e `order` é o único sub-objeto
+    // que o caminho de confirmação muta DEPOIS do snapshot (`applyOnce` e o
+    // adaptador escrevem `order.alreadyConfirmed`), então sem esta cópia um
+    // snapshot já devolvido era reescrito retroativamente. Sem impacto hoje
+    // (cada chamada mapeia uma linha nova do banco), mas qualquer cache no
+    // adaptador viraria bug cross-request.
+    order: publicRecord.order ? { ...publicRecord.order } : publicRecord.order,
     confirmationAction: normalized.readyForConfirmation ? confirmationAction : null,
     requiresReview: normalized.reviewRequired === true,
   };
