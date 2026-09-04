@@ -231,13 +231,26 @@ export function parseInternalOrderingCommand(input: unknown): ParseResult {
   return { ok: true, value: { ...identity, type: row.type, orderingId: row.orderingId, expectedRevision: Number(row.expectedRevision), confirmationToken: row.confirmationToken, pessoaId } };
 }
 
+const SAFE_DIAGNOSTIC_FIELD = /^[A-Za-z0-9_.:-]{1,100}$/;
+
+function safeDiagnosticField(value: unknown, fallback: string): string {
+  return typeof value === 'string' && SAFE_DIAGNOSTIC_FIELD.test(value) ? value : fallback;
+}
+
 function sendOrderingError(error: unknown, res: Response): void {
   if (error instanceof ConversationOrderingError) {
     const status = error.code === 'PEDIDO_NAO_ENCONTRADO' ? 404 : error.code === 'REVISAO_DESATUALIZADA' || error.code === 'RESUMO_EXPIRADO' || error.code === 'PEDIDO_EM_ANDAMENTO' || error.code === 'PEDIDO_FECHADO' || error.code === 'CONFIRMACAO_INVALIDA' || error.code === 'AI_TURN_REVOKED' ? 409 : 400;
     res.status(status).json({ error: error.code, detail: error.message, current: error.currentSnapshot, requestId: res.locals.requestId });
     return;
   }
-  console.error('[ZeloMenu] internal ordering error:', error);
+  const errorRecord = typeof error === 'object' && error !== null
+    ? error as { name?: unknown; code?: unknown }
+    : {};
+  console.error('[ZeloMenu] internal ordering error', {
+    name: safeDiagnosticField(errorRecord.name, 'UnknownError'),
+    code: safeDiagnosticField(errorRecord.code, 'UNCLASSIFIED'),
+    requestId: safeDiagnosticField(res.locals.requestId, 'unknown'),
+  });
   res.status(500).json({ error: internalOrderingErrorCode('PEDIDO_INDISPONIVEL'), detail: 'Não foi possível processar o pedido agora. Tente novamente.', requestId: res.locals.requestId });
 }
 

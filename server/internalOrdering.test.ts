@@ -801,8 +801,12 @@ describe('rotas internas de ordering', () => {
       `jid=${JID}`,
       'cliente=Cliente de teste',
     ].join(' ');
+    const unexpected = Object.assign(new Error(technicalFailure), {
+      code: 'ORDERING_BACKEND_FAILURE',
+      stack: `C:\\secrets\\ordering.ts:42\n${technicalFailure}`,
+    });
     const ordering = {
-      apply: vi.fn(async () => { throw new Error(technicalFailure); }),
+      apply: vi.fn(async () => { throw unexpected; }),
       getSnapshot: vi.fn(async () => snapshot()),
     };
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -823,7 +827,12 @@ describe('rotas internas de ordering', () => {
     });
     expect(JSON.stringify(body)).not.toContain(technicalFailure);
     expect(JSON.stringify(body)).not.toMatch(/Supabase|RPC|confirm_whatsapp|Cliente de teste|5511999999999|10000000-/i);
-    expect(consoleError).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith('[ZeloMenu] internal ordering error', {
+      name: 'Error',
+      code: 'ORDERING_BACKEND_FAILURE',
+      requestId: 'req-internal-1',
+    });
+    expect(JSON.stringify(consoleError.mock.calls)).not.toMatch(/secrets|ordering\.ts:42|Supabase|RPC|Cliente de teste/i);
   });
 
   it('limita por empresa sem misturar empresas distintas', async () => {
