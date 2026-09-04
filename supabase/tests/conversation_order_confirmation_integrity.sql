@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(47);
+select plan(48);
 
 insert into auth.users (
   id, email, aud, role, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -363,6 +363,17 @@ cross join (values
 where baseline.id = 'c1000000-0000-4000-8000-000000000101';
 
 set local role service_role;
+
+select is(
+  public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000003', '5511900000011@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000101', 1,
+    'message-cross-tenant', 'idem-cross-tenant', null,
+    '9999999999999999999999999999999999999999999999999999999999999999'
+  ),
+  '{"outcome":"conflict"}'::jsonb,
+  'tenant mismatch returns conflict without the selected session payload'
+);
 
 select lives_ok(
   $sql$ select public.issue_whatsapp_zelo_confirmation_token(
