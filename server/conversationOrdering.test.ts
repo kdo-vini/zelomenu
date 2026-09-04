@@ -85,6 +85,8 @@ function reorderJsonKeys(value: unknown): unknown {
   return value;
 }
 
+type AdapterMutation = 'create' | 'update' | 'cancel' | 'confirm' | 'token';
+
 class MemoryAdapter implements ConversationOrderingAdapter {
   records: ConversationOrderingRecord[] = [];
   createCalls = 0;
@@ -107,11 +109,42 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   controlMode: 'ai' | 'human' = 'ai';
   controlEpoch: string = AI_PERMIT.conversationEpoch;
   revokeBeforeMutation: 'create' | 'update' | 'cancel' | 'confirm' | 'token' | null = null;
+  mutationCalls: Record<AdapterMutation, number> = {
+    create: 0,
+    update: 0,
+    cancel: 0,
+    confirm: 0,
+    token: 0,
+  };
   mutationPermits: Array<{
     mutation: 'create' | 'update' | 'cancel' | 'confirm' | 'token';
     conversationControlId: unknown;
     conversationEpoch: unknown;
   }> = [];
+  private mutationGate: {
+    mutations: Set<AdapterMutation>;
+    remaining: number;
+    promise: Promise<void>;
+    release: () => void;
+  } | null = null;
+
+  gateMutations(mutations: AdapterMutation[], participants: number): void {
+    let release = () => {};
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    this.mutationGate = { mutations: new Set(mutations), remaining: participants, promise, release };
+  }
+
+  private async enterMutation(mutation: AdapterMutation): Promise<void> {
+    this.mutationCalls[mutation] += 1;
+    const gate = this.mutationGate;
+    if (!gate?.mutations.has(mutation)) return;
+    gate.remaining -= 1;
+    if (gate.remaining === 0) {
+      this.mutationGate = null;
+      gate.release();
+    }
+    await gate.promise;
+  }
 
   private fenceAiMutation(
     mutation: 'create' | 'update' | 'cancel' | 'confirm' | 'token',
@@ -219,7 +252,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   }
 
   async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order' | 'reviewRequired'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
-    await Promise.resolve();
+    await this.enterMutation('create');
     this.fenceAiMutation('create', input);
     const existing = await this.findOpen(input.empresaId, input.remoteJid);
     if (existing) return existing;
@@ -245,6 +278,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     materialization: DraftMaterialization;
     pessoaId: string | null;
   } & ConversationAiPermit): Promise<DraftMutationResult> {
+    await this.enterMutation('update');
     this.fenceAiMutation('update', input);
     const latest = await this.findByOrderingId({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (!latest) throw new Error('missing');
@@ -261,6 +295,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   }
 
   async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string } & ConversationAiPermit): Promise<DraftMutationResult> {
+    await this.enterMutation('cancel');
     this.fenceAiMutation('cancel', input);
     const latest = await this.findByOrderingId({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (!latest) throw new Error('missing');
@@ -274,6 +309,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
   }
 
   async issueConfirmationToken(input: { current: ConversationOrderingRecord; tokenHash: string } & ConversationAiPermit) {
+    await this.enterMutation('token');
     this.fenceAiMutation('token', input);
     if (this.conflictNextIssuance) {
       this.conflictNextIssuance = false;
@@ -301,6 +337,7 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
     tokenHash: string | null; pessoaId: string | null;
   } & ConversationAiPermit) {
+    await this.enterMutation('confirm');
     this.fenceAiMutation('confirm', input);
     const latest = await this.findByOrderingId({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (!latest) throw new Error('missing');
@@ -1325,5 +1362,194 @@ describe('ConversationOrdering', () => {
       messageId: 'wamid.cancel-explicit-123456', orderingId: opened.orderingId, expectedRevision: 1,
     });
     expect(cancelled).toMatchObject({ state: 'cancelled', revision: 2, confirmationAction: null });
+  });
+
+  describe('concorrência entre sessões', () => {
+    it('aplica somente um de dois updates concorrentes na mesma revisão', async () => {
+      const adapter = new MemoryAdapter();
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: (record) => `token-concurrent-update-${record.revision}`,
+        hashConfirmationToken: (token) => token.padEnd(64, '3').slice(0, 64),
+      });
+      const opened = await ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: 'wamid.concurrent-update-open',
+        draft: { items: [{ lineId: 'line-base', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+      });
+      const update = (suffix: 'a' | 'b') => ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: `wamid.concurrent-update-${suffix}`,
+        orderingId: opened.orderingId, expectedRevision: opened.revision,
+        draft: { items: [{ lineId: `line-${suffix}`, productId: suffix === 'a' ? 20 : 30, quantity: 1 }] },
+      });
+
+      // The barrier makes both adapter calls reach the CAS before either may proceed.
+      adapter.gateMutations(['update'], 2);
+      const outcomes = await Promise.allSettled([update('a'), update('b')]);
+      const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      const winner = fulfilled[0].value;
+      const loser = rejected[0].reason as ConversationOrderingError;
+      expect(loser).toMatchObject({
+        code: 'REVISAO_DESATUALIZADA',
+        currentSnapshot: expect.objectContaining({ orderingId: opened.orderingId, revision: 2 }),
+      });
+      const final = await ordering.getSnapshot({ orderingId: opened.orderingId, empresaId: EMPRESA_A, remoteJid: JID_A });
+      expect(final?.cart.items).toEqual(winner.cart.items);
+      expect(final?.cart.items.map((item) => item.lineId)).toContain('line-base');
+      expect(final?.cart.items).toHaveLength(2);
+      expect(loser.currentSnapshot?.cart.items).toEqual(final?.cart.items);
+      expect(['line-a', 'line-b'].filter((lineId) => final?.cart.items.some((item) => item.lineId === lineId))).toHaveLength(1);
+    });
+
+    it('cria um único pedido para duas confirmações concorrentes com mensagens diferentes', async () => {
+      const adapter = new MemoryAdapter();
+      adapter.autoAccept = false;
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: (record) => `token-concurrent-confirm-${record.revision}`,
+        hashConfirmationToken: (token) => token.padEnd(64, '4').slice(0, 64),
+      });
+      const opened = await ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: 'wamid.concurrent-confirm-open',
+        draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+      });
+      const confirm = (suffix: 'a' | 'b') => ordering.apply({
+        type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: `wamid.concurrent-confirm-${suffix}`,
+        orderingId: opened.orderingId, expectedRevision: opened.revision,
+        confirmationToken: opened.confirmationAction!.token,
+      });
+
+      adapter.gateMutations(['confirm'], 2);
+      const outcomes = await Promise.allSettled([confirm('a'), confirm('b')]);
+      const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled').map((outcome) => outcome.value);
+      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+
+      expect(adapter.records).toHaveLength(1);
+      const orderIds = new Set(fulfilled.map((snapshot) => snapshot.order?.id).filter(Boolean));
+      expect(orderIds.size).toBeLessThanOrEqual(1);
+      if (fulfilled.length === 2) {
+        expect(orderIds.size).toBe(1);
+        // O invariante que importa é acima: UM pedido, UM order.id, UM record.
+        // Qual dos dois concorrentes observa `alreadyConfirmed: false` NÃO é
+        // garantido pelo domínio — depende de quando cada chamada lê o
+        // registro (aqui, o objeto in-memory compartilhado; em produção, a
+        // própria linha relida do banco). Exigir `[false, true]` seria fixar
+        // um detalhe de escalonamento, não um contrato. O que precisa valer
+        // é que os dois enxergam o MESMO pedido confirmado, nunca dois.
+        expect(fulfilled.every((snapshot) => snapshot.order != null)).toBe(true);
+      } else {
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0].reason).toMatchObject({ code: expect.stringMatching(/^(CONFIRMACAO_INVALIDA|REVISAO_DESATUALIZADA)$/) });
+      }
+      expect(adapter.records[0].order?.id).toBe(fulfilled[0].order?.id);
+    });
+
+    it('mantém um estado terminal consistente quando confirmação disputa com cancelamento', async () => {
+      const adapter = new MemoryAdapter();
+      adapter.autoAccept = false;
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: (record) => `token-confirm-cancel-${record.revision}`,
+        hashConfirmationToken: (token) => token.padEnd(64, '5').slice(0, 64),
+      });
+      const opened = await ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: 'wamid.confirm-cancel-open',
+        draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+      });
+
+      // A shared barrier forces the two different terminal mutations to overlap.
+      adapter.gateMutations(['cancel', 'confirm'], 2);
+      const outcomes = await Promise.allSettled([
+        ordering.apply({
+          type: 'cancel_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+          messageId: 'wamid.confirm-cancel-cancel', orderingId: opened.orderingId, expectedRevision: opened.revision,
+        }),
+        ordering.apply({
+          type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+          messageId: 'wamid.confirm-cancel-confirm', orderingId: opened.orderingId, expectedRevision: opened.revision,
+          confirmationToken: opened.confirmationAction!.token,
+        }),
+      ]);
+      const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      const final = adapter.records[0];
+      const cancelledConsistently = final.state === 'cancelled' && final.order === null;
+      const confirmedConsistently = final.state === 'confirmed_waiting_review' && final.order !== null;
+      expect(cancelledConsistently || confirmedConsistently).toBe(true);
+      if (confirmedConsistently) expect(rejected[0].reason).toMatchObject({ code: 'PEDIDO_FECHADO' });
+    });
+
+    it('coalesce duas entregas concorrentes da mesma mensagem em uma mutação', async () => {
+      const adapter = new MemoryAdapter();
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: (record) => `token-double-delivery-${record.revision}`,
+        hashConfirmationToken: (token) => token.padEnd(64, '6').slice(0, 64),
+      });
+      const opened = await ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: 'wamid.double-delivery-open',
+        draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+      });
+      const command = {
+        type: 'open_or_update_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: 'wamid.double-delivery-update', orderingId: opened.orderingId, expectedRevision: opened.revision,
+        draft: { items: [{ lineId: 'line-2', productId: 20, quantity: 1 }] },
+      };
+      const updateCallsBefore = adapter.mutationCalls.update;
+
+      const first = ordering.apply(command);
+      const second = ordering.apply(command);
+      expect(first).toBe(second);
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(firstResult).toEqual(secondResult);
+      expect(adapter.mutationCalls.update - updateCallsBefore).toBe(1);
+      expect(adapter.records[0].revision).toBe(2);
+    });
+
+    it('bloqueia o epoch obsoleto antes da mutação e permite o epoch atual', async () => {
+      const adapter = new MemoryAdapter();
+      const ordering = createConversationOrdering(adapter, {
+        createRawConfirmationToken: (record) => `token-epoch-race-${record.revision}`,
+        hashConfirmationToken: (token) => token.padEnd(64, '7').slice(0, 64),
+      });
+      const opened = await ordering.apply({
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId: 'wamid.epoch-race-open',
+        draft: { items: [{ lineId: 'line-base', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+      });
+      adapter.controlEpoch = '43';
+      const updateAtEpoch = (messageId: string, conversationEpoch: string, lineId: string) => ordering.apply({
+        conversationEpoch,
+        type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+        messageId, orderingId: opened.orderingId, expectedRevision: opened.revision,
+        draft: { items: [{ lineId, productId: lineId === 'line-stale' ? 20 : 30, quantity: 1 }] },
+      });
+
+      adapter.gateMutations(['update'], 2);
+      const outcomes = await Promise.allSettled([
+        updateAtEpoch('wamid.epoch-race-stale', '42', 'line-stale'),
+        updateAtEpoch('wamid.epoch-race-current', '43', 'line-current'),
+      ]);
+      const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason).toMatchObject({ code: 'AI_TURN_REVOKED' });
+      expect(adapter.records[0]).toMatchObject({ revision: 2, state: 'cart_open' });
+      expect(adapter.records[0].processedMessageIds).toContain('wamid.epoch-race-current');
+      expect(adapter.records[0].processedMessageIds).not.toContain('wamid.epoch-race-stale');
+      expect(adapter.records[0].cart.items.map((item) => item.lineId)).toEqual(['line-base', 'line-current']);
+    });
   });
 });
