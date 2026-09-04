@@ -341,5 +341,3 @@ grant execute on function public.confirm_whatsapp_zelo_order_atomic_v1(uuid, tex
 
 comment on function public.confirm_whatsapp_zelo_order_atomic_v1(uuid, text, uuid, integer, text, text, uuid, text) is
   'ZM1: confirmation token is now mandatory (never accepts p_token_hash = null); bound to session_id + revision, so a token issued for revision N can never confirm revision N+1. Preserves the canonical component-aware materializer and every existing idempotency/review semantic.';
-
-
