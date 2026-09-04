@@ -76,7 +76,7 @@ as $$
          and jsonb_typeof(p_fulfillment->'pickupTime') = 'string'
          and nullif(btrim(p_fulfillment->>'pickupTime'), '') is not null
        )
-     ), false)
+     )), false)
 $$;
 
 revoke all on function public.zelomenu_whatsapp_order_is_ready_v1(text, text, text, jsonb, jsonb, jsonb, jsonb, jsonb, boolean)
