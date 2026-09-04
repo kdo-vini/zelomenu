@@ -219,10 +219,15 @@ export function parseInternalOrderingCommand(input: unknown): ParseResult {
   }
   if (typeof row.orderingId !== 'string' || !UUID.test(row.orderingId) || !Number.isSafeInteger(row.expectedRevision) || Number(row.expectedRevision) < 1) return { ok: false, message: 'Informe pedido e revisão válidos.' };
   if (row.type === 'cancel_draft') return { ok: true, value: { ...identity, type: row.type, orderingId: row.orderingId, expectedRevision: Number(row.expectedRevision) } };
-  if (row.confirmationToken != null && (typeof row.confirmationToken !== 'string' || !/^[A-Za-z0-9_-]{20,120}$/.test(row.confirmationToken))) return { ok: false, message: 'A confirmação informada não é válida.' };
+  // ZM1: confirmationToken is mandatory for confirm_draft (was optional).
+  // A confirmation must always prove it saw the exact revision being
+  // confirmed -- text "sim" and button taps both carry the token already
+  // visible to them via confirmationAction; there is no legitimate
+  // confirm_draft with no token.
+  if (typeof row.confirmationToken !== 'string' || !/^[A-Za-z0-9_-]{20,120}$/.test(row.confirmationToken)) return { ok: false, message: 'Informe a confirmação do pedido.' };
   const pessoaId = row.pessoaId == null ? null : typeof row.pessoaId === 'string' && UUID.test(row.pessoaId) ? row.pessoaId : undefined;
   if (row.pessoaId != null && pessoaId === undefined) return { ok: false, message: 'Informe um cliente válido.' };
-  return { ok: true, value: { ...identity, type: row.type, orderingId: row.orderingId, expectedRevision: Number(row.expectedRevision), confirmationToken: row.confirmationToken as string | undefined, pessoaId } };
+  return { ok: true, value: { ...identity, type: row.type, orderingId: row.orderingId, expectedRevision: Number(row.expectedRevision), confirmationToken: row.confirmationToken, pessoaId } };
 }
 
 function sendOrderingError(error: unknown, res: Response): void {

@@ -71,15 +71,12 @@ side — regenerate here and re-copy.**
   directly from the real-wrong shapes the ZeloChat consumer has sent in
   production (see `ultra-review-contract.md`): echoed `deliveryFee`/
   `deliveryFeeToConfirm`, `fulfillment.type: null`, an invalid fulfillment
-  enum, an item without `lineId`, an item echoing priced fields, and
-  `conversationEpoch` sent as a `number` instead of a decimal string. Every
-  entry here always maps to HTTP 400 `COMANDO_INVALIDO` with `detail` equal
-  to `expectedError.message`.
-
-Note: as of this writing `confirm_draft` still accepts a missing
-`confirmationToken` (it is optional). Task ZM1 step 3 makes it mandatory —
-once that lands, `commands.rejected.json` gains a
-"confirm_draft sem confirmationToken" entry and this note is deleted.
+  enum, an item without `lineId`, an item echoing priced fields,
+  `conversationEpoch` sent as a `number` instead of a decimal string, and
+  `confirm_draft` with no `confirmationToken` (mandatory since ZM1 step 3 —
+  text "sim" and button taps both reuse the token already visible to them
+  via `confirmationAction`). Every entry here always maps to HTTP 400
+  `COMANDO_INVALIDO` with `detail` equal to `expectedError.message`.
 
 ## How to regenerate
 

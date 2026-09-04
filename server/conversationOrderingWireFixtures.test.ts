@@ -104,6 +104,7 @@ function validConfirmCommand() {
     conversationEpoch: '1',
     orderingId: '30000000-0000-4000-8000-000000000001',
     expectedRevision: 1,
+    confirmationToken: 'a'.repeat(43),
   };
 }
 

@@ -346,13 +346,18 @@ select lives_ok(
   'complete ready revision issues a confirmation token'
 );
 
+-- ZM1: confirmation token is now mandatory (see 20260904090000). Text
+-- confirmation and button confirmation share the exact same requirement --
+-- both must present the token already visible to them via confirmationAction
+-- (a text "sim" reuses the same token the customer's summary carried).
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000011@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000101', 1, 'message-valid', 'idem-valid', null, null
+    'c1000000-0000-4000-8000-000000000101', 1, 'message-valid', 'idem-valid', null,
+    'f77e3ef1c60015a3bce4d2f81401f549a8b3b56f30c7f4b4e20d1607f63e9480'
   )->>'outcome'),
   'confirmed',
-  'complete ready revision confirms without a token for text confirmation'
+  'complete ready revision confirms with the previously issued token for text confirmation'
 );
 
 select ok(
@@ -389,7 +394,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000012@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000102', 1, 'message-not-ready', 'idem-not-ready', null, null
+    'c1000000-0000-4000-8000-000000000102', 1, 'message-not-ready', 'idem-not-ready', null,
+    'a08663301e123a40d1162222e94854078f06ec383c60789455e0a4698d534dca'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
   'stored false readiness blocks tokenless confirmation'
@@ -406,7 +412,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000013@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000103', 1, 'message-blank-name', 'idem-blank-name', null, null
+    'c1000000-0000-4000-8000-000000000103', 1, 'message-blank-name', 'idem-blank-name', null,
+    'e0f67bbda9022940293d103c2a6a83cc1133da9c9f36f418cdbf83a8aa204d26'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
   'blank customer name cannot bypass the readiness predicate'
@@ -415,7 +422,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000014@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000104', 1, 'message-null-payment', 'idem-null-payment', null, null
+    'c1000000-0000-4000-8000-000000000104', 1, 'message-null-payment', 'idem-null-payment', null,
+    '771080a5b60047c896f6f2c2ef8ce4061e661f14d3252150f0908401018d191a'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
   'null payment method cannot bypass the readiness predicate'
@@ -432,7 +440,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000015@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000105', 1, 'message-blocking', 'idem-blocking', null, null
+    'c1000000-0000-4000-8000-000000000105', 1, 'message-blocking', 'idem-blocking', null,
+    '73c02b534d1f0456191965ac51576bfde31b61a79f7744d796ea1324cac88749'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
   'blocking requirement cannot bypass the readiness predicate'
@@ -449,7 +458,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000016@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000106', 1, 'message-delivery', 'idem-delivery', null, null
+    'c1000000-0000-4000-8000-000000000106', 1, 'message-delivery', 'idem-delivery', null,
+    'cea9702a5ca49f4fdd01fad4afe21cbce52b8bebc64de73b7652c31f62fe5491'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
   'incomplete delivery address cannot bypass the readiness predicate'
@@ -466,7 +476,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000017@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000107', 1, 'message-schedule', 'idem-schedule', null, null
+    'c1000000-0000-4000-8000-000000000107', 1, 'message-schedule', 'idem-schedule', null,
+    '3ff76f900f3b75cd4a3980a394b39b2c417710ccbbecb2e445bdeb78002bf219'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY',
   'missing scheduled date/time cannot bypass the readiness predicate'
@@ -490,7 +501,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000026@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000117', 1, 'message-phone-mismatch', 'idem-phone-mismatch', null, null
+    'c1000000-0000-4000-8000-000000000117', 1, 'message-phone-mismatch', 'idem-phone-mismatch', null,
+    '42f7befeb0f14ce8d7d05fe3c6c0442360e8a9bb512cc84dbf1a2d7ef2658c03'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'phone divergent from scoped JID blocks tokenless confirmation'
 );
@@ -505,7 +517,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000018@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000108', 1, 'message-missing-blocking', 'idem-missing-blocking', null, null
+    'c1000000-0000-4000-8000-000000000108', 1, 'message-missing-blocking', 'idem-missing-blocking', null,
+    'e8c815f844e7e6b76c19264b41f4591ec46bb388855ca75d308e3d06c21a9b8f'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'missing blocking flag blocks tokenless confirmation'
 );
@@ -520,7 +533,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000019@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000109', 1, 'message-null-blocking', 'idem-null-blocking', null, null
+    'c1000000-0000-4000-8000-000000000109', 1, 'message-null-blocking', 'idem-null-blocking', null,
+    '1f22ea5c029bf889f1b92f1831267ea8077fa512590cb3404135d08d7b66b01b'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'null blocking flag blocks tokenless confirmation'
 );
@@ -535,7 +549,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000020@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000110', 1, 'message-string-blocking', 'idem-string-blocking', null, null
+    'c1000000-0000-4000-8000-000000000110', 1, 'message-string-blocking', 'idem-string-blocking', null,
+    '30481b27bfbbfef6bfac8c7f1dd4a7df464ec46cd27ad9c782015da84694ef5b'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'string blocking flag blocks tokenless confirmation'
 );
@@ -550,7 +565,8 @@ select throws_ok(
 select throws_ok(
   $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000021@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000111', 1, 'message-string-revalidation', 'idem-string-revalidation', null, null
+    'c1000000-0000-4000-8000-000000000111', 1, 'message-string-revalidation', 'idem-string-revalidation', null,
+    '2299babab22153f37214e4b583007f2f84cc3199b22fa6bf47a58118a57bfa54'
   ) $sql$,
   'ZL409', 'ORDER_NOT_READY', 'string revalidation flag blocks tokenless confirmation without a cast error'
 );
@@ -577,29 +593,53 @@ select ok(
   , 'all malformed readiness cases are write-free (token/order/stock/state/revision)'
 );
 
+-- ZM1: confirm now requires a token, so each of these otherwise-ready
+-- sessions (the lineId problem only surfaces later, during materialization)
+-- needs one legitimately issued first. Issuance is a bare fixture-setup
+-- statement here (not a pgTAP assertion), matching the plan(40) below.
+select public.issue_whatsapp_zelo_confirmation_token(
+  '6d9baf59c9bec7c3bedbaa9e62001bff06686468b9a0490cb9647fb3cda921cc', 'c1000000-0000-4000-8000-000000000002',
+  '5511900000022@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000114', 1, now() + interval '10 minutes'
+);
+select public.issue_whatsapp_zelo_confirmation_token(
+  'a4d53767b1e12100a0df679b28f9ff02eed09ff4764d6cd9fda0c80497767be4', 'c1000000-0000-4000-8000-000000000002',
+  '5511900000023@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000115', 1, now() + interval '10 minutes'
+);
+select public.issue_whatsapp_zelo_confirmation_token(
+  '6b05c18aae1696a9b35ec8121ed654500c1ff1ce91d6209c3d8fb2a6c9d6498c', 'c1000000-0000-4000-8000-000000000002',
+  '5511900000024@s.whatsapp.net', 'c1000000-0000-4000-8000-000000000116', 1, now() + interval '10 minutes'
+);
+
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000022@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000114', 1, 'message-invalid-line', 'idem-invalid-line', null, null
+    'c1000000-0000-4000-8000-000000000114', 1, 'message-invalid-line', 'idem-invalid-line', null,
+    '6d9baf59c9bec7c3bedbaa9e62001bff06686468b9a0490cb9647fb3cda921cc'
   )->>'outcome'),
   'requires_review', 'invalid lineId cannot create an order'
 );
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000023@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000115', 1, 'message-missing-line', 'idem-missing-line', null, null
+    'c1000000-0000-4000-8000-000000000115', 1, 'message-missing-line', 'idem-missing-line', null,
+    'a4d53767b1e12100a0df679b28f9ff02eed09ff4764d6cd9fda0c80497767be4'
   )->>'outcome'),
   'requires_review', 'missing lineId cannot create an order'
 );
 select is(
   (select public.confirm_whatsapp_zelo_order_atomic_v1(
     'c1000000-0000-4000-8000-000000000002', '5511900000024@s.whatsapp.net',
-    'c1000000-0000-4000-8000-000000000116', 1, 'message-duplicate-line', 'idem-duplicate-line', null, null
+    'c1000000-0000-4000-8000-000000000116', 1, 'message-duplicate-line', 'idem-duplicate-line', null,
+    '6b05c18aae1696a9b35ec8121ed654500c1ff1ce91d6209c3d8fb2a6c9d6498c'
   )->>'outcome'),
   'requires_review', 'duplicate lineId cannot create an order'
 );
 -- Invalid line identities update the review snapshot/revision by design. They
--- must not create an order or token, consume stock, or close the cart.
+-- must not create an order, consume stock, or close the cart. The token each
+-- session needed to even attempt confirmation is left invalidated (folded
+-- into the same revision-bump cleanup that always invalidates the confirming
+-- revision's token once a review snapshot is written) but never consumed --
+-- proving the requires_review path still cannot forge an order.
 select ok(
   (select count(*) from public.zelomenu_cart_sessions where id in (
     'c1000000-0000-4000-8000-000000000114',
@@ -615,14 +655,19 @@ select ok(
     'c1000000-0000-4000-8000-000000000114',
     'c1000000-0000-4000-8000-000000000115',
     'c1000000-0000-4000-8000-000000000116'
-  ))
+  ) and consumed_at is not null)
+  and (select count(*) from public.zelomenu_whatsapp_confirmation_tokens where session_id in (
+    'c1000000-0000-4000-8000-000000000114',
+    'c1000000-0000-4000-8000-000000000115',
+    'c1000000-0000-4000-8000-000000000116'
+  ) and invalidated_at is not null) = 3
   and (select estoque_atual from public.produtos where id = 2147482801) = 0
   and not exists (select 1 from public.zelomenu_cart_sessions where id in (
     'c1000000-0000-4000-8000-000000000114',
     'c1000000-0000-4000-8000-000000000115',
     'c1000000-0000-4000-8000-000000000116'
   ) and state <> 'cart_open'),
-  'invalid lineIds are no-order and write-free for token, stock, and terminal state'
+  'invalid lineIds are no-order and consumption-free; each issued token ends up invalidated, never consumed'
 );
 select is(
   (select count(*)::integer from public.zelo_orders where empresa_id = 'c1000000-0000-4000-8000-000000000002'),

@@ -82,7 +82,7 @@ export type ConversationAiPermit = {
 
 export type ConversationOrderCommand = CommandIdentity & ConversationAiPermit & (
   | { type: 'open_or_update_draft'; orderingId?: string; expectedRevision?: number; draft: ConversationOrderDraft }
-  | { type: 'confirm_draft'; orderingId: string; expectedRevision: number; confirmationToken?: string; pessoaId?: string | null }
+  | { type: 'confirm_draft'; orderingId: string; expectedRevision: number; confirmationToken: string; pessoaId?: string | null }
   | { type: 'cancel_draft'; orderingId: string; expectedRevision: number }
 );
 
@@ -605,6 +605,19 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
         toSnapshot(normalizedCurrent),
       );
     }
+    // A confirmation must always prove it saw the exact ready revision being
+    // confirmed. This defends the domain even if some caller bypasses the
+    // parser (server/internalOrdering.ts also requires confirmationToken).
+    // Placed AFTER the readiness check on purpose: "revise pending data"
+    // must still win over "you also forgot the confirmation" when the order
+    // was never ready in the first place.
+    if (!command.confirmationToken) {
+      throw new ConversationOrderingError(
+        'CONFIRMACAO_INVALIDA',
+        'Informe a confirmação do pedido.',
+        toSnapshot(normalizedCurrent),
+      );
+    }
     const idempotencyKey = `whatsapp:${current.sessionId}:${command.messageId}`;
     const result = await adapter.confirmAtomically({
       current,
@@ -612,7 +625,7 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       conversationEpoch: command.conversationEpoch,
       expectedRevision: command.expectedRevision,
       messageId: command.messageId,
-      tokenHash: command.confirmationToken ? options.hashConfirmationToken(command.confirmationToken) : null,
+      tokenHash: options.hashConfirmationToken(command.confirmationToken),
       idempotencyKey,
       pessoaId: command.pessoaId ?? current.pessoaId,
     });

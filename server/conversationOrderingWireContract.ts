@@ -276,4 +276,13 @@ export const REJECTED_COMMAND_BODIES: NamedCommandBody[] = [
       draft: { items: [{ lineId: 'linha-1', productId: 1007, quantity: 1 }] },
     },
   },
+  {
+    name: 'confirm_draft sem confirmationToken (obrigatório desde ZM1 passo 3 — ver server/internalOrdering.ts)',
+    body: {
+      type: 'confirm_draft',
+      ...identity('wamid.rejected-no-token-000001'),
+      orderingId: ORDERING_ID,
+      expectedRevision: 1,
+    },
+  },
 ];

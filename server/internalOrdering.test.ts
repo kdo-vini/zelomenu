@@ -502,6 +502,45 @@ describe('parseInternalOrderingCommand', () => {
       draft: { items: [], customer: { phone: null } },
     })).toEqual({ ok: false, message: 'Informe pelo menos uma alteração.' });
   });
+
+  it('ZM1: exige confirmationToken em confirm_draft e valida seu formato', () => {
+    const base = {
+      type: 'confirm_draft' as const,
+      empresaId: EMPRESA,
+      remoteJid: JID,
+      messageId: 'wamid.confirm-token-required-123456',
+      conversationControlId: CONVERSATION_CONTROL,
+      conversationEpoch: '42',
+      orderingId: ORDERING,
+      expectedRevision: 1,
+    };
+
+    expect(parseInternalOrderingCommand(base)).toEqual({ ok: false, message: 'Informe a confirmação do pedido.' });
+    expect(parseInternalOrderingCommand({ ...base, confirmationToken: null }))
+      .toEqual({ ok: false, message: 'Informe a confirmação do pedido.' });
+    expect(parseInternalOrderingCommand({ ...base, confirmationToken: 42 }))
+      .toEqual({ ok: false, message: 'Informe a confirmação do pedido.' });
+    expect(parseInternalOrderingCommand({ ...base, confirmationToken: 'muito-curta' }))
+      .toEqual({ ok: false, message: 'Informe a confirmação do pedido.' });
+
+    const validToken = 'a'.repeat(43);
+    const parsed = parseInternalOrderingCommand({ ...base, confirmationToken: validToken });
+    expect(parsed.ok && parsed.value.type === 'confirm_draft' ? parsed.value.confirmationToken : null).toBe(validToken);
+  });
+
+  it('ZM1: cancel_draft continua sem exigir confirmationToken', () => {
+    const parsed = parseInternalOrderingCommand({
+      type: 'cancel_draft',
+      empresaId: EMPRESA,
+      remoteJid: JID,
+      messageId: 'wamid.cancel-no-token-123456',
+      conversationControlId: CONVERSATION_CONTROL,
+      conversationEpoch: '42',
+      orderingId: ORDERING,
+      expectedRevision: 1,
+    });
+    expect(parsed.ok).toBe(true);
+  });
 });
 
 describe('rotas internas de ordering', () => {
@@ -839,6 +878,7 @@ describe('mapeamento de prontidao', () => {
         type: 'confirm_draft',
         orderingId: ORDERING,
         expectedRevision: 1,
+        confirmationToken: 'a'.repeat(43),
       }),
     });
     const body = await response.json();

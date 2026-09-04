@@ -167,5 +167,22 @@
       "error": "COMANDO_INVALIDO",
       "message": "Informe uma mensagem válida."
     }
+  },
+  {
+    "name": "confirm_draft sem confirmationToken (obrigatório desde ZM1 passo 3 — ver server/internalOrdering.ts)",
+    "body": {
+      "type": "confirm_draft",
+      "empresaId": "10000000-0000-4000-8000-0000000000f1",
+      "remoteJid": "5511900000001@s.whatsapp.net",
+      "messageId": "wamid.rejected-no-token-000001",
+      "conversationControlId": "60000000-0000-4000-8000-0000000000f1",
+      "conversationEpoch": "7",
+      "orderingId": "30000000-0000-4000-8000-000000000001",
+      "expectedRevision": 1
+    },
+    "expectedError": {
+      "error": "COMANDO_INVALIDO",
+      "message": "Informe a confirmação do pedido."
+    }
   }
 ]

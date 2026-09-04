@@ -402,6 +402,7 @@ describe('ConversationOrdering', () => {
       ...AI_PERMIT,
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.permit-confirm-123456', orderingId: ready.orderingId, expectedRevision: 1,
+      confirmationToken: ready.confirmationAction!.token,
     });
 
     expect(updating.mutationPermits).toEqual([
@@ -445,6 +446,10 @@ describe('ConversationOrdering', () => {
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.incomplete-confirm-123456', orderingId: opened.orderingId,
       expectedRevision: opened.revision,
+      // Not-ready orders reject on readiness before the token is even
+      // examined (see the guard order in applyOnce); this placeholder is
+      // never validated.
+      confirmationToken: 'token-placeholder-unused-not-ready',
     }).catch((caught) => caught);
     expect(error).toBeInstanceOf(ConversationOrderingError);
     expect(error).toMatchObject({ code: 'PEDIDO_INVALIDO', message: 'Revise os dados pendentes antes de confirmar.' });
@@ -512,6 +517,7 @@ describe('ConversationOrdering', () => {
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.malicious-ready-confirm-123456', orderingId: opened.orderingId,
       expectedRevision: opened.revision,
+      confirmationToken: 'token-placeholder-unused-not-ready',
     })).rejects.toMatchObject({
       code: 'PEDIDO_INVALIDO',
       message: 'Revise os dados pendentes antes de confirmar.',
@@ -558,6 +564,7 @@ describe('ConversationOrdering', () => {
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: `wamid.malformed-fact-confirm-${label}`, orderingId: opened.orderingId,
       expectedRevision: opened.revision,
+      confirmationToken: 'token-placeholder-unused-not-ready',
     })).rejects.toMatchObject({
       code: 'PEDIDO_INVALIDO',
       message: 'Revise os dados pendentes antes de confirmar.',
@@ -612,6 +619,7 @@ describe('ConversationOrdering', () => {
               ...AI_PERMIT,
               type: 'confirm_draft' as const, empresaId: EMPRESA_A, remoteJid: JID_A,
               messageId: 'wamid.revoked-confirm-123456', orderingId: opened!.orderingId, expectedRevision: 1,
+              confirmationToken: opened!.confirmationAction!.token,
             };
 
       await expect(ordering.apply(command)).rejects.toMatchObject({
@@ -1026,6 +1034,37 @@ describe('ConversationOrdering', () => {
     expect(adapter.records).toHaveLength(1);
   });
 
+  it('ZM1: exige confirmationToken no dominio mesmo quando o pedido esta pronto (bypass do parser)', async () => {
+    const adapter = new MemoryAdapter();
+    const ordering = createConversationOrdering(adapter, {
+      createRawConfirmationToken: (record) => `token-required-${record.revision}`,
+      hashConfirmationToken: (token) => token.padEnd(64, 'a').slice(0, 64),
+    });
+    const opened = await ordering.apply({
+      type: 'open_or_update_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.token-required-open-123456',
+      draft: { items: [{ lineId: 'line-1', productId: 10, quantity: 1 }], fulfillment: PICKUP_FULFILLMENT },
+    });
+    expect(opened.readyForConfirmation).toBe(true);
+    const confirmAtomically = vi.spyOn(adapter, 'confirmAtomically');
+
+    // TestConversationOrderCommand types confirmationToken as required, so
+    // the missing case can only be modeled by casting through unknown --
+    // exactly what a caller that bypasses parseInternalOrderingCommand
+    // (a bug, or a future call site) would produce at runtime.
+    const commandWithoutToken = {
+      type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
+      messageId: 'wamid.token-required-confirm-123456',
+      orderingId: opened.orderingId, expectedRevision: 1,
+    } as unknown as { type: 'confirm_draft'; empresaId: string; remoteJid: string; messageId: string; orderingId: string; expectedRevision: number; confirmationToken: string };
+
+    await expect(ordering.apply(commandWithoutToken)).rejects.toMatchObject({
+      code: 'CONFIRMACAO_INVALIDA',
+      message: 'Informe a confirmação do pedido.',
+    });
+    expect(confirmAtomically).not.toHaveBeenCalled();
+  });
+
   it('revalida preço, taxa, estoque/publicação, cobertura e horário antes de confirmar', async () => {
     const scenarios = [
       { label: 'preço', configure: (adapter: MemoryAdapter) => { adapter.currentPrice = 25; }, issue: undefined },
@@ -1096,6 +1135,10 @@ describe('ConversationOrdering', () => {
     const confirmed = await ordering.apply({
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.first-text-confirm-123456', orderingId: first.orderingId, expectedRevision: 1,
+      // A text "sim" reuses the same token the customer's summary carried --
+      // it is a different USER INPUT than a button tap, not a different
+      // token requirement.
+      confirmationToken: first.confirmationAction!.token,
     });
     expect(confirmed.state).toBe('confirmed_waiting_review');
 
@@ -1125,6 +1168,7 @@ describe('ConversationOrdering', () => {
     await firstReplica.apply({
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.historical-confirm-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      confirmationToken: opened.confirmationAction!.token,
     });
 
     const replicaA = createConversationOrdering(adapter, {
@@ -1197,6 +1241,7 @@ describe('ConversationOrdering', () => {
     const confirmed = await ordering.apply({
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.jsonb-confirm-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      confirmationToken: opened.confirmationAction!.token,
     });
 
     expect(confirmed).toMatchObject({ state: 'confirmed_waiting_review', revision: 1, requiresReview: false });
@@ -1220,6 +1265,7 @@ describe('ConversationOrdering', () => {
     const result = await ordering.apply({
       type: 'confirm_draft', empresaId: EMPRESA_A, remoteJid: JID_A,
       messageId: 'wamid.atomic-confirm-123456', orderingId: opened.orderingId, expectedRevision: 1,
+      confirmationToken: opened.confirmationAction!.token,
     });
 
     expect(result).toMatchObject({ state: 'cart_open', revision: 2, requiresReview: true, order: null });
