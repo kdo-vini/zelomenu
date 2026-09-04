@@ -408,6 +408,12 @@ cross join (values
 
 set local role service_role;
 
+select public.issue_whatsapp_zelo_confirmation_token(
+  '1111111111111111111111111111111111111111111111111111111111111111',
+  'b6000000-0000-4000-8000-000000000002', '5511900000001@s.whatsapp.net',
+  'b6000000-0000-4000-8000-000000000051', 1, now() + interval '10 minutes'
+);
+
 update component_parity_results
 set active_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
@@ -417,7 +423,7 @@ set active_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'message-component-active',
   'idem-component-active',
   null,
-  null
+  '1111111111111111111111111111111111111111111111111111111111111111'
 );
 
 reset role;
@@ -433,6 +439,12 @@ select ok(
 
 set local role service_role;
 
+select public.issue_whatsapp_zelo_confirmation_token(
+  '2222222222222222222222222222222222222222222222222222222222222222',
+  'b6000000-0000-4000-8000-000000000002', '5511900000003@s.whatsapp.net',
+  'b6000000-0000-4000-8000-000000000053', 1, now() + interval '10 minutes'
+);
+
 update component_parity_results
 set stock_six_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
@@ -442,7 +454,7 @@ set stock_six_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'message-stock-six',
   'idem-stock-six',
   null,
-  null
+  '2222222222222222222222222222222222222222222222222222222222222222'
 );
 
 reset role;
@@ -470,6 +482,12 @@ where id = 2147482602;
 
 set local role service_role;
 
+select public.issue_whatsapp_zelo_confirmation_token(
+  '3333333333333333333333333333333333333333333333333333333333333333',
+  'b6000000-0000-4000-8000-000000000002', '5511900000004@s.whatsapp.net',
+  'b6000000-0000-4000-8000-000000000054', 1, now() + interval '10 minutes'
+);
+
 update component_parity_results
 set stock_seven_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
@@ -479,7 +497,7 @@ set stock_seven_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'message-stock-seven',
   'idem-stock-seven',
   null,
-  null
+  '3333333333333333333333333333333333333333333333333333333333333333'
 );
 
 reset role;
@@ -500,6 +518,12 @@ where id = 'b6000000-0000-4000-8000-000000000041';
 
 set local role service_role;
 
+select public.issue_whatsapp_zelo_confirmation_token(
+  '4444444444444444444444444444444444444444444444444444444444444444',
+  'b6000000-0000-4000-8000-000000000002', '5511900000002@s.whatsapp.net',
+  'b6000000-0000-4000-8000-000000000052', 1, now() + interval '10 minutes'
+);
+
 update component_parity_results
 set paused_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'b6000000-0000-4000-8000-000000000002',
@@ -509,7 +533,7 @@ set paused_confirmation = public.confirm_whatsapp_zelo_order_atomic_v1(
   'message-component-paused',
   'idem-component-paused',
   null,
-  null
+  '4444444444444444444444444444444444444444444444444444444444444444'
 );
 
 reset role;
