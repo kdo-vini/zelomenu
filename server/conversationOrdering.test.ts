@@ -304,10 +304,11 @@ class MemoryAdapter implements ConversationOrderingAdapter {
     this.fenceAiMutation('confirm', input);
     const latest = await this.findByOrderingId({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (!latest) throw new Error('missing');
-    if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict' as const, record: latest };
-    if (input.tokenHash && this.tokenHashes.get(input.current.sessionId) !== input.tokenHash) {
+    if (!input.tokenHash || this.tokenHashes.get(input.current.sessionId) !== input.tokenHash) {
       throw new ConversationOrderingError('CONFIRMACAO_INVALIDA', 'Esta confirmação não é mais válida.');
     }
+    if (latest.order) return { kind: 'confirmed' as const, record: this.confirm(latest, input.pessoaId) };
+    if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict' as const, record: latest };
     if (this.changePriceAfterRevalidate != null) {
       this.currentPrice = this.changePriceAfterRevalidate;
       this.changePriceAfterRevalidate = null;
@@ -1025,12 +1026,26 @@ describe('ConversationOrdering', () => {
       confirmationToken: updated.confirmationAction!.token,
     };
     const confirmed = await ordering.apply(command);
+    const initiallyConfirmed = structuredClone(confirmed);
     const retry = await ordering.apply(command);
+    const replayWithIssuedToken = await ordering.apply({
+      ...command,
+      messageId: 'wamid.confirm-new-replay-1234',
+    });
 
-    expect(confirmed.state).toBe('accepted');
-    expect(confirmed.order).toMatchObject({ id: expect.any(String), alreadyConfirmed: false });
-    expect(confirmed.pessoaId).toBe('40000000-0000-4000-8000-000000000001');
+    expect(initiallyConfirmed.state).toBe('accepted');
+    expect(initiallyConfirmed.order).toMatchObject({ id: expect.any(String), alreadyConfirmed: false });
+    expect(initiallyConfirmed.pessoaId).toBe('40000000-0000-4000-8000-000000000001');
     expect(retry.order?.id).toBe(confirmed.order?.id);
+    expect(replayWithIssuedToken.order).toMatchObject({
+      id: confirmed.order?.id,
+      alreadyConfirmed: true,
+    });
+    await expect(ordering.apply({
+      ...command,
+      messageId: 'wamid.confirm-new-forged-1234',
+      confirmationToken: 'x'.repeat(43),
+    })).rejects.toMatchObject({ code: 'CONFIRMACAO_INVALIDA' });
     expect(adapter.records).toHaveLength(1);
   });
 

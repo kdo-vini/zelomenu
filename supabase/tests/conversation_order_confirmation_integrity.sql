@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(40);
+select plan(42);
 
 insert into auth.users (
   id, email, aud, role, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -364,6 +364,26 @@ select ok(
   exists (select 1 from public.zelo_orders where zelomenu_session_id = 'c1000000-0000-4000-8000-000000000101')
   and (select state <> 'cart_open' from public.zelomenu_cart_sessions where id = 'c1000000-0000-4000-8000-000000000101'),
   'successful confirmation creates one order and closes the cart'
+);
+
+select is(
+  (select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000011@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000101', 1, 'message-valid-replay', 'idem-valid-replay', null,
+    'f77e3ef1c60015a3bce4d2f81401f549a8b3b56f30c7f4b4e20d1607f63e9480'
+  )->>'alreadyConfirmed'),
+  'true',
+  'confirmed-order replay with the issued token remains idempotent'
+);
+
+select throws_ok(
+  $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000011@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000101', 1, 'message-valid-forged', 'idem-valid-forged', null,
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  ) $sql$,
+  'ZL409', 'CONFIRMATION_TOKEN_INVALID',
+  'confirmed-order replay rejects a different well-formed token'
 );
 
 select lives_ok(

@@ -473,7 +473,9 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
 
   async function applyOnce(command: ConversationOrderCommand): Promise<OrderingSnapshot> {
     const historical = await adapter.findByMessageId(command.empresaId, command.remoteJid, command.messageId);
-    if (historical) return historical.state === 'cart_open' ? withConfirmationAction(historical, command) : toSnapshot(historical);
+    if (historical && command.type !== 'confirm_draft') {
+      return historical.state === 'cart_open' ? withConfirmationAction(historical, command) : toSnapshot(historical);
+    }
 
     if (command.type === 'open_or_update_draft' && !command.orderingId) {
       const createDraft = command.draft as ConversationOrderCreateDraft;
@@ -518,7 +520,9 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
     if (!current) {
       throw new ConversationOrderingError('PEDIDO_NAO_ENCONTRADO', 'Não encontrei este pedido para a conversa informada.');
     }
-    if (current.processedMessageIds.includes(command.messageId)) return withConfirmationAction(current, command);
+    if (current.processedMessageIds.includes(command.messageId) && command.type !== 'confirm_draft') {
+      return withConfirmationAction(current, command);
+    }
     if (command.expectedRevision !== current.revision) {
       throw new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.', toSnapshot(current));
     }
@@ -594,11 +598,11 @@ export function createConversationOrdering(adapter: ConversationOrderingAdapter,
       return toSnapshot(result.record);
     }
 
-    if (current.order) return toSnapshot(current);
-    if (current.state !== 'cart_open') throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
-
     const normalizedCurrent = normalizeReadiness(current);
-    if (!normalizedCurrent.readyForConfirmation) {
+    if (!current.order && current.state !== 'cart_open') {
+      throw new ConversationOrderingError('PEDIDO_FECHADO', 'Este pedido já foi encerrado.', toSnapshot(current));
+    }
+    if (!current.order && !normalizedCurrent.readyForConfirmation) {
       throw new ConversationOrderingError(
         'PEDIDO_INVALIDO',
         'Revise os dados pendentes antes de confirmar.',
