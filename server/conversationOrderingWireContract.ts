@@ -14,6 +14,7 @@ import type {
   ScheduleOrderingRequirement,
   OrderingRequirement,
 } from './conversationOrderRequirements.js';
+import type { ConversationOrderCommand } from './conversationOrdering.js';
 
 type RequirementTypeKey = OrderingRequirement['type'];
 
@@ -128,7 +129,7 @@ function identity(messageId: string) {
 
 export type NamedCommandBody = { name: string; body: unknown };
 
-export const ACCEPTED_COMMAND_BODIES: NamedCommandBody[] = [
+const ACCEPTED_COMMAND_BODY_CANDIDATES: NamedCommandBody[] = [
   {
     name: 'open_or_update_draft: cria com selectedOptions (grupo/opção/quantidade), notes e retirada imediata',
     body: {
@@ -204,6 +205,27 @@ export const ACCEPTED_COMMAND_BODIES: NamedCommandBody[] = [
     },
   },
 ];
+
+type CommandName = ConversationOrderCommand['type'];
+
+// Adding a parser/domain command discriminant fails typechecking until an
+// accepted fixture bucket is deliberately added here. Multiple valid shapes
+// for one command remain supported inside that command's bucket.
+export const ACCEPTED_COMMAND_BODIES_BY_TYPE = {
+  open_or_update_draft: ACCEPTED_COMMAND_BODY_CANDIDATES.filter(
+    ({ body }) => (body as { type?: unknown }).type === 'open_or_update_draft',
+  ),
+  confirm_draft: ACCEPTED_COMMAND_BODY_CANDIDATES.filter(
+    ({ body }) => (body as { type?: unknown }).type === 'confirm_draft',
+  ),
+  cancel_draft: ACCEPTED_COMMAND_BODY_CANDIDATES.filter(
+    ({ body }) => (body as { type?: unknown }).type === 'cancel_draft',
+  ),
+} satisfies Record<CommandName, NamedCommandBody[]>;
+
+export const ACCEPTED_COMMAND_BODIES: NamedCommandBody[] = Object.values(
+  ACCEPTED_COMMAND_BODIES_BY_TYPE,
+).flat();
 
 export const REJECTED_COMMAND_BODIES: NamedCommandBody[] = [
   {
