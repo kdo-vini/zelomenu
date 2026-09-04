@@ -1026,10 +1026,9 @@ describe('fixture de integridade da confirmação conversacional', () => {
       /issue_whatsapp_zelo_confirmation_token\(\s*'([^']+)'/g,
     )].map((match) => match[1]);
 
-    // ZM1: 3 additional literal issuances were added for sessions 114/115/116
-    // once confirm_draft required a token, so the requires_review lineId
-    // scenarios could still legitimately reach that outcome.
-    expect(issuedHashes).toHaveLength(16);
+    // ZM2 adds four otherwise-ready invalid-token fixtures (wrong, expired,
+    // consumed and wrong-revision) on top of the existing 16 issuances.
+    expect(issuedHashes).toHaveLength(20);
     expect(issuedHashes.every((hash) => /^[0-9a-f]{64}$/.test(hash))).toBe(true);
     expect(new Set(issuedHashes).size).toBe(issuedHashes.length);
     expect(fixture).not.toMatch(/repeat\(\s*'[^']+'\s*,\s*64\s*\)/);
