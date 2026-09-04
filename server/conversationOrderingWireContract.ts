@@ -15,6 +15,7 @@ import type {
   OrderingRequirement,
 } from './conversationOrderRequirements.js';
 import type { ConversationOrderCommand } from './conversationOrdering.js';
+import type { InternalOrderingErrorCode } from './internalOrderingErrorCodes.js';
 
 type RequirementTypeKey = OrderingRequirement['type'];
 
@@ -73,7 +74,7 @@ export type ErrorCatalogEntry = {
   note?: string;
 };
 
-export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
+export const ERROR_CATALOG = {
   NAO_AUTORIZADO: { status: 401, detail: 'Não foi possível autorizar esta solicitação.', source: 'server/internalOrdering.ts (router guard)' },
   COMANDO_INVALIDO: { status: 400, detail: '(varies — see commands.rejected.json)', source: 'server/internalOrdering.ts (parseInternalOrderingCommand)', note: 'detail is always the exact parser validation message for the field that failed.' },
   EMPRESA_INVALIDA: { status: 400, detail: 'Informe uma empresa válida.', source: 'server/internalOrdering.ts (GET /:orderingId)' },
@@ -103,7 +104,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   },
   JSON_INVALIDO: { status: 400, detail: 'Envie dados em JSON válido.', source: 'server/index.ts (express.json syntax-error middleware)' },
   PAYLOAD_MUITO_GRANDE: { status: 413, detail: 'Os dados enviados são grandes demais.', source: 'server/index.ts (express.json limit middleware)' },
-};
+} satisfies Record<InternalOrderingErrorCode, ErrorCatalogEntry>;
 
 // ── Accepted / rejected command bodies ──────────────────────────────────────
 // Bodies are hand-authored to mirror real and (for rejected) real-WRONG

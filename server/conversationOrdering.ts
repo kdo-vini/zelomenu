@@ -13,6 +13,7 @@ import {
   FULFILLMENT_TYPE_REQUIREMENT,
   type OrderingRequirement as CanonicalOrderingRequirement,
 } from './conversationOrderRequirements.js';
+import type { InternalOrderingErrorCode } from './internalOrderingErrorCodes.js';
 
 export type { ConversationFulfillmentSnapshot } from './zelomenuCartSessions.js';
 
@@ -180,7 +181,7 @@ export interface ConversationOrderingAdapter {
 
 export class ConversationOrderingError extends Error {
   constructor(
-    public readonly code: string,
+    public readonly code: InternalOrderingErrorCode,
     message: string,
     public readonly currentSnapshot: OrderingSnapshot | null = null,
   ) {

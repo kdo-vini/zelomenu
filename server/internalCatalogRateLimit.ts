@@ -1,6 +1,7 @@
 import { ipKeyGenerator } from 'express-rate-limit';
 import type { Request, RequestHandler } from 'express';
 import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
+import { internalOrderingErrorCode } from './internalOrderingErrorCodes.js';
 
 export function makeInternalCatalogRateLimitKey(empresaId: string, ip: string): string {
   return `${empresaId}:${ip}`;
@@ -119,7 +120,7 @@ export function createInternalCatalogFailureLimiter({
     const ipLimit = keyIsValid ? maxFailuresPerIp : maxFailures;
     if (failures.length >= ipLimit) {
       res.status(429).json({
-        error: 'MUITAS_REQUISICOES',
+        error: internalOrderingErrorCode('MUITAS_REQUISICOES'),
         detail: 'Muitas tentativas em pouco tempo. Tente novamente em instantes.',
         requestId: res.locals.requestId,
       });
@@ -153,7 +154,7 @@ export function createInternalCatalogFailureLimiter({
     const ipFailures = activeFailures(ip, currentTime);
     if (companyFailures.length >= maxFailures || ipFailures.length >= maxFailuresPerIp) {
       res.status(429).json({
-        error: 'MUITAS_REQUISICOES',
+        error: internalOrderingErrorCode('MUITAS_REQUISICOES'),
         detail: 'Muitas tentativas em pouco tempo. Tente novamente em instantes.',
         requestId: res.locals.requestId,
       });

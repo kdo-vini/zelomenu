@@ -24,6 +24,7 @@ import { createInternalOrderingRouter } from './internalOrdering.js';
 import { ConversationOrdering } from './supabaseConversationOrderingAdapter.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 import type { Request } from 'express';
+import { internalOrderingErrorCode } from './internalOrderingErrorCodes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,10 +69,10 @@ app.use((error: unknown, req: Request, res: Response, next: (error: unknown) => 
     }
   }
   if (error instanceof SyntaxError && status === 400) {
-    return res.status(400).json({ error: 'JSON_INVALIDO', detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
+    return res.status(400).json({ error: internalOrderingErrorCode('JSON_INVALIDO'), detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
   }
   if (status === 413) {
-    return res.status(413).json({ error: 'PAYLOAD_MUITO_GRANDE', detail: 'Os dados enviados são grandes demais.', requestId: res.locals.requestId });
+    return res.status(413).json({ error: internalOrderingErrorCode('PAYLOAD_MUITO_GRANDE'), detail: 'Os dados enviados são grandes demais.', requestId: res.locals.requestId });
   }
   return next(error);
 });
@@ -131,7 +132,7 @@ const internalCatalogSearchLimiter = rateLimit({
     return makeInternalCatalogRateLimitKey(empresaId ?? 'consulta-invalida', ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown'));
   },
   handler: (_req, res) => res.status(429).json({
-    error: 'MUITAS_REQUISICOES',
+    error: internalOrderingErrorCode('MUITAS_REQUISICOES'),
     detail: 'Muitas consultas em pouco tempo. Tente novamente em instantes.',
     requestId: res.locals.requestId,
   }),

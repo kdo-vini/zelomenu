@@ -10,6 +10,7 @@ import {
 import { makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
 import type { ZeloMenuFulfillmentSnapshot } from './zelomenuCartSessions.js';
 import { isConversationRemoteJid } from './conversationOrderingIdentity.js';
+import { internalOrderingErrorCode } from './internalOrderingErrorCodes.js';
 
 type OrderingModule = {
   apply(command: ConversationOrderCommand): Promise<OrderingSnapshot>;
@@ -237,7 +238,7 @@ function sendOrderingError(error: unknown, res: Response): void {
     return;
   }
   console.error('[ZeloMenu] internal ordering error:', error);
-  res.status(500).json({ error: 'PEDIDO_INDISPONIVEL', detail: 'Não foi possível processar o pedido agora. Tente novamente.', requestId: res.locals.requestId });
+  res.status(500).json({ error: internalOrderingErrorCode('PEDIDO_INDISPONIVEL'), detail: 'Não foi possível processar o pedido agora. Tente novamente.', requestId: res.locals.requestId });
 }
 
 export function createInternalOrderingRouter(ordering: OrderingModule, options: { quotaMax?: number; quotaWindowMs?: number } = {}): express.Router {
@@ -248,21 +249,21 @@ export function createInternalOrderingRouter(ordering: OrderingModule, options: 
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => makeInternalCatalogRateLimitKey(typeof req.body?.empresaId === 'string' ? req.body.empresaId : typeof req.query.empresaId === 'string' ? req.query.empresaId : 'empresa-invalida', ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown')),
-    handler: (_req, res) => res.status(429).json({ error: 'MUITAS_REQUISICOES', detail: 'Muitos pedidos em pouco tempo. Tente novamente em instantes.', requestId: res.locals.requestId }),
+    handler: (_req, res) => res.status(429).json({ error: internalOrderingErrorCode('MUITAS_REQUISICOES'), detail: 'Muitos pedidos em pouco tempo. Tente novamente em instantes.', requestId: res.locals.requestId }),
   });
-  router.use((_req, res, next) => res.locals.internalCatalogKeyValid === true ? next() : res.status(401).json({ error: 'NAO_AUTORIZADO', detail: 'Não foi possível autorizar esta solicitação.', requestId: res.locals.requestId }));
+  router.use((_req, res, next) => res.locals.internalCatalogKeyValid === true ? next() : res.status(401).json({ error: internalOrderingErrorCode('NAO_AUTORIZADO'), detail: 'Não foi possível autorizar esta solicitação.', requestId: res.locals.requestId }));
   router.post('/commands', quota, async (req: Request, res: Response) => {
     const parsed = parseInternalOrderingCommand(req.body);
-    if (!parsed.ok) return res.status(400).json({ error: 'COMANDO_INVALIDO', detail: parsed.message, requestId: res.locals.requestId });
+    if (!parsed.ok) return res.status(400).json({ error: internalOrderingErrorCode('COMANDO_INVALIDO'), detail: parsed.message, requestId: res.locals.requestId });
     try { res.setHeader('Cache-Control', 'no-store'); return res.json(await ordering.apply(parsed.value)); } catch (error) { sendOrderingError(error, res); }
   });
   router.get('/:orderingId', quota, async (req: Request, res: Response) => {
-    if (!UUID.test(req.params.orderingId)) return res.status(400).json({ error: 'PEDIDO_INVALIDO', detail: 'Informe um pedido válido.', requestId: res.locals.requestId });
-    if (typeof req.query.empresaId !== 'string' || !UUID.test(req.query.empresaId)) return res.status(400).json({ error: 'EMPRESA_INVALIDA', detail: 'Informe uma empresa válida.', requestId: res.locals.requestId });
-    if (typeof req.query.remoteJid !== 'string' || !isConversationRemoteJid(req.query.remoteJid)) return res.status(400).json({ error: 'CONVERSA_INVALIDA', detail: 'Informe uma conversa válida.', requestId: res.locals.requestId });
+    if (!UUID.test(req.params.orderingId)) return res.status(400).json({ error: internalOrderingErrorCode('PEDIDO_INVALIDO'), detail: 'Informe um pedido válido.', requestId: res.locals.requestId });
+    if (typeof req.query.empresaId !== 'string' || !UUID.test(req.query.empresaId)) return res.status(400).json({ error: internalOrderingErrorCode('EMPRESA_INVALIDA'), detail: 'Informe uma empresa válida.', requestId: res.locals.requestId });
+    if (typeof req.query.remoteJid !== 'string' || !isConversationRemoteJid(req.query.remoteJid)) return res.status(400).json({ error: internalOrderingErrorCode('CONVERSA_INVALIDA'), detail: 'Informe uma conversa válida.', requestId: res.locals.requestId });
     try {
       const snapshot = await ordering.getSnapshot({ orderingId: req.params.orderingId, empresaId: req.query.empresaId, remoteJid: req.query.remoteJid });
-      if (!snapshot) return res.status(404).json({ error: 'PEDIDO_NAO_ENCONTRADO', detail: 'Não encontrei este pedido.', requestId: res.locals.requestId });
+      if (!snapshot) return res.status(404).json({ error: internalOrderingErrorCode('PEDIDO_NAO_ENCONTRADO'), detail: 'Não encontrei este pedido.', requestId: res.locals.requestId });
       res.setHeader('Cache-Control', 'no-store');
       return res.json(snapshot);
     } catch (error) { sendOrderingError(error, res); }

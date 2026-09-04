@@ -14,6 +14,7 @@ import {
 import { createInternalOrderingRouter, parseInternalOrderingCommand } from './internalOrdering.js';
 import { createInternalCatalogFailureLimiter } from './internalCatalogRateLimit.js';
 import { ConversationOrderingError, type ConversationOrderCommand, type OrderingSnapshot } from './conversationOrdering.js';
+import { INTERNAL_ORDERING_ERROR_CODES, type InternalOrderingErrorCode } from './internalOrderingErrorCodes.js';
 
 const originalSupabaseEnvironment = vi.hoisted(() => {
   const original = { url: process.env.SUPABASE_URL, serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY };
@@ -184,24 +185,13 @@ describe('conversation ordering wire fixtures', () => {
     await expectMatchesCommittedFile('commands.rejected.json', generated);
   });
 
-  it('errors.json cobre exatamente os códigos que o código-fonte hoje lança/retorna', async () => {
-    const sourceFiles = ['conversationOrdering.ts', 'internalOrdering.ts', 'supabaseConversationOrderingAdapter.ts'];
-    const contents = await Promise.all(sourceFiles.map((file) => fs.readFile(path.join(__dirname, file), 'utf8')));
-    const found = new Set<string>();
-    for (const content of contents) {
-      for (const match of content.matchAll(/ConversationOrderingError\(\s*\n?\s*'([A-Z_]+)'/g)) found.add(match[1]);
-      for (const match of content.matchAll(/error:\s*'([A-Z_]+)'/g)) found.add(match[1]);
-    }
-    // Transport-level codes are sourced from server/index.ts, which this
-    // ordering-specific grep intentionally does not scan.
-    found.add('JSON_INVALIDO');
-    found.add('PAYLOAD_MUITO_GRANDE');
-    expect(new Set(Object.keys(ERROR_CATALOG))).toEqual(found);
+  it('errors.json cobre exatamente a união tipada usada pelos emissores', async () => {
+    expect(new Set(Object.keys(ERROR_CATALOG))).toEqual(new Set(INTERNAL_ORDERING_ERROR_CODES));
     await expectMatchesCommittedFile('errors.json', ERROR_CATALOG);
   });
 
   it('verifica ao vivo o status HTTP de cada código de domínio no catálogo', async () => {
-    const cases: Array<{ code: string; message?: string; expectedStatus: number; throwPlain?: boolean }> = [
+    const cases: Array<{ code: InternalOrderingErrorCode; message?: string; expectedStatus: number; throwPlain?: boolean }> = [
       { code: 'ITEM_INVALIDO', message: 'mensagem de teste', expectedStatus: 400 },
       { code: 'PEDIDO_VAZIO', message: ERROR_CATALOG.PEDIDO_VAZIO.detail, expectedStatus: 400 },
       { code: 'CLIENTE_INVALIDO', message: ERROR_CATALOG.CLIENTE_INVALIDO.detail, expectedStatus: 400 },
