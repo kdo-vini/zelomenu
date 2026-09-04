@@ -144,6 +144,13 @@ describe('conversation ordering wire fixtures', () => {
     expect(ready.confirmationAction?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(ready.fulfillment.type).toBe('delivery');
     expect(ready.payment.declaredMethod).toBe('pix');
+    expect(ready.customer.phone).toBe('5511900000001');
+  });
+
+  it('snapshots fechadas nunca permanecem prontas para confirmação', async () => {
+    const snapshots = await buildWireFixtureSnapshots();
+    expect(snapshots['snapshot.confirmed.json'].readyForConfirmation).toBe(false);
+    expect(snapshots['snapshot.cancelled.json'].readyForConfirmation).toBe(false);
   });
 
   it('a snapshot de revisão exige acompanhar taxa de entrega alterada', async () => {

@@ -955,6 +955,15 @@ type ResolveSnapshotsParams = {
   deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
   allowIncompleteModifiers?: boolean;
   allowMissingFulfillment?: boolean;
+  /**
+   * Injectable seam for the delivery-quote persistence boundary (real
+   * `revalidateDeliveryForCart` hits Supabase + external geocoding). Never
+   * set in production call sites — defaults to the real implementation.
+   * Exists so fixture/test callers can exercise the REAL pricing/readiness
+   * logic around it without a database. See `materializeWhatsAppOrderDraft`'s
+   * `deps.deliveryQuoter`.
+   */
+  deliveryQuoter?: typeof revalidateDeliveryForCart;
 };
 
 async function resolveSnapshots(
@@ -1087,7 +1096,8 @@ async function resolveSnapshots(
         quoteLocalTime = params.fulfillment.pickupTime;
       }
       try {
-        const result = await revalidateDeliveryForCart({
+        const quoteDeliveryForCart = params.deliveryQuoter ?? revalidateDeliveryForCart;
+        const result = await quoteDeliveryForCart({
           empresaId,
           postalCode,
           number,
@@ -1228,6 +1238,23 @@ function throwConversationModifierError(error: unknown): never {
   throw error;
 }
 
+/**
+ * Injectable seams for `materializeWhatsAppOrderDraft`'s persistence
+ * boundary. Both default to the real implementation for every production
+ * call site (`SupabaseConversationOrderingAdapter.materializeDraft` never
+ * passes this parameter). Exists so a fixture/test caller can drive the REAL
+ * materialization — pricing, requirement derivation, readiness, phone
+ * derivation — without a database, instead of hand-rolling a parallel
+ * (and inevitably drifting) copy of this function's logic. See
+ * `resolveSnapshots`'s `deliveryQuoter` field for the matching seam on the
+ * delivery-quote persistence boundary.
+ */
+export type MaterializeWhatsAppOrderDraftDeps = {
+  loadedConfig?: BusinessConfig;
+  deliveryQuoter?: typeof revalidateDeliveryForCart;
+  now?: () => Date;
+};
+
 export async function materializeWhatsAppOrderDraft(input: {
   empresaId: string;
   remoteJid: string;
@@ -1242,7 +1269,7 @@ export async function materializeWhatsAppOrderDraft(input: {
   customer?: { name?: string | null };
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
-}): Promise<WhatsAppOrderDraftMaterialization> {
+}, deps: MaterializeWhatsAppOrderDraftDeps = {}): Promise<WhatsAppOrderDraftMaterialization> {
   if (!Array.isArray(input.items) || input.items.length < 1) throw new Error('EMPTY_CART');
   if (input.items.length > 50) throw new Error('CART_LINE_LIMIT_EXCEEDED');
   const items = input.items.map((item) => {
@@ -1259,8 +1286,8 @@ export async function materializeWhatsAppOrderDraft(input: {
       selectedOptions: item.selectedOptions ?? [],
     };
   });
-  await loadCatalogFromDb(input.empresaId);
-  const config = getConfig(input.empresaId);
+  if (!deps.loadedConfig) await loadCatalogFromDb(input.empresaId);
+  const config = deps.loadedConfig ?? getConfig(input.empresaId);
   let modifierRequirements: ModifierOrderingRequirement[];
   try {
     modifierRequirements = deriveModifierRequirements(
@@ -1291,6 +1318,7 @@ export async function materializeWhatsAppOrderDraft(input: {
     context: 'whatsapp_order',
     allowIncompleteModifiers: true,
     allowMissingFulfillment: true,
+    deliveryQuoter: deps.deliveryQuoter,
   }, config);
   const customer: ZeloMenuCustomerSnapshot = {
     name: sanitizeText(input.customer?.name, 120),
@@ -1336,7 +1364,7 @@ export async function materializeWhatsAppOrderDraft(input: {
       missingFields: missingScheduleFields,
     }] : []),
   ];
-  const revalidation = revalidationFromResolved(resolved);
+  const revalidation = revalidationFromResolved(resolved, deps.now?.());
   const materializedItems = resolved.cart.items.map((item) => {
     if (typeof item.lineId !== 'string' || !CONVERSATION_LINE_ID.test(item.lineId)) {
       throw new Error('MATERIALIZED_LINE_ID_MISSING');
@@ -1521,6 +1549,7 @@ async function runRevalidation(session: PublicCartSession): Promise<InternalZelo
 
 function revalidationFromResolved(
   resolved: ResolvedCart<ConversationFulfillmentSnapshot>,
+  checkedAt = new Date(),
 ): ZeloMenuCartRevalidation {
   const issues: ZeloMenuCartRevalidationIssue[] = [];
   if (resolved.fulfillment.type === 'delivery') {
@@ -1540,7 +1569,7 @@ function revalidationFromResolved(
     }
   }
   return {
-    checkedAt: new Date().toISOString(),
+    checkedAt: checkedAt.toISOString(),
     ok: issues.length === 0,
     issues,
     previewCart: resolved.cart,

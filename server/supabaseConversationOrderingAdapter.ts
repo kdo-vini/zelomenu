@@ -15,7 +15,12 @@ import {
   type OrderingRequirement,
 } from './conversationOrdering.js';
 import { getServiceSupabase } from './supabaseServer.js';
-import { applyZeloMenuAutoAccept, materializeWhatsAppOrderDraft, type ZeloMenuCartState } from './zelomenuCartSessions.js';
+import {
+  applyZeloMenuAutoAccept,
+  materializeWhatsAppOrderDraft,
+  type MaterializeWhatsAppOrderDraftDeps,
+  type ZeloMenuCartState,
+} from './zelomenuCartSessions.js';
 import { deriveConversationConfirmationToken, hashConversationConfirmationToken } from './conversationConfirmationToken.js';
 
 const SESSION_COLUMNS = 'id, empresa_id, ordering_id, context, state, source_ref, customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation, requirements_snapshot, ready_for_confirmation, archived_at, updated_at';
@@ -180,7 +185,18 @@ function validatedRequirementsSnapshot(value: unknown): OrderingRequirement[] | 
 }
 
 export class SupabaseConversationOrderingAdapter implements ConversationOrderingAdapter {
-  constructor(private readonly supabase: SupabaseClient = getServiceSupabase()) {}
+  constructor(
+    private readonly supabase: SupabaseClient = getServiceSupabase(),
+    // Injectable seams for the materialization + auto-accept persistence
+    // boundary. Both default to the real implementation for the production
+    // singleton below (`new SupabaseConversationOrderingAdapter()`, zero
+    // args). Exist so a fixture/test caller can drive this REAL adapter —
+    // including its row-mapping in `mapRow` — against a fake Supabase
+    // client instead of a hand-rolled double of the whole class. See
+    // `server/conversationOrderingWireFixtures.ts`.
+    private readonly materializeDeps: MaterializeWhatsAppOrderDraftDeps = {},
+    private readonly autoAcceptFn: typeof applyZeloMenuAutoAccept = applyZeloMenuAutoAccept,
+  ) {}
 
   async materializeDraft(scope: ConversationScope, draft: ConversationOrderCreateDraft): Promise<DraftMaterialization> {
     const materialized = await materializeWhatsAppOrderDraft({
@@ -191,7 +207,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       customer: draft.customer,
       fulfillment: draft.fulfillment,
       paymentMethod: draft.paymentMethod,
-    });
+    }, this.materializeDeps);
     if (materialized.cart.items.length !== draft.items.length) {
       throw new Error('MATERIALIZED_LINE_COUNT_MISMATCH');
     }
@@ -452,7 +468,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
 
   async applyAutoAccept(record: ConversationOrderingRecord): Promise<ConversationOrderingRecord> {
     if (!record.order) return record;
-    const result = await applyZeloMenuAutoAccept({
+    const result = await this.autoAcceptFn({
       empresaId: record.empresaId,
       orderId: record.order.id,
       status: record.order.status,

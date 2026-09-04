@@ -1,144 +1,86 @@
 // Recorded wire fixtures for the ZeloMenu <-> ZeloChat conversational-ordering
-// contract. This module is the single source of truth that both
-// `conversationOrderingWireFixtures.test.ts` (which asserts the committed JSON
-// under `docs/contracts/conversation-ordering-wire/v1/` matches this code) and
-// the regeneration script consult. If this file's shape output ever
-// disagrees with the committed JSON, the test fails — that is the point:
-// contract drift between ZeloMenu (authority) and ZeloChat (consumer) is
-// caught here, not discovered in production.
+// contract. The recorder drives the production materializer, Supabase adapter
+// and row mapper; only persistence/geocoding boundaries are deterministic fakes.
 import {
   createConversationOrdering,
   type ConversationAiPermit,
   type ConversationOrderCommand,
-  type ConversationOrderCreateDraft,
-  type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
-  type ConversationOrderLookup,
-  type ConversationScope,
-  type DraftMaterialization,
-  type DraftMutationResult,
   type OrderingSnapshot,
-  type TokenIssuanceResult,
-  ConversationOrderingError,
 } from './conversationOrdering.js';
-import {
-  CUSTOMER_NAME_REQUIREMENT,
-  FULFILLMENT_TYPE_REQUIREMENT,
-  PAYMENT_METHOD_REQUIREMENT,
-  deriveModifierRequirements,
-  type ConversationCatalogProductDefinition,
-  type OrderingRequirement,
-} from './conversationOrderRequirements.js';
+import { getConfig, type BusinessConfig } from './configStore.js';
+import { deriveConversationConfirmationToken, hashConversationConfirmationToken } from './conversationConfirmationToken.js';
 import { bemServidoConversationCatalog } from './fixtures/bemServidoConversationCatalog.js';
-import {
-  deriveConversationConfirmationToken,
-  hashConversationConfirmationToken,
-} from './conversationConfirmationToken.js';
+import { SupabaseConversationOrderingAdapter } from './supabaseConversationOrderingAdapter.js';
 
-// Fixture-only HMAC secret. Never the production `ZELO_CONFIRMATION_TOKEN_SECRET`
-// (never read from env here); only used so the committed fixture's token looks
-// exactly like a real 43-char base64url HMAC-SHA256 digest and regenerates
-// byte-for-byte identically every run.
 const FIXTURE_TOKEN_SECRET = 'fixture-only-hmac-secret-never-used-in-prod-00';
-
 export const EMPRESA_ID = '10000000-0000-4000-8000-0000000000f1';
 export const REMOTE_JID = '5511900000001@s.whatsapp.net';
-const CONVERSATION_CONTROL_ID = '60000000-0000-4000-8000-0000000000f1';
-const CONVERSATION_EPOCH = '1';
 const AI_PERMIT: ConversationAiPermit = {
-  conversationControlId: CONVERSATION_CONTROL_ID,
-  conversationEpoch: CONVERSATION_EPOCH,
+  conversationControlId: '60000000-0000-4000-8000-0000000000f1',
+  conversationEpoch: '1',
 };
 const BASE_CLOCK_MS = Date.parse('2026-09-03T12:00:00.000Z');
 
-function pad(n: number, width = 12): string {
-  return String(n).padStart(width, '0');
+function pad(n: number): string {
+  return String(n).padStart(12, '0');
 }
 
-type FulfillmentDraftInput = ConversationOrderCreateDraft['fulfillment'];
-type FulfillmentSnapshot = DraftMaterialization['fulfillment'];
+type FixtureSessionRow = {
+  id: string; empresa_id: string; ordering_id: string; context: 'whatsapp_order';
+  state: ConversationOrderingRecord['state']; source_ref: string;
+  customer_snapshot: ConversationOrderingRecord['customer'];
+  cart_snapshot: ConversationOrderingRecord['cart'];
+  fulfillment_snapshot: ConversationOrderingRecord['fulfillment'];
+  pricing_snapshot: ConversationOrderingRecord['pricing'];
+  payment_snapshot: ConversationOrderingRecord['payment'];
+  metadata: Record<string, unknown>; revision: number; last_revalidated_at: string;
+  last_revalidation: ConversationOrderingRecord['revalidation'];
+  requirements_snapshot: ConversationOrderingRecord['requirements'];
+  ready_for_confirmation: boolean; archived_at: null; created_at: string; updated_at: string;
+};
+type FixtureOrderRow = { id: string; zelomenu_session_id: string; status: string; revision: number };
+type FixtureQuery = {
+  eq(column: string, value: unknown): FixtureQuery;
+  contains(column: string, value: Record<string, unknown>): FixtureQuery;
+  order(column: string, options: unknown): FixtureQuery;
+  limit(count: number): FixtureQuery;
+  maybeSingle(): Promise<{ data: FixtureSessionRow | FixtureOrderRow | null; error: null }>;
+};
 
-function buildFulfillment(patch: FulfillmentDraftInput, deliveryFeeToConfirm: boolean): FulfillmentSnapshot {
-  if (!patch || !patch.type) {
-    return {
-      type: null, asap: true, pickupDate: null, pickupTime: null,
-      deliveryAddress: null, deliveryNeighborhood: null, deliveryFee: 0, deliveryFeeToConfirm: false,
-    };
-  }
-  if (patch.type === 'delivery') {
-    return {
-      type: 'delivery',
-      asap: patch.asap ?? true,
-      pickupDate: patch.pickupDate ?? null,
-      pickupTime: patch.pickupTime ?? null,
-      deliveryAddress: patch.deliveryAddress ?? null,
-      deliveryNeighborhood: patch.deliveryNeighborhood ?? null,
-      deliveryNumber: patch.deliveryNumber ?? null,
-      deliveryFee: 8,
-      deliveryFeeToConfirm: deliveryFeeToConfirm,
-    };
-  }
-  return {
-    type: 'pickup',
-    asap: patch.asap ?? true,
-    pickupDate: patch.pickupDate ?? null,
-    pickupTime: patch.pickupTime ?? null,
-    deliveryAddress: null,
-    deliveryNeighborhood: null,
-    deliveryFee: 0,
-    deliveryFeeToConfirm: false,
-  };
+const FIXTURE_CONFIG: BusinessConfig = {
+  ...getConfig('__conversation_wire_fixture__'),
+  deliveryConfig: { enabled: true, neighborhoods: [] },
+  products: bemServidoConversationCatalog.map((product) => ({
+    ...product,
+    price: product.basePrice,
+    modifierGroups: product.modifierGroups.map((group) => ({
+      ...group,
+      productId: product.id,
+      active: true,
+      options: group.options.map((option) => ({
+        id: option.id,
+        name: option.name,
+        priceDelta: option.priceDelta,
+        active: option.available,
+        order: option.order,
+      })),
+    })),
+  })) as unknown as BusinessConfig['products'],
+};
+
+function processedMessageIds(row: FixtureSessionRow): string[] {
+  return Array.isArray(row.metadata.processedMessageIds)
+    ? row.metadata.processedMessageIds.filter((value): value is string => typeof value === 'string')
+    : [];
 }
 
-function findProduct(productId: number): ConversationCatalogProductDefinition {
-  const product = bemServidoConversationCatalog.find((candidate) => candidate.id === productId);
-  if (!product) throw new Error(`FIXTURE_PRODUCT_NOT_FOUND:${productId}`);
-  return product;
-}
-
-function computeLinePricing(item: ConversationOrderCreateDraft['items'][number], product: ConversationCatalogProductDefinition) {
-  let base = product.basePrice;
-  let delta = 0;
-  for (const selection of item.selectedOptions ?? []) {
-    const group = product.modifierGroups.find((candidate) => candidate.id === selection.groupId);
-    if (!group) continue;
-    for (const optionSelection of selection.optionSelections) {
-      const option = group.options.find((candidate) => candidate.id === optionSelection.optionId);
-      if (!option) continue;
-      if (group.pricingMode === 'substituir') base = option.currentPrice;
-      else delta += option.priceDelta * optionSelection.quantity;
-    }
-  }
-  const unitPrice = base + delta;
-  return { baseUnitPrice: product.basePrice, unitPrice, modifierDeltaTotal: unitPrice - product.basePrice };
-}
-
-function buildSelectedModifiers(item: ConversationOrderCreateDraft['items'][number], product: ConversationCatalogProductDefinition) {
-  return (item.selectedOptions ?? []).map((selection) => {
-    const group = product.modifierGroups.find((candidate) => candidate.id === selection.groupId)!;
-    return {
-      groupId: group.id,
-      groupName: group.name,
-      kind: group.kind,
-      selectedOptions: selection.optionSelections.map((optionSelection) => {
-        const option = group.options.find((candidate) => candidate.id === optionSelection.optionId)!;
-        return { optionId: option.id, optionName: option.name, priceDelta: option.priceDelta, quantity: optionSelection.quantity };
-      }),
-    };
-  });
-}
-
-/**
- * A deliberately small, deterministic adapter that exercises the REAL
- * requirement derivation (`deriveModifierRequirements` + the shared
- * `FULFILLMENT_TYPE_REQUIREMENT` / `CUSTOMER_NAME_REQUIREMENT` /
- * `PAYMENT_METHOD_REQUIREMENT` singletons) against the real
- * `bemServidoConversationCatalog` catalog, so the recorded fixtures reflect
- * the same authority code paths production uses — not a hand-typed double.
- */
-class WireFixtureAdapter implements ConversationOrderingAdapter {
-  records: ConversationOrderingRecord[] = [];
-  tokenHashesBySession = new Map<string, string>();
+/** Fake only the database boundary, returning the snake_case rows/RPC outcomes
+ * consumed by the real `SupabaseConversationOrderingAdapter.mapRow` path. */
+class WireFixturePersistence {
+  readonly sessions: FixtureSessionRow[] = [];
+  readonly orders: FixtureOrderRow[] = [];
+  readonly tokenHashesBySession = new Map<string, string>();
   clockMs = BASE_CLOCK_MS;
   simulateFeeChangeOnConfirm = false;
   private sessionCounter = 0;
@@ -148,182 +90,178 @@ class WireFixtureAdapter implements ConversationOrderingAdapter {
     return new Date(this.clockMs).toISOString();
   }
 
-  async materializeDraft(_scope: ConversationScope, draft: ConversationOrderCreateDraft): Promise<DraftMaterialization> {
-    const lines = draft.items.map((item) => ({ lineId: item.lineId, productId: item.productId, selectedOptions: item.selectedOptions }));
-    const modifierRequirements: OrderingRequirement[] = deriveModifierRequirements(lines, bemServidoConversationCatalog);
-    const items = draft.items.map((item) => {
-      const product = findProduct(item.productId);
-      const pricing = computeLinePricing(item, product);
-      return {
-        lineId: item.lineId,
-        productId: item.productId,
-        productName: product.name,
-        baseUnitPrice: pricing.baseUnitPrice,
-        selectedModifiers: buildSelectedModifiers(item, product),
-        modifierDeltaTotal: pricing.modifierDeltaTotal,
-        quantity: item.quantity,
-        unitPrice: pricing.unitPrice,
-        lineTotal: pricing.unitPrice * item.quantity,
-        notes: item.notes ?? null,
+  private sessionById(id: unknown): FixtureSessionRow | undefined {
+    return this.sessions.find((row) => row.id === id);
+  }
+
+  readonly from = (table: string) => ({
+    select: (_columns: string): FixtureQuery => {
+      const filters = new Map<string, unknown>();
+      let containment: { column: string; value: Record<string, unknown> } | null = null;
+      const query: FixtureQuery = {
+        eq: (column, value) => { filters.set(column, value); return query; },
+        contains: (column, value) => { containment = { column, value }; return query; },
+        order: () => query,
+        limit: () => query,
+        maybeSingle: async () => {
+          const source: Array<FixtureSessionRow | FixtureOrderRow> = table === 'zelomenu_cart_sessions'
+            ? this.sessions : table === 'zelo_orders' ? this.orders : [];
+          const data = source.find((row) => {
+            const record = row as unknown as Record<string, unknown>;
+            if (![...filters].every(([column, value]) => record[column] === value)) return false;
+            if (!containment) return true;
+            const container = record[containment.column];
+            if (!container || typeof container !== 'object') return false;
+            return Object.entries(containment.value).every(([key, expected]) => {
+              const actual = (container as Record<string, unknown>)[key];
+              return Array.isArray(expected) && Array.isArray(actual)
+                ? expected.every((value) => actual.includes(value)) : actual === expected;
+            });
+          }) ?? null;
+          return { data, error: null };
+        },
       };
-    });
-    const subtotal = items.reduce((total, item) => total + item.lineTotal, 0);
-    const fulfillment = buildFulfillment(draft.fulfillment, false);
-    const customer = { name: draft.customer?.name ?? null, phone: null };
-    const payment = {
-      declaredMethod: draft.paymentMethod ?? null,
-      pixReceiptRequired: draft.paymentMethod === 'pix',
-      pixReceiptApproved: false,
-    };
-    const requirements: OrderingRequirement[] = [
-      ...modifierRequirements,
-      ...(fulfillment.type === null ? [FULFILLMENT_TYPE_REQUIREMENT] : []),
-      ...(customer.name === null ? [CUSTOMER_NAME_REQUIREMENT] : []),
-      ...(payment.declaredMethod === null ? [PAYMENT_METHOD_REQUIREMENT] : []),
-    ];
-    const revalidation = { checkedAt: new Date(this.clockMs).toISOString(), ok: true, issues: [] as Array<{ code: string; message: string }> };
-    const deliveryFee = fulfillment.type === 'delivery' ? fulfillment.deliveryFee : 0;
-    const readyForConfirmation = fulfillment.type !== null
-      && !fulfillment.deliveryFeeToConfirm
-      && customer.name !== null
-      && payment.declaredMethod !== null
-      && revalidation.ok
-      && !requirements.some((requirement) => requirement.blocking);
-    return {
-      cart: { items, observations: draft.observations ?? null },
-      customer,
-      fulfillment,
-      payment,
-      pricing: { subtotal, deliveryFee, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: subtotal + deliveryFee },
-      revalidation,
-      requirements,
-      readyForConfirmation,
-    };
-  }
+      return query;
+    },
+  });
 
-  async findOpen(empresaId: string, remoteJid: string): Promise<ConversationOrderingRecord | null> {
-    return this.records.find((record) => record.empresaId === empresaId && record.remoteJid === remoteJid && record.state === 'cart_open') ?? null;
-  }
-
-  async findByMessageId(empresaId: string, remoteJid: string, messageId: string): Promise<ConversationOrderingRecord | null> {
-    return this.records.find((record) => record.empresaId === empresaId && record.remoteJid === remoteJid && record.processedMessageIds.includes(messageId)) ?? null;
-  }
-
-  async findByOrderingId(lookup: ConversationOrderLookup): Promise<ConversationOrderingRecord | null> {
-    return this.records.find((record) => record.orderingId === lookup.orderingId && record.empresaId === lookup.empresaId && record.remoteJid === lookup.remoteJid) ?? null;
-  }
-
-  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order' | 'reviewRequired'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
-    this.sessionCounter += 1;
-    // The real Supabase-backed adapter never persists the AI permit
-    // (conversationControlId/conversationEpoch) as part of the ordering
-    // record — it is only an RPC input used to fence the mutation. Pick the
-    // materialization + identity fields explicitly rather than spreading
-    // `input`, so the fixture snapshot never leaks those two fields onto the
-    // wire the way an accidental `{...input}` would.
-    const { conversationControlId: _conversationControlId, conversationEpoch: _conversationEpoch, ...persisted } = input;
-    const record: ConversationOrderingRecord = {
-      ...persisted,
-      sessionId: `20000000-0000-4000-8000-${pad(this.sessionCounter)}`,
-      orderingId: `30000000-0000-4000-8000-${pad(this.sessionCounter)}`,
-      state: 'cart_open',
-      revision: 1,
-      updatedAt: this.tick(),
-      order: null,
-      reviewRequired: false,
-    };
-    this.records.push(record);
-    return record;
-  }
-
-  async updateOpen(input: {
-    current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
-    materialization: DraftMaterialization; pessoaId: string | null;
-  } & ConversationAiPermit): Promise<DraftMutationResult> {
-    const latest = await this.findByOrderingId(input.current);
-    if (!latest) throw new Error('FIXTURE_RECORD_MISSING');
-    if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict', record: latest };
-    Object.assign(latest, input.materialization, {
-      revision: latest.revision + 1,
-      updatedAt: this.tick(),
-      pessoaId: input.pessoaId,
-      reviewRequired: false,
-      processedMessageIds: [...latest.processedMessageIds, input.messageId],
-    });
-    return { kind: 'applied', record: latest };
-  }
-
-  async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string } & ConversationAiPermit): Promise<DraftMutationResult> {
-    const latest = await this.findByOrderingId(input.current);
-    if (!latest) throw new Error('FIXTURE_RECORD_MISSING');
-    if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict', record: latest };
-    latest.state = 'cancelled';
-    latest.revision += 1;
-    latest.updatedAt = this.tick();
-    latest.processedMessageIds.push(input.messageId);
-    return { kind: 'applied', record: latest };
-  }
-
-  async issueConfirmationToken(input: { current: ConversationOrderingRecord; tokenHash: string; expiresAt: string } & ConversationAiPermit): Promise<TokenIssuanceResult> {
-    this.tokenHashesBySession.set(input.current.sessionId, input.tokenHash);
-    return { kind: 'issued' };
-  }
-
-  async confirmAtomically(input: {
-    current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
-    tokenHash: string | null; idempotencyKey: string; pessoaId: string | null;
-  } & ConversationAiPermit) {
-    const latest = await this.findByOrderingId(input.current);
-    if (!latest) throw new Error('FIXTURE_RECORD_MISSING');
-    if (latest.revision !== input.expectedRevision || latest.state !== 'cart_open') return { kind: 'conflict' as const, record: latest };
-    if (!input.tokenHash || this.tokenHashesBySession.get(latest.sessionId) !== input.tokenHash) {
-      throw new ConversationOrderingError('CONFIRMACAO_INVALIDA', 'Esta confirmação não é mais válida. Peça um novo resumo.');
-    }
-    if (this.simulateFeeChangeOnConfirm) {
-      latest.fulfillment = { ...latest.fulfillment, deliveryFee: 12, deliveryFeeToConfirm: true };
-      latest.pricing = { ...latest.pricing, deliveryFee: 12, total: latest.pricing.subtotal + 12 };
-      latest.revalidation = {
-        checkedAt: this.tick(),
-        ok: false,
-        issues: [{ code: 'price_changed', message: 'A taxa de entrega mudou desde o último resumo.' }],
+  readonly rpc = async (name: string, params: Record<string, unknown>) => {
+    if (name === 'zelomenu_open_whatsapp_order_with_ai_epoch_v1') {
+      this.sessionCounter += 1;
+      const timestamp = this.tick();
+      const row: FixtureSessionRow = {
+        id: `20000000-0000-4000-8000-${pad(this.sessionCounter)}`,
+        empresa_id: String(params.p_empresa_id),
+        ordering_id: `30000000-0000-4000-8000-${pad(this.sessionCounter)}`,
+        context: 'whatsapp_order', state: 'cart_open', source_ref: String(params.p_source_ref),
+        customer_snapshot: params.p_customer_snapshot as FixtureSessionRow['customer_snapshot'],
+        cart_snapshot: params.p_cart_snapshot as FixtureSessionRow['cart_snapshot'],
+        fulfillment_snapshot: params.p_fulfillment_snapshot as FixtureSessionRow['fulfillment_snapshot'],
+        pricing_snapshot: params.p_pricing_snapshot as FixtureSessionRow['pricing_snapshot'],
+        payment_snapshot: params.p_payment_snapshot as FixtureSessionRow['payment_snapshot'],
+        metadata: params.p_metadata as Record<string, unknown>, revision: 1,
+        last_revalidated_at: String(params.p_last_revalidated_at),
+        last_revalidation: params.p_last_revalidation as FixtureSessionRow['last_revalidation'],
+        requirements_snapshot: params.p_requirements_snapshot as FixtureSessionRow['requirements_snapshot'],
+        ready_for_confirmation: params.p_ready_for_confirmation === true,
+        archived_at: null, created_at: timestamp, updated_at: timestamp,
       };
-      latest.revision += 1;
-      latest.updatedAt = this.tick();
-      latest.reviewRequired = true;
-      latest.processedMessageIds.push(input.messageId);
-      return { kind: 'requires_review' as const, record: latest };
+      this.sessions.push(row);
+      return { data: { outcome: 'applied', orderingId: row.ordering_id }, error: null };
     }
-    latest.state = 'confirmed_waiting_review';
-    latest.pessoaId = input.pessoaId;
-    latest.order = { id: `50000000-0000-4000-8000-${pad(this.records.indexOf(latest) + 1)}`, status: 'pending_review', alreadyConfirmed: false, revision: 1 };
-    latest.processedMessageIds.push(input.messageId);
-    return { kind: 'confirmed' as const, record: latest };
-  }
 
-  async applyAutoAccept(record: ConversationOrderingRecord): Promise<ConversationOrderingRecord> {
-    // Auto-accept is deliberately disabled for these fixtures so the
-    // "confirmed" example freezes at the state a restaurant sees before it
-    // acts on the order: 'confirmed_waiting_review'.
-    return record;
-  }
+    const row = this.sessionById(params.p_session_id);
+    if (!row) return { data: { outcome: 'conflict' }, error: null };
+    if (name === 'zelomenu_update_whatsapp_order_with_ai_epoch_v1') {
+      if (row.state !== 'cart_open' || row.revision !== params.p_expected_revision) return { data: { outcome: 'conflict' }, error: null };
+      row.customer_snapshot = params.p_customer_snapshot as FixtureSessionRow['customer_snapshot'];
+      row.cart_snapshot = params.p_cart_snapshot as FixtureSessionRow['cart_snapshot'];
+      row.fulfillment_snapshot = params.p_fulfillment_snapshot as FixtureSessionRow['fulfillment_snapshot'];
+      row.pricing_snapshot = params.p_pricing_snapshot as FixtureSessionRow['pricing_snapshot'];
+      row.payment_snapshot = params.p_payment_snapshot as FixtureSessionRow['payment_snapshot'];
+      row.last_revalidated_at = String(params.p_last_revalidated_at);
+      row.last_revalidation = params.p_last_revalidation as FixtureSessionRow['last_revalidation'];
+      row.requirements_snapshot = params.p_requirements_snapshot as FixtureSessionRow['requirements_snapshot'];
+      row.ready_for_confirmation = params.p_ready_for_confirmation === true;
+      row.metadata = params.p_metadata as Record<string, unknown>;
+      row.revision += 1;
+      row.updated_at = this.tick();
+      return { data: { outcome: 'applied' }, error: null };
+    }
+    if (name === 'zelomenu_cancel_whatsapp_order_with_ai_epoch_v1') {
+      if (row.state !== 'cart_open' || row.revision !== params.p_expected_revision) return { data: { outcome: 'conflict' }, error: null };
+      row.state = 'cancelled'; row.ready_for_confirmation = false;
+      row.metadata = params.p_metadata as Record<string, unknown>;
+      row.revision += 1; row.updated_at = this.tick();
+      return { data: { outcome: 'applied' }, error: null };
+    }
+    if (name === 'issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1') {
+      this.tokenHashesBySession.set(row.id, String(params.p_token_hash));
+      return { data: { outcome: 'issued' }, error: null };
+    }
+    if (name === 'confirm_whatsapp_zelo_order_with_ai_epoch_v1') {
+      if (row.state !== 'cart_open' || row.revision !== params.p_expected_revision) return { data: { outcome: 'conflict' }, error: null };
+      if (this.tokenHashesBySession.get(row.id) !== params.p_token_hash) {
+        return { data: null, error: { message: 'CONFIRMATION_TOKEN_INVALID' } };
+      }
+      const messageId = String(params.p_message_id);
+      if (this.simulateFeeChangeOnConfirm) {
+        row.fulfillment_snapshot = { ...row.fulfillment_snapshot, deliveryFee: 12, deliveryFeeToConfirm: true };
+        row.pricing_snapshot = { ...row.pricing_snapshot, deliveryFee: 12, total: row.pricing_snapshot.subtotal + 12 };
+        const checkedAt = this.tick();
+        row.last_revalidation = { checkedAt, ok: false, issues: [{ code: 'price_changed', message: 'A taxa de entrega mudou desde o último resumo.' }] };
+        row.last_revalidated_at = checkedAt; row.revision += 1; row.ready_for_confirmation = false;
+        row.metadata = {
+          ...row.metadata,
+          processedMessageIds: [...processedMessageIds(row), messageId],
+          conversationReview: { required: true, revision: row.revision, messageId, cause: 'issues' },
+        };
+        row.updated_at = this.tick();
+        return { data: { outcome: 'requires_review', alreadyConfirmed: false }, error: null };
+      }
+      row.state = 'confirmed_waiting_review'; row.ready_for_confirmation = false;
+      row.metadata = { ...row.metadata, pessoaId: params.p_pessoa_id, processedMessageIds: [...processedMessageIds(row), messageId] };
+      row.updated_at = this.tick();
+      const order: FixtureOrderRow = {
+        id: `50000000-0000-4000-8000-${pad(this.sessions.indexOf(row) + 1)}`,
+        zelomenu_session_id: row.id, status: 'pending_review', revision: 1,
+      };
+      this.orders.push(order);
+      return { data: { outcome: 'confirmed', alreadyConfirmed: false, orderId: order.id }, error: null };
+    }
+    throw new Error(`FIXTURE_RPC_UNSUPPORTED:${name}`);
+  };
 }
 
 function createFixtureOrdering() {
-  const adapter = new WireFixtureAdapter();
-  const ordering = createConversationOrdering(adapter, {
-    createRawConfirmationToken: (record, expiresAt) => deriveConversationConfirmationToken(FIXTURE_TOKEN_SECRET, {
-      empresaId: record.empresaId, remoteJid: record.remoteJid, sessionId: record.sessionId, revision: record.revision, expiresAt,
-    }),
-    hashConfirmationToken: (token) => hashConversationConfirmationToken(token),
-    now: () => new Date(adapter.clockMs),
-  });
-  return { adapter, ordering };
+  const persistence = new WireFixturePersistence();
+  const adapter = new SupabaseConversationOrderingAdapter(
+    persistence as never,
+    {
+      loadedConfig: FIXTURE_CONFIG,
+      now: () => new Date(persistence.clockMs),
+      deliveryQuoter: async (input) => ({
+        fee: 8,
+        feeToConfirm: false,
+        detail: {
+          address: {
+            postalCode: input.postalCode,
+            number: input.number,
+            complement: input.complement?.trim() ?? null,
+            street: 'Rua Fixture',
+            neighborhood: 'Bairro Fixture',
+            city: 'São Paulo',
+            state: 'SP',
+          },
+          coordinates: { latitude: -23.55052, longitude: -46.633308 },
+          distanceM: 2400,
+          deliveryFee: 8,
+          status: 'eligible',
+          cacheLayer: 'memory',
+          quoteRequestId: null,
+        },
+      }),
+    },
+    async (input) => ({ accepted: false, status: input.status, revision: input.revision }),
+  );
+  const ordering = orderingFor(adapter, persistence);
+  return { adapter, persistence, ordering };
 }
 
-// `Omit` does not distribute over `ConversationOrderCommand`'s discriminated
-// union on its own (it would collapse to only the fields common to every
-// variant), so this mirrors the distributive-conditional pattern already
-// used for the same purpose in conversationOrdering.test.ts.
+function orderingFor(adapter: SupabaseConversationOrderingAdapter, persistence: WireFixturePersistence) {
+  return createConversationOrdering(adapter, {
+    createRawConfirmationToken: (record, expiresAt) => deriveConversationConfirmationToken(FIXTURE_TOKEN_SECRET, {
+      empresaId: record.empresaId,
+      remoteJid: record.remoteJid,
+      sessionId: record.sessionId,
+      revision: record.revision,
+      expiresAt,
+    }),
+    hashConfirmationToken: hashConversationConfirmationToken,
+    now: () => new Date(persistence.clockMs),
+  });
+}
+
 type CommandWithoutPermit = ConversationOrderCommand extends infer Command
   ? Command extends ConversationOrderCommand
     ? Omit<Command, keyof ConversationAiPermit>
@@ -344,132 +282,91 @@ async function buildPartialMontavelSnapshot(): Promise<OrderingSnapshot> {
     draft: {
       items: [
         {
-          lineId: 'linha-massa-1',
-          productId: 1007,
-          quantity: 1,
+          lineId: 'linha-massa-1', productId: 1007, quantity: 1,
           selectedOptions: [
             { groupId: 'g001', optionSelections: [{ optionId: 'o001', quantity: 1 }] },
             { groupId: 'g004', optionSelections: [{ optionId: 'o008', quantity: 1 }] },
           ],
         },
-        {
-          lineId: 'linha-massa-2',
-          productId: 1007,
-          quantity: 1,
-        },
+        { lineId: 'linha-massa-2', productId: 1007, quantity: 1 },
       ],
       customer: { name: 'Cliente Fixture da Silva' },
-      // fulfillment and paymentMethod deliberately omitted: this is the
-      // "customer hasn't chosen yet" state the wire must be able to express.
     },
   }));
 }
 
-async function buildReadySnapshot(): Promise<{ snapshot: OrderingSnapshot; adapter: WireFixtureAdapter; orderingId: string }> {
-  const { adapter, ordering } = createFixtureOrdering();
+type ReadyFixture = {
+  snapshot: OrderingSnapshot;
+  adapter: SupabaseConversationOrderingAdapter;
+  persistence: WireFixturePersistence;
+  orderingId: string;
+};
+
+async function buildReadySnapshot(): Promise<ReadyFixture> {
+  const { adapter, persistence, ordering } = createFixtureOrdering();
   const opened = await ordering.apply(command({
-    type: 'open_or_update_draft',
-    empresaId: EMPRESA_ID,
-    remoteJid: REMOTE_JID,
+    type: 'open_or_update_draft', empresaId: EMPRESA_ID, remoteJid: REMOTE_JID,
     messageId: 'wamid.fixture-ready-open-000001',
-    draft: { items: [{
-      lineId: 'linha-massa-1',
-      productId: 1007,
-      quantity: 1,
-      selectedOptions: [
-        { groupId: 'g001', optionSelections: [{ optionId: 'o002', quantity: 1 }] },
-        { groupId: 'g002', optionSelections: [{ optionId: 'o003', quantity: 1 }] },
-      ],
-    }] },
+    draft: {
+      items: [{
+        lineId: 'linha-massa-1', productId: 1007, quantity: 1,
+        selectedOptions: [
+          { groupId: 'g001', optionSelections: [{ optionId: 'o002', quantity: 1 }] },
+          { groupId: 'g002', optionSelections: [{ optionId: 'o003', quantity: 1 }] },
+        ],
+      }],
+    },
   }));
   const ready = await ordering.apply(command({
-    type: 'open_or_update_draft',
-    empresaId: EMPRESA_ID,
-    remoteJid: REMOTE_JID,
-    messageId: 'wamid.fixture-ready-update-000001',
-    orderingId: opened.orderingId,
+    type: 'open_or_update_draft', empresaId: EMPRESA_ID, remoteJid: REMOTE_JID,
+    messageId: 'wamid.fixture-ready-update-000001', orderingId: opened.orderingId,
     expectedRevision: opened.revision,
     draft: {
       customer: { name: 'Cliente Fixture da Silva' },
       paymentMethod: 'pix',
       fulfillment: {
-        type: 'delivery',
-        asap: true,
-        deliveryAddress: 'Rua Fixture, 100',
-        deliveryNeighborhood: 'Bairro Fixture',
-        deliveryNumber: '100',
+        type: 'delivery', asap: true, deliveryAddress: 'Rua Fixture, 100',
+        deliveryNeighborhood: 'Bairro Fixture', deliveryPostalCode: '01001000', deliveryNumber: '100',
       },
     },
   }));
-  return { snapshot: ready, adapter, orderingId: opened.orderingId };
+  return { snapshot: ready, adapter, persistence, orderingId: opened.orderingId };
 }
 
 async function buildConfirmedSnapshot(): Promise<OrderingSnapshot> {
-  const { ready, adapter } = await (async () => {
-    const built = await buildReadySnapshot();
-    return { ready: built.snapshot, adapter: built.adapter };
-  })();
-  // buildReadySnapshot created its own ordering instance; re-derive one bound
-  // to the same adapter so the confirm command replays against the exact
-  // in-memory record (mirrors production: one adapter instance per process).
-  const ordering = createConversationOrdering(adapter, {
-    createRawConfirmationToken: (record, expiresAt) => deriveConversationConfirmationToken(FIXTURE_TOKEN_SECRET, {
-      empresaId: record.empresaId, remoteJid: record.remoteJid, sessionId: record.sessionId, revision: record.revision, expiresAt,
-    }),
-    hashConfirmationToken: (token) => hashConversationConfirmationToken(token),
-    now: () => new Date(adapter.clockMs),
-  });
-  return ordering.apply(command({
-    type: 'confirm_draft',
-    empresaId: EMPRESA_ID,
-    remoteJid: REMOTE_JID,
-    messageId: 'wamid.fixture-confirmed-000001',
-    orderingId: ready.orderingId,
-    expectedRevision: ready.revision,
-    confirmationToken: ready.confirmationAction!.token,
+  const built = await buildReadySnapshot();
+  return orderingFor(built.adapter, built.persistence).apply(command({
+    type: 'confirm_draft', empresaId: EMPRESA_ID, remoteJid: REMOTE_JID,
+    messageId: 'wamid.fixture-confirmed-000001', orderingId: built.orderingId,
+    expectedRevision: built.snapshot.revision,
+    confirmationToken: built.snapshot.confirmationAction!.token,
   }));
 }
 
 async function buildCancelledSnapshot(): Promise<OrderingSnapshot> {
   const { ordering } = createFixtureOrdering();
   const opened = await ordering.apply(command({
-    type: 'open_or_update_draft',
-    empresaId: EMPRESA_ID,
-    remoteJid: REMOTE_JID,
+    type: 'open_or_update_draft', empresaId: EMPRESA_ID, remoteJid: REMOTE_JID,
     messageId: 'wamid.fixture-cancelled-open-000001',
     draft: {
       items: [{ lineId: 'linha-bebida-1', productId: 1001, quantity: 2 }],
-      customer: { name: 'Cliente Fixture da Silva' },
-      paymentMethod: 'dinheiro',
+      customer: { name: 'Cliente Fixture da Silva' }, paymentMethod: 'dinheiro',
       fulfillment: { type: 'pickup', asap: true },
     },
   }));
   return ordering.apply(command({
-    type: 'cancel_draft',
-    empresaId: EMPRESA_ID,
-    remoteJid: REMOTE_JID,
-    messageId: 'wamid.fixture-cancelled-cancel-000001',
-    orderingId: opened.orderingId,
+    type: 'cancel_draft', empresaId: EMPRESA_ID, remoteJid: REMOTE_JID,
+    messageId: 'wamid.fixture-cancelled-cancel-000001', orderingId: opened.orderingId,
     expectedRevision: opened.revision,
   }));
 }
 
 async function buildReviewRequiredSnapshot(): Promise<OrderingSnapshot> {
   const built = await buildReadySnapshot();
-  built.adapter.simulateFeeChangeOnConfirm = true;
-  const ordering = createConversationOrdering(built.adapter, {
-    createRawConfirmationToken: (record, expiresAt) => deriveConversationConfirmationToken(FIXTURE_TOKEN_SECRET, {
-      empresaId: record.empresaId, remoteJid: record.remoteJid, sessionId: record.sessionId, revision: record.revision, expiresAt,
-    }),
-    hashConfirmationToken: (token) => hashConversationConfirmationToken(token),
-    now: () => new Date(built.adapter.clockMs),
-  });
-  return ordering.apply(command({
-    type: 'confirm_draft',
-    empresaId: EMPRESA_ID,
-    remoteJid: REMOTE_JID,
-    messageId: 'wamid.fixture-review-required-000001',
-    orderingId: built.orderingId,
+  built.persistence.simulateFeeChangeOnConfirm = true;
+  return orderingFor(built.adapter, built.persistence).apply(command({
+    type: 'confirm_draft', empresaId: EMPRESA_ID, remoteJid: REMOTE_JID,
+    messageId: 'wamid.fixture-review-required-000001', orderingId: built.orderingId,
     expectedRevision: built.snapshot.revision,
     confirmationToken: built.snapshot.confirmationAction!.token,
   }));
@@ -485,11 +382,8 @@ export type WireFixtureSnapshots = {
 
 export async function buildWireFixtureSnapshots(): Promise<WireFixtureSnapshots> {
   const [partial, readyBuilt, confirmed, cancelled, reviewRequired] = await Promise.all([
-    buildPartialMontavelSnapshot(),
-    buildReadySnapshot(),
-    buildConfirmedSnapshot(),
-    buildCancelledSnapshot(),
-    buildReviewRequiredSnapshot(),
+    buildPartialMontavelSnapshot(), buildReadySnapshot(), buildConfirmedSnapshot(),
+    buildCancelledSnapshot(), buildReviewRequiredSnapshot(),
   ]);
   return {
     'snapshot.partial-montavel.json': partial,
