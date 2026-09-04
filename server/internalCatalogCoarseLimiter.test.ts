@@ -162,8 +162,10 @@ describe('createInternalCatalogFailureLimiter', () => {
       'x-test-fail': 'true',
     });
 
-    expect((await failing('empresa-a', '198.51.100.11')).status).toBe(401);
-    expect((await failing('empresa-a', '198.51.100.11')).status).toBe(429);
-    expect((await failing('empresa-b', '198.51.100.12')).status).toBe(401);
+    const empresaA = '10000000-0000-4000-8000-000000000001';
+    const empresaB = '10000000-0000-4000-8000-000000000002';
+    expect((await failing(empresaA, '198.51.100.11')).status).toBe(401);
+    expect((await failing(empresaA, '198.51.100.11')).status).toBe(429);
+    expect((await failing(empresaB, '198.51.100.12')).status).toBe(401);
   });
 });
