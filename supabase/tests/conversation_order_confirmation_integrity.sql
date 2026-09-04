@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(42);
+select plan(47);
 
 insert into auth.users (
   id, email, aud, role, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -336,6 +336,32 @@ update public.zelomenu_cart_sessions
    set customer_snapshot = jsonb_set(customer_snapshot, '{phone}', to_jsonb(public.zelomenu_whatsapp_phone_from_source_ref_v1(source_ref)), true)
  where id = 'c1000000-0000-4000-8000-000000000112';
 
+-- Otherwise-ready copies dedicated to token-integrity failures. Keeping each
+-- case on its own session proves the failure comes from token validation, not
+-- from readiness or state mutated by a previous case.
+insert into public.zelomenu_cart_sessions (
+  id, ordering_id, empresa_id, context, state, source_ref,
+  customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot,
+  payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation,
+  requirements_snapshot, ready_for_confirmation
+)
+select cases.id, cases.ordering_id, baseline.empresa_id, baseline.context, baseline.state,
+  cases.source_ref,
+  jsonb_set(baseline.customer_snapshot, '{phone}', to_jsonb(public.zelomenu_whatsapp_phone_from_source_ref_v1(cases.source_ref)), true),
+  baseline.cart_snapshot, baseline.fulfillment_snapshot, baseline.pricing_snapshot,
+  baseline.payment_snapshot, baseline.metadata, baseline.revision,
+  baseline.last_revalidated_at, baseline.last_revalidation,
+  baseline.requirements_snapshot, baseline.ready_for_confirmation
+from public.zelomenu_cart_sessions baseline
+cross join (values
+  ('c1000000-0000-4000-8000-000000000118'::uuid, 'c1000000-0000-4000-8000-000000000218'::uuid, '5511900000028@s.whatsapp.net'),
+  ('c1000000-0000-4000-8000-000000000119'::uuid, 'c1000000-0000-4000-8000-000000000219'::uuid, '5511900000029@s.whatsapp.net'),
+  ('c1000000-0000-4000-8000-000000000120'::uuid, 'c1000000-0000-4000-8000-000000000220'::uuid, '5511900000030@s.whatsapp.net'),
+  ('c1000000-0000-4000-8000-000000000121'::uuid, 'c1000000-0000-4000-8000-000000000221'::uuid, '5511900000031@s.whatsapp.net'),
+  ('c1000000-0000-4000-8000-000000000122'::uuid, 'c1000000-0000-4000-8000-000000000222'::uuid, '5511900000032@s.whatsapp.net')
+) cases(id, ordering_id, source_ref)
+where baseline.id = 'c1000000-0000-4000-8000-000000000101';
+
 set local role service_role;
 
 select lives_ok(
@@ -384,6 +410,84 @@ select throws_ok(
   ) $sql$,
   'ZL409', 'CONFIRMATION_TOKEN_INVALID',
   'confirmed-order replay rejects a different well-formed token'
+);
+
+select throws_ok(
+  $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000028@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000118', 1, 'message-token-missing', 'idem-token-missing', null, null
+  ) $sql$,
+  'ZL400', 'WHATSAPP_CONFIRMATION_INPUT_INVALID',
+  'otherwise-ready order rejects a missing confirmation token'
+);
+
+select public.issue_whatsapp_zelo_confirmation_token(
+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  'c1000000-0000-4000-8000-000000000002', '5511900000029@s.whatsapp.net',
+  'c1000000-0000-4000-8000-000000000119', 1, now() + interval '10 minutes'
+);
+select throws_ok(
+  $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000029@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000119', 1, 'message-token-wrong', 'idem-token-wrong', null,
+    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+  ) $sql$,
+  'ZL409', 'CONFIRMATION_TOKEN_INVALID',
+  'otherwise-ready order rejects a different well-formed token'
+);
+
+select public.issue_whatsapp_zelo_confirmation_token(
+  'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+  'c1000000-0000-4000-8000-000000000002', '5511900000030@s.whatsapp.net',
+  'c1000000-0000-4000-8000-000000000120', 1, now() + interval '10 minutes'
+);
+update public.zelomenu_whatsapp_confirmation_tokens
+   set expires_at = now() - interval '1 second'
+ where token_hash = 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+select throws_ok(
+  $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000030@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000120', 1, 'message-token-expired', 'idem-token-expired', null,
+    'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+  ) $sql$,
+  'ZL409', 'CONFIRMATION_TOKEN_INVALID',
+  'otherwise-ready order rejects an expired token'
+);
+
+select public.issue_whatsapp_zelo_confirmation_token(
+  'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  'c1000000-0000-4000-8000-000000000002', '5511900000031@s.whatsapp.net',
+  'c1000000-0000-4000-8000-000000000121', 1, now() + interval '10 minutes'
+);
+update public.zelomenu_whatsapp_confirmation_tokens
+   set consumed_at = now()
+ where token_hash = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+select throws_ok(
+  $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000031@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000121', 1, 'message-token-consumed', 'idem-token-consumed', null,
+    'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  ) $sql$,
+  'ZL409', 'CONFIRMATION_TOKEN_INVALID',
+  'otherwise-ready open order rejects an already-consumed token'
+);
+
+select public.issue_whatsapp_zelo_confirmation_token(
+  'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+  'c1000000-0000-4000-8000-000000000002', '5511900000032@s.whatsapp.net',
+  'c1000000-0000-4000-8000-000000000122', 1, now() + interval '10 minutes'
+);
+update public.zelomenu_cart_sessions
+   set revision = 2
+ where id = 'c1000000-0000-4000-8000-000000000122';
+select throws_ok(
+  $sql$ select public.confirm_whatsapp_zelo_order_atomic_v1(
+    'c1000000-0000-4000-8000-000000000002', '5511900000032@s.whatsapp.net',
+    'c1000000-0000-4000-8000-000000000122', 2, 'message-token-revision', 'idem-token-revision', null,
+    'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+  ) $sql$,
+  'ZL409', 'CONFIRMATION_TOKEN_INVALID',
+  'otherwise-ready order rejects a token issued for another revision'
 );
 
 select lives_ok(
