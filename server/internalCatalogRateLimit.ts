@@ -36,6 +36,7 @@ export function makeCoarseInternalCatalogRateLimitKey(ip: string, empresaId?: st
 
 export type InternalCatalogFailureLimiterOptions = {
   maxFailures?: number;
+  maxFailuresPerIp?: number;
   windowMs?: number;
   now?: () => number;
   isInternalKeyValid?: (provided: unknown) => boolean;
@@ -73,15 +74,16 @@ export type InternalCatalogFailureLimiter = {
 };
 
 /**
- * Failure-only coarse guard, split into two mount points so it can key
- * authenticated failures by empresaId (only knowable after body parsing)
- * while still counting malformed/oversized bodies and invalid keys by IP
- * before any parsing happens (see server/index.ts for exactly where each
- * half must be mounted). Successful requests never register a failure in
- * either stage, even under bursts.
+ * Two-tier failure-only guard. Authenticated, parsed failures count against
+ * both a per-empresa bucket (so one tenant does not normally throttle another)
+ * and a broader per-IP ceiling (so a shared-key holder cannot evade the guard
+ * by cycling caller-supplied empresaIds). Invalid keys and unparseable bodies
+ * remain IP-only. Whichever applicable tier is exhausted first wins.
+ * Successful requests never register a failure in either stage.
  */
 export function createInternalCatalogFailureLimiter({
   maxFailures = 30,
+  maxFailuresPerIp = 30,
   windowMs = 60_000,
   now = Date.now,
   isInternalKeyValid = hasValidInternalCatalogKey,
@@ -113,7 +115,9 @@ export function createInternalCatalogFailureLimiter({
     const ip = ipOf(req);
     const unauthenticatedKey = makeCoarseInternalCatalogRateLimitKey(ip);
     const failures = activeFailures(unauthenticatedKey, currentTime);
-    if (failures.length >= maxFailures) {
+    const keyIsValid = isInternalKeyValid(req.header('x-zelo-internal-key'));
+    const ipLimit = keyIsValid ? maxFailuresPerIp : maxFailures;
+    if (failures.length >= ipLimit) {
       res.status(429).json({
         error: 'MUITAS_REQUISICOES',
         detail: 'Muitas tentativas em pouco tempo. Tente novamente em instantes.',
@@ -122,7 +126,6 @@ export function createInternalCatalogFailureLimiter({
       return;
     }
 
-    const keyIsValid = isInternalKeyValid(req.header('x-zelo-internal-key'));
     res.locals.internalCatalogKeyValid = keyIsValid;
     if (!keyIsValid) {
       // Reserve atomically before the 401 handler runs. Concurrent invalid
@@ -146,8 +149,9 @@ export function createInternalCatalogFailureLimiter({
     const ip = ipOf(req);
     const empresaId = empresaIdForRateLimitKey(req);
     const key = makeCoarseInternalCatalogRateLimitKey(ip, empresaId);
-    const failures = activeFailures(key, currentTime);
-    if (failures.length >= maxFailures) {
+    const companyFailures = activeFailures(key, currentTime);
+    const ipFailures = activeFailures(ip, currentTime);
+    if (companyFailures.length >= maxFailures || ipFailures.length >= maxFailuresPerIp) {
       res.status(429).json({
         error: 'MUITAS_REQUISICOES',
         detail: 'Muitas tentativas em pouco tempo. Tente novamente em instantes.',
@@ -158,9 +162,14 @@ export function createInternalCatalogFailureLimiter({
     res.once('finish', () => {
       if (res.statusCode < 400) return;
       const completedAt = now();
-      const failures = activeFailures(key, completedAt);
-      failures.push(completedAt);
-      failuresByKey.set(key, failures);
+      const completedCompanyFailures = activeFailures(key, completedAt);
+      completedCompanyFailures.push(completedAt);
+      failuresByKey.set(key, completedCompanyFailures);
+      if (key !== ip) {
+        const completedIpFailures = activeFailures(ip, completedAt);
+        completedIpFailures.push(completedAt);
+        failuresByKey.set(ip, completedIpFailures);
+      }
     });
     next();
   };

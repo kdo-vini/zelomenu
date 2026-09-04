@@ -8,6 +8,7 @@ const runningServers: RunningServer[] = [];
 
 async function startServer(options?: InternalCatalogFailureLimiterOptions): Promise<RunningServer> {
   const app = express();
+  app.set('trust proxy', 1);
   app.use((req, res, next) => {
     res.locals.requestId = req.header('x-request-id') ?? 'generated-request-id';
     next();
@@ -137,5 +138,32 @@ describe('createInternalCatalogFailureLimiter', () => {
     expect((await postUnauthenticated('empresa-b')).status).toBe(401);
     expect((await postUnauthenticated('empresa-c')).status).toBe(401);
     expect((await postUnauthenticated('empresa-d')).status).toBe(429);
+  });
+
+  it('limita 31 empresas alegadas pelo mesmo IP no teto autenticado por IP', async () => {
+    const running = await startServer();
+    const statuses: number[] = [];
+    for (let index = 1; index <= 31; index += 1) {
+      statuses.push((await post(running, JSON.stringify({ empresaId: `fake-${index}` }), {
+        'x-forwarded-for': '198.51.100.10',
+        'x-zelo-internal-key': 'valid',
+        'x-test-fail': 'true',
+      })).status);
+    }
+    expect(statuses.slice(0, 30)).toEqual(Array(30).fill(401));
+    expect(statuses[30]).toBe(429);
+  });
+
+  it('mantém empresas em IPs diferentes independentes nos dois níveis', async () => {
+    const running = await startServer({ maxFailures: 1 });
+    const failing = (empresaId: string, ip: string) => post(running, JSON.stringify({ empresaId }), {
+      'x-forwarded-for': ip,
+      'x-zelo-internal-key': 'valid',
+      'x-test-fail': 'true',
+    });
+
+    expect((await failing('empresa-a', '198.51.100.11')).status).toBe(401);
+    expect((await failing('empresa-a', '198.51.100.11')).status).toBe(429);
+    expect((await failing('empresa-b', '198.51.100.12')).status).toBe(401);
   });
 });
