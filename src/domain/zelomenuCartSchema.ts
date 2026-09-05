@@ -55,6 +55,7 @@ export type ZeloMenuCartRevalidationIssue = {
     | 'coupon_already_used'
     | 'delivery_address_invalid'
     | 'delivery_out_of_area'
+    | 'delivery_neighborhood_invalid'
     | 'delivery_quote_pending';
   message: string;
   productName?: string;

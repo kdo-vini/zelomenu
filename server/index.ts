@@ -11,7 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug, resolvePublicOrderSubscription, getZeloMenuOperationalMetrics } from './zelomenuCartSessions.js';
+import { getPublicStoreBySlug, openPublicOrderCartSession, getPublicCartSession, updatePublicCartSession, confirmPublicCartSession, setEmpresaZeloMenuSlug, getEmpresaZeloMenuSlug, getZeloMenuStoreSettings, updateZeloMenuStoreSettings, resolveEmpresaIdBySlug, resolvePublicOrderSubscription, getZeloMenuOperationalMetrics, invalidatePublicStoreCache } from './zelomenuCartSessions.js';
 import { requireEmpresaId, getEmpresaUserId } from './supabaseServer.js';
 import { requireZeloMenuAccess } from './zelomenuAccess.js';
 import { getMesaContext, listMesasForAdmin } from './zelomenuMesaHandler.js';
@@ -194,6 +194,8 @@ app.post('/api/public/zelomenu/store/:slug/cart', generalPublicLimiter, async (r
     if (message === 'PRODUCT_STOCK_EXCEEDED' || message.startsWith('PRODUCT_STOCK_EXCEEDED:')) return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'INVALID_QUANTITY' || message === 'CART_LINE_LIMIT_EXCEEDED' || message === 'ORDER_TOTAL_LIMIT_EXCEEDED') return res.status(400).json({ error: message, requestId: res.locals.requestId });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
+    if (message === 'DELIVERY_FEE_CLIENT_FORBIDDEN') return res.status(400).json({ error: 'DELIVERY_FEE_CLIENT_FORBIDDEN' });
+    if (message === 'DELIVERY_FULFILLMENT_MODE_FIELDS_FORBIDDEN') return res.status(400).json({ error: 'DELIVERY_FULFILLMENT_MODE_FIELDS_FORBIDDEN' });
     if (message === 'MODIFIER_QUANTITY_INVALID') return res.status(400).json({ error: 'MODIFIER_QUANTITY_INVALID', detail: 'A quantidade de complemento precisa ser um número inteiro positivo.' });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
     if (message === 'MISSING_TABLE_CONTEXT') return res.status(400).json({ error: 'MISSING_TABLE_CONTEXT' });
@@ -236,6 +238,8 @@ app.patch('/api/public/zelomenu/cart/:token', cartTokenLimiter, async (req, res)
     if (message === 'PRODUCT_UNAVAILABLE') return res.status(400).json({ error: 'PRODUCT_UNAVAILABLE' });
     if (message === 'PRODUCT_STOCK_EXCEEDED' || message.startsWith('PRODUCT_STOCK_EXCEEDED:')) return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
+    if (message === 'DELIVERY_FEE_CLIENT_FORBIDDEN') return res.status(400).json({ error: 'DELIVERY_FEE_CLIENT_FORBIDDEN' });
+    if (message === 'DELIVERY_FULFILLMENT_MODE_FIELDS_FORBIDDEN') return res.status(400).json({ error: 'DELIVERY_FULFILLMENT_MODE_FIELDS_FORBIDDEN' });
     if (message === 'INVALID_QUANTITY' || message === 'CART_LINE_LIMIT_EXCEEDED' || message === 'ORDER_TOTAL_LIMIT_EXCEEDED') return res.status(400).json({ error: message, requestId: res.locals.requestId });
     if (message === 'MODIFIER_QUANTITY_INVALID') return res.status(400).json({ error: 'MODIFIER_QUANTITY_INVALID', detail: 'A quantidade de complemento precisa ser um número inteiro positivo.', requestId: res.locals.requestId });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
@@ -274,6 +278,8 @@ app.post('/api/public/zelomenu/cart/:token/confirm', confirmLimiter, async (req,
     if (message.startsWith('SCHEDULING_DISABLED:')) return res.status(400).json({ error: 'SCHEDULING_DISABLED', detail: message.slice('SCHEDULING_DISABLED:'.length) });
     if (message.startsWith('PICKUP_LEAD_TIME:')) return res.status(400).json({ error: 'PICKUP_LEAD_TIME', detail: message.slice('PICKUP_LEAD_TIME:'.length) });
     if (message === 'DELIVERY_FEE_CHANGED') return res.status(409).json({ error: 'DELIVERY_FEE_CHANGED' });
+    if (message === 'DELIVERY_NEIGHBORHOOD_INVALID' || message === 'DELIVERY_REVALIDATION_REQUIRED') return res.status(409).json({ error: message });
+    if (message === 'DELIVERY_ADDRESS_REQUIRED') return res.status(400).json({ error: 'DELIVERY_ADDRESS_REQUIRED' });
     if (message === 'COUPON_INVALID') return res.status(400).json({ error: 'COUPON_INVALID' });
     if (message === 'COUPON_EXPIRED') return res.status(400).json({ error: 'COUPON_EXPIRED' });
     if (message === 'COUPON_MIN_NOT_MET') return res.status(400).json({ error: 'COUPON_MIN_NOT_MET' });
@@ -305,6 +311,8 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'BUSINESS_HOURS_UNAVAILABLE') return void res.status(503).json({ error: 'BUSINESS_HOURS_UNAVAILABLE' });
   if (message === 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE') return void res.status(503).json({ error: 'AUTO_ACCEPT_SETTINGS_UNAVAILABLE' });
   if (message === 'DELIVERY_CONFIGURATION_INVALID') return void res.status(400).json({ error: 'DELIVERY_CONFIGURATION_INVALID' });
+  if (message === 'DELIVERY_NEIGHBORHOOD_DUPLICATE') return void res.status(400).json({ error: 'DELIVERY_NEIGHBORHOOD_DUPLICATE' });
+  if (message === 'DELIVERY_NEIGHBORHOOD_REQUIRED') return void res.status(400).json({ error: 'DELIVERY_NEIGHBORHOOD_REQUIRED' });
   if (message === 'DELIVERY_ESTIMATED_MINUTES_INVALID') return void res.status(400).json({ error: 'DELIVERY_ESTIMATED_MINUTES_INVALID' });
   if (message === 'DELIVERY_SETTINGS_SAVE_FAILED') return void res.status(503).json({ error: 'DELIVERY_SETTINGS_SAVE_FAILED' });
   if (message === 'QUOTE_REQUEST_NOT_FOUND') return void res.status(404).json({ error: 'QUOTE_REQUEST_NOT_FOUND' });
@@ -667,6 +675,7 @@ app.get('/api/admin/zelomenu/delivery', async (req, res) => {
     const geocodingStatus = !address.postalCode ? 'not_configured' : hasCoords ? 'ready' : 'error';
     res.json({
       enabled: storeData.enabledViaConfig,
+      mode: storeData.mode,
       address: {
         postalCode: address.postalCode ?? '',
         number: address.number ?? '',
@@ -680,6 +689,14 @@ app.get('/api/admin/zelomenu/delivery', async (req, res) => {
         locationVersion: String(address.locationVersion),
       },
       ranges: ranges.map((r) => ({ id: r.id, maxDistanceM: r.maxDistanceM, price: r.price })),
+      neighborhoods: storeData.neighborhoods.map((neighborhood) => ({
+        id: neighborhood.id,
+        name: neighborhood.name,
+        normalizedName: neighborhood.normalizedName,
+        price: neighborhood.price,
+        active: neighborhood.active,
+        sortOrder: neighborhood.sortOrder,
+      })),
       estimatedDeliveryMinutes: storeData.estimatedDeliveryMinutes,
       geocodingStatus,
       pricingRules: storeData.pricingRules,
@@ -695,17 +712,21 @@ app.get('/api/admin/zelomenu/delivery', async (req, res) => {
 app.patch('/api/admin/zelomenu/delivery', async (req, res) => {
   try {
     const empresaId = await requireEmpresaId(req);
-    const { enabled, address, ranges, pricingRules, estimatedDeliveryMinutes } = req.body ?? {};
-    if (typeof enabled !== 'boolean' || !address || typeof address !== 'object' || !Array.isArray(ranges)) {
+    const { enabled, deliveryMode, mode, address, ranges, neighborhoods, pricingRules, estimatedDeliveryMinutes } = req.body ?? {};
+    const selectedMode = deliveryMode ?? mode;
+    if (typeof enabled !== 'boolean' || (selectedMode !== 'distance' && selectedMode !== 'neighborhood')) {
       throw new Error('DELIVERY_CONFIGURATION_INVALID');
     }
     await saveDeliverySettings(empresaId, {
       enabled,
-      address: address as Record<string, unknown>,
-      ranges,
+      mode: selectedMode,
+      address: address && typeof address === 'object' ? address as Record<string, unknown> : {},
+      ranges: Array.isArray(ranges) ? ranges : [],
+      neighborhoods: Array.isArray(neighborhoods) ? neighborhoods : [],
       pricingRules: pricingRules as Array<Record<string, unknown>> | undefined,
       estimatedDeliveryMinutes: estimatedDeliveryMinutes as number | null | undefined,
     });
+    invalidatePublicStoreCache();
     res.json({ ok: true });
   } catch (error) {
     sendAdminError(res, error);

@@ -25,7 +25,8 @@ import type {
   ZeloMenuCartRevalidationIssue,
   ZeloMenuCartRevalidation,
 } from '../src/domain/zelomenuCartSchema.js';
-import { revalidateDeliveryForCart, createDeliveryQuoteRequest, findDeliveryQuoteRequest } from './zelomenuDeliveryService.js';
+import { getDeliveryStoreData, revalidateDeliveryForCart, createDeliveryQuoteRequest, findDeliveryQuoteRequest } from './zelomenuDeliveryService.js';
+import { normalizeDeliveryNeighborhoodName, resolveDeliveryNeighborhoodFee, type DeliveryNeighborhood } from '../src/domain/deliveryNeighborhoods.js';
 import { normalizeCouponCode, validateCouponRule, applyCoupon } from '../src/domain/zelomenuCoupon.js';
 import { normalizeComparableText } from '../src/domain/pixReceipt.js';
 import { toWhatsAppNumber } from '../src/domain/whatsappOrder.js';
@@ -211,6 +212,8 @@ export type ZeloMenuFulfillmentSnapshot = {
   pickupTime: string | null;
   deliveryAddress: string | null;
   deliveryNeighborhood: string | null;
+  deliveryNeighborhoodId?: string | null;
+  deliveryMode?: 'distance' | 'neighborhood';
   deliveryFee: number;
   deliveryFeeToConfirm: boolean;
   // New delivery-by-distance fields
@@ -371,7 +374,8 @@ export type PublicCartResponse = {
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryEstimatedMinutes: number | null;
-    deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    deliveryMode?: 'distance' | 'neighborhood';
+    deliveryNeighborhoods: Array<{ id: string; name: string; fee: number }>;
     logoUrl?: string | null;
     coverUrl?: string | null;
     description?: string | null;
@@ -407,6 +411,11 @@ type PublicStoreResponse = {
 const publicStoreCache = new BoundedMap<string, { expiresAt: number; response: PublicStoreResponse }>(200);
 const PUBLIC_STORE_CACHE_MS = 15_000;
 
+/** Delivery model changes must not leave an old public bootstrap in memory. */
+export function invalidatePublicStoreCache(): void {
+  publicStoreCache.clear();
+}
+
 type ZeloMenuProfileRow = {
   logo_url?: string | null;
   zelomenu_cover_url?: string | null;
@@ -424,6 +433,7 @@ type ZeloMenuProfileRow = {
   zelomenu_scheduling_enabled?: boolean | null;
   zelomenu_scheduling_lead_time_minutes?: number | null;
   zelomenu_delivery_estimated_minutes?: number | null;
+  delivery_mode?: string | null;
 };
 
 // `chave_pix` já existe (compartilhada com o ZeloChat) — entra direto no core.
@@ -516,8 +526,60 @@ function publicDeliveryEstimatedMinutes(value: unknown, deliveryEnabled: boolean
   return deliveryEnabled && isValidDeliveryEstimatedMinutes(value) ? value : null;
 }
 
+function publicDeliveryFallback(config: BusinessConfig): {
+  mode: 'distance' | 'neighborhood';
+  enabled: boolean;
+  neighborhoods: Array<{ id: string; name: string; fee: number }>;
+} {
+  const mode = config.deliveryMode ?? config.deliveryConfig?.mode ?? 'distance';
+  return {
+    mode: mode === 'neighborhood' ? 'neighborhood' : 'distance',
+    enabled: config.deliveryConfig?.enabled === true,
+    neighborhoods: mode === 'neighborhood'
+      ? (config.deliveryConfig?.neighborhoods ?? []).map((neighborhood) => ({
+        id: neighborhood.id ?? normalizeDeliveryNeighborhoodName(neighborhood.name),
+        name: neighborhood.name,
+        fee: neighborhood.fee,
+      }))
+      : [],
+  };
+}
+
 function sanitizeObservations(value: unknown): string | null {
   return sanitizeText(value, 500);
+}
+
+function assertClientDeliveryFeeFieldsAbsent(value: unknown): void {
+  if (!value || typeof value !== 'object') return;
+  const candidate = value as Record<string, unknown>;
+  if (
+    Object.prototype.hasOwnProperty.call(candidate, 'deliveryFee')
+    || Object.prototype.hasOwnProperty.call(candidate, 'deliveryFeeToConfirm')
+    || Object.prototype.hasOwnProperty.call(candidate, 'deliveryQuoteOverride')
+  ) {
+    throw new Error('DELIVERY_FEE_CLIENT_FORBIDDEN');
+  }
+}
+
+function assertClientDeliveryModeFieldsAbsent(
+  value: unknown,
+  mode: 'distance' | 'neighborhood',
+): void {
+  if (!value || typeof value !== 'object') return;
+  const candidate = value as Record<string, unknown>;
+  const forbiddenFields = mode === 'neighborhood'
+    ? [
+      'deliveryPostalCode', 'deliveryLatitude', 'deliveryLongitude',
+      'deliveryDistanceM', 'deliveryQuoteRequestId', 'deliveryPricingMode',
+      'deliveryPricingRuleLabel',
+    ]
+    : ['deliveryNeighborhoodId'];
+  if (forbiddenFields.some((field) => {
+    const fieldValue = candidate[field];
+    return fieldValue !== undefined && fieldValue !== null && fieldValue !== '';
+  })) {
+    throw new Error('DELIVERY_FULFILLMENT_MODE_FIELDS_FORBIDDEN');
+  }
 }
 
 function normalizePositiveInt(value: unknown): number | null {
@@ -613,11 +675,11 @@ function parseCartSnapshot(value: unknown): ZeloMenuCartSnapshot {
 
 function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
   if (!value || typeof value !== 'object') {
-    return { type: 'pickup', asap: false, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryFee: 0, deliveryFeeToConfirm: false };
+    return { type: 'pickup', asap: false, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryNeighborhoodId: null, deliveryFee: 0, deliveryFeeToConfirm: false };
   }
   const row = value as {
     type?: unknown; asap?: unknown; pickupDate?: unknown; pickupTime?: unknown;
-    deliveryAddress?: unknown; deliveryNeighborhood?: unknown; deliveryFee?: unknown; deliveryFeeToConfirm?: unknown;
+    deliveryAddress?: unknown; deliveryNeighborhood?: unknown; deliveryNeighborhoodId?: unknown; deliveryMode?: unknown; deliveryFee?: unknown; deliveryFeeToConfirm?: unknown;
     deliveryPostalCode?: unknown; deliveryNumber?: unknown; deliveryComplement?: unknown;
     deliveryStreet?: unknown; deliveryCity?: unknown; deliveryState?: unknown;
     deliveryLatitude?: unknown; deliveryLongitude?: unknown; deliveryDistanceM?: unknown;
@@ -632,6 +694,8 @@ function parseFulfillmentSnapshot(value: unknown): ZeloMenuFulfillmentSnapshot {
     pickupTime: normalizeTime(row.pickupTime),
     deliveryAddress: sanitizeText(row.deliveryAddress, 250),
     deliveryNeighborhood: sanitizeText(row.deliveryNeighborhood, 120),
+    deliveryNeighborhoodId: sanitizeText(row.deliveryNeighborhoodId, 80),
+    deliveryMode: row.deliveryMode === 'neighborhood' ? 'neighborhood' : row.deliveryMode === 'distance' ? 'distance' : undefined,
     deliveryFee: Number.isFinite(Number(row.deliveryFee)) ? Number(row.deliveryFee) : 0,
     deliveryFeeToConfirm: row.deliveryFeeToConfirm === true,
     deliveryPostalCode: sanitizeText(row.deliveryPostalCode, 10) ?? null,
@@ -1073,6 +1137,16 @@ export async function resolveSnapshots(
         ? null
         : 'pickup';
   const deliveryNeighborhood = sanitizeText(params.fulfillment?.deliveryNeighborhood, 120);
+  const configuredDeliveryMode = config.deliveryMode ?? config.deliveryConfig?.mode ?? 'distance';
+  let deliveryMode: 'distance' | 'neighborhood' = configuredDeliveryMode === 'neighborhood' ? 'neighborhood' : 'distance';
+  let deliveryNeighborhoods: DeliveryNeighborhood[] = (config.deliveryConfig?.neighborhoods ?? []).map((neighborhood, index) => ({
+    id: neighborhood.id ?? normalizeDeliveryNeighborhoodName(neighborhood.name),
+    name: neighborhood.name,
+    normalizedName: normalizeDeliveryNeighborhoodName(neighborhood.name),
+    price: Number(neighborhood.fee),
+    active: true,
+    sortOrder: index,
+  }));
 
   let deliveryFee = 0;
   let deliveryFeeToConfirm = false;
@@ -1081,7 +1155,48 @@ export async function resolveSnapshots(
   if (fulfillmentType === 'delivery') {
     if (!config.deliveryConfig?.enabled) throw new Error('DELIVERY_DISABLED');
 
-    const override = params.deliveryQuoteOverride;
+    if (deliveryMode === 'neighborhood') {
+      try {
+        const storeData = await getDeliveryStoreData(empresaId);
+        deliveryMode = storeData.mode;
+        if (storeData.neighborhoods.length > 0 || deliveryMode === 'neighborhood') {
+          deliveryNeighborhoods = storeData.neighborhoods;
+        }
+      } catch {
+        // The legacy JSON remains a safe compatibility fallback while a
+        // deployment is rolling out the neighborhood table.
+      }
+    }
+
+    if (deliveryMode === 'neighborhood') {
+      const requestedNeighborhoodId = sanitizeText(params.fulfillment?.deliveryNeighborhoodId, 80);
+      const requestedNeighborhoodName = normalizeDeliveryNeighborhoodName(deliveryNeighborhood ?? '');
+      const exactNameMatch = params.context === 'whatsapp_order' && requestedNeighborhoodName
+        ? deliveryNeighborhoods.find((neighborhood) => neighborhood.active && neighborhood.normalizedName === requestedNeighborhoodName)
+        : null;
+      const selectedById = resolveDeliveryNeighborhoodFee(deliveryNeighborhoods, requestedNeighborhoodId);
+      // ID presente é uma escolha explícita do checkout. Nunca caímos para o
+      // nome nesse caso: isso impediria um ID de outra empresa ou inativo de
+      // ser mascarado por um nome coincidente.
+      const selected = requestedNeighborhoodId
+        ? selectedById
+        : (exactNameMatch && exactNameMatch.active
+          ? { id: exactNameMatch.id, name: exactNameMatch.name, fee: exactNameMatch.price }
+          : null);
+      deliveryFee = selected?.fee ?? 0;
+      deliveryFeeToConfirm = selected === null;
+      deliveryDetail = {
+        address: null,
+        coordinates: null,
+        distanceM: null,
+        deliveryFee,
+        status: selected ? 'eligible' : requestedNeighborhoodId || deliveryNeighborhood ? 'unavailable' : 'pending',
+        cacheLayer: 'none',
+        quoteRequestId: null,
+      };
+    }
+
+    const override = deliveryMode === 'distance' ? params.deliveryQuoteOverride : null;
     if (override && Number.isFinite(override.fee) && override.fee >= 0) {
       deliveryFee = override.fee;
       deliveryFeeToConfirm = false;
@@ -1099,7 +1214,7 @@ export async function resolveSnapshots(
     // Novo fluxo: CEP + número → quote por distância
     const postalCode = params.fulfillment?.deliveryPostalCode?.replace(/\D/g, '');
     const number = params.fulfillment?.deliveryNumber?.trim();
-    if (!override && postalCode && postalCode.length === 8 && number) {
+    if (deliveryMode === 'distance' && !override && postalCode && postalCode.length === 8 && number) {
       // Determina o horário de referência para precificação por horário
       let quoteLocalDate: string | undefined;
       let quoteLocalTime: string | undefined;
@@ -1136,7 +1251,7 @@ export async function resolveSnapshots(
           quoteRequestId: null,
         };
       }
-    } else if (!override) {
+    } else if (deliveryMode === 'distance' && !override) {
       deliveryFee = 0;
       deliveryFeeToConfirm = true;
       deliveryDetail = {
@@ -1157,18 +1272,28 @@ export async function resolveSnapshots(
     pickupDate: normalizeDate(params.fulfillment?.pickupDate),
     pickupTime: normalizeTime(params.fulfillment?.pickupTime),
     deliveryAddress: sanitizeText(params.fulfillment?.deliveryAddress, 250),
-    deliveryNeighborhood,
+    deliveryNeighborhood: deliveryMode === 'neighborhood' && deliveryDetail?.status === 'eligible'
+      ? deliveryNeighborhoods.find((neighborhood) => neighborhood.id === params.fulfillment?.deliveryNeighborhoodId)?.name
+        ?? deliveryNeighborhoods.find((neighborhood) => neighborhood.active && neighborhood.normalizedName === normalizeDeliveryNeighborhoodName(deliveryNeighborhood ?? ''))?.name
+        ?? deliveryNeighborhood
+      : deliveryNeighborhood,
+    deliveryNeighborhoodId: deliveryMode === 'neighborhood'
+      ? (deliveryNeighborhoods.find((neighborhood) => neighborhood.id === params.fulfillment?.deliveryNeighborhoodId)?.id
+        ?? deliveryNeighborhoods.find((neighborhood) => neighborhood.active && neighborhood.normalizedName === normalizeDeliveryNeighborhoodName(deliveryNeighborhood ?? ''))?.id
+        ?? sanitizeText(params.fulfillment?.deliveryNeighborhoodId, 80))
+      : null,
+    deliveryMode: fulfillmentType === 'delivery' ? deliveryMode : undefined,
     deliveryFee,
     deliveryFeeToConfirm,
-    deliveryPostalCode: deliveryDetail?.address?.postalCode ?? params.fulfillment?.deliveryPostalCode ?? null,
+    deliveryPostalCode: deliveryMode === 'neighborhood' ? null : deliveryDetail?.address?.postalCode ?? params.fulfillment?.deliveryPostalCode ?? null,
     deliveryNumber: deliveryDetail?.address?.number ?? params.fulfillment?.deliveryNumber ?? null,
     deliveryComplement: deliveryDetail?.address?.complement ?? params.fulfillment?.deliveryComplement ?? null,
-    deliveryStreet: deliveryDetail?.address?.street ?? params.fulfillment?.deliveryStreet ?? null,
-    deliveryCity: deliveryDetail?.address?.city ?? params.fulfillment?.deliveryCity ?? null,
-    deliveryState: deliveryDetail?.address?.state ?? params.fulfillment?.deliveryState ?? null,
-    deliveryLatitude: deliveryDetail?.coordinates?.latitude ?? null,
-    deliveryLongitude: deliveryDetail?.coordinates?.longitude ?? null,
-    deliveryDistanceM: deliveryDetail?.distanceM ?? null,
+    deliveryStreet: deliveryMode === 'neighborhood' ? params.fulfillment?.deliveryStreet ?? null : deliveryDetail?.address?.street ?? params.fulfillment?.deliveryStreet ?? null,
+    deliveryCity: deliveryMode === 'neighborhood' ? params.fulfillment?.deliveryCity ?? null : deliveryDetail?.address?.city ?? params.fulfillment?.deliveryCity ?? null,
+    deliveryState: deliveryMode === 'neighborhood' ? params.fulfillment?.deliveryState ?? null : deliveryDetail?.address?.state ?? params.fulfillment?.deliveryState ?? null,
+    deliveryLatitude: deliveryMode === 'neighborhood' ? null : deliveryDetail?.coordinates?.latitude ?? null,
+    deliveryLongitude: deliveryMode === 'neighborhood' ? null : deliveryDetail?.coordinates?.longitude ?? null,
+    deliveryDistanceM: deliveryMode === 'neighborhood' ? null : deliveryDetail?.distanceM ?? null,
     deliveryStatus: fulfillmentType === 'delivery'
       ? (deliveryDetail?.status ?? 'pending')
       : fulfillmentType === 'pickup'
@@ -1350,7 +1475,10 @@ export async function materializeWhatsAppOrderDraft(input: {
     if (sanitizeText(resolved.fulfillment.deliveryNumber, 30) === null) {
       missingDeliveryAddressFields.push('number');
     }
-    if (sanitizeText(resolved.fulfillment.deliveryNeighborhood, 120) === null) {
+    if (
+      sanitizeText(resolved.fulfillment.deliveryNeighborhood, 120) === null
+      || (resolved.fulfillment.deliveryMode === 'neighborhood' && resolved.fulfillment.deliveryStatus !== 'eligible')
+    ) {
       missingDeliveryAddressFields.push('neighborhood');
     }
   }
@@ -1528,6 +1656,8 @@ export async function runRevalidation(session: PublicCartSession, loadedConfig?:
       const status = resolved.fulfillment.deliveryStatus;
       if (status === 'out_of_area') {
         issues.push({ code: 'delivery_out_of_area', message: 'Este endereço está fora da área de entrega.' });
+      } else if (resolved.fulfillment.deliveryMode === 'neighborhood' && status === 'unavailable') {
+        issues.push({ code: 'delivery_neighborhood_invalid', message: 'Escolha um bairro cadastrado e atendido pela loja.' });
       } else if (status === 'pending' || status === 'unavailable' || resolved.fulfillment.deliveryFeeToConfirm) {
         issues.push({
           code: 'delivery_quote_pending',
@@ -1574,6 +1704,8 @@ function revalidationFromResolved(
   if (resolved.fulfillment.type === 'delivery') {
     if (resolved.fulfillment.deliveryStatus === 'out_of_area') {
       issues.push({ code: 'delivery_out_of_area', message: 'Este endereço está fora da área de entrega.' });
+    } else if (resolved.fulfillment.deliveryMode === 'neighborhood' && resolved.fulfillment.deliveryStatus === 'unavailable') {
+      issues.push({ code: 'delivery_neighborhood_invalid', message: 'Escolha um bairro cadastrado e atendido pela loja.' });
     } else if (
       resolved.fulfillment.deliveryStatus === 'pending'
       || resolved.fulfillment.deliveryStatus === 'unavailable'
@@ -1601,7 +1733,7 @@ function canCarryDeliveryQuoteOverride(
   current: ZeloMenuFulfillmentSnapshot,
   incoming: Partial<ZeloMenuFulfillmentSnapshot> | null,
 ): boolean {
-  if (!current.deliveryQuoteOverride || !incoming || incoming.type === 'pickup') return false;
+  if (!current.deliveryQuoteOverride || !incoming || incoming.type === 'pickup' || current.deliveryMode === 'neighborhood') return false;
   const currentPostalCode = (current.deliveryPostalCode ?? '').replace(/\D/g, '');
   const incomingPostalCode = (incoming.deliveryPostalCode ?? current.deliveryPostalCode ?? '').replace(/\D/g, '');
   const currentNumber = (current.deliveryNumber ?? '').trim();
@@ -1676,6 +1808,23 @@ async function buildPublicResponse(
   }
   if (!catalogAlreadyLoaded) await loadCatalogFromDb(sessionRow.empresa_id);
   const config = getConfig(sessionRow.empresa_id);
+  const deliveryFallback = publicDeliveryFallback(config);
+  const deliveryData = await getDeliveryStoreData(sessionRow.empresa_id).catch(() => null);
+  const deliveryMode = deliveryData?.mode ?? deliveryFallback.mode;
+  const deliveryEnabled = deliveryData?.enabledViaConfig ?? deliveryFallback.enabled;
+  const publicNeighborhoods = deliveryMode === 'neighborhood'
+    ? (deliveryData?.neighborhoods ?? deliveryFallback.neighborhoods
+      .map((neighborhood) => ({
+        id: neighborhood.id,
+        name: neighborhood.name,
+        normalizedName: normalizeDeliveryNeighborhoodName(neighborhood.name),
+        price: neighborhood.fee,
+        active: true,
+        sortOrder: 0,
+      })))
+      .filter((neighborhood) => neighborhood.active)
+      .map((neighborhood) => ({ id: neighborhood.id, name: neighborhood.name, fee: neighborhood.price }))
+    : [];
   session.lastRevalidatedAt = revalidation.checkedAt;
   session.lastRevalidation = revalidation;
   const deliveryQuotePending = revalidation.issues.some((issue) => issue.code === 'delivery_quote_pending');
@@ -1722,9 +1871,10 @@ async function buildPublicResponse(
       address: config.address,
       whatsapp: toWhatsAppNumber(config.contato),
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
-      deliveryEnabled: config.deliveryConfig?.enabled === true,
-      deliveryEstimatedMinutes: publicDeliveryEstimatedMinutes(perfilData?.zelomenu_delivery_estimated_minutes, config.deliveryConfig?.enabled === true),
-      deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
+      deliveryEnabled,
+      deliveryMode,
+      deliveryEstimatedMinutes: publicDeliveryEstimatedMinutes(perfilData?.zelomenu_delivery_estimated_minutes, deliveryEnabled),
+      deliveryNeighborhoods: publicNeighborhoods,
       featuredEnabled: perfilData?.zelomenu_featured_enabled ?? false,
       featuredProductIds: Array.isArray(perfilData?.zelomenu_featured_product_ids) ? (perfilData.zelomenu_featured_product_ids as number[]) : [],
       recommendationsEnabled: perfilData?.zelomenu_recommendations_enabled ?? false,
@@ -1776,11 +1926,26 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
   const cached = publicStoreCache.get(normalizedSlug);
   if (cached && cached.expiresAt > Date.now()) return cached.response;
 
-  const [, perfil] = await Promise.all([
+  const [, perfil, deliveryData] = await Promise.all([
     loadCatalogFromDb(empresaId),
     loadZeloMenuProfile(empresaId),
+    getDeliveryStoreData(empresaId).catch(() => null),
   ]);
   const config = getConfig(empresaId);
+  const deliveryFallback = publicDeliveryFallback(config);
+  const deliveryMode = deliveryData?.mode ?? deliveryFallback.mode;
+  const deliveryEnabled = deliveryData?.enabledViaConfig ?? deliveryFallback.enabled;
+  const publicNeighborhoods = deliveryMode === 'neighborhood'
+    ? (deliveryData?.neighborhoods ?? deliveryFallback.neighborhoods.map((neighborhood) => ({
+      id: neighborhood.id,
+      name: neighborhood.name,
+      normalizedName: normalizeDeliveryNeighborhoodName(neighborhood.name),
+      price: neighborhood.fee,
+      active: true,
+      sortOrder: 0,
+    }))).filter((neighborhood) => neighborhood.active)
+      .map((neighborhood) => ({ id: neighborhood.id, name: neighborhood.name, fee: neighborhood.price }))
+    : [];
   const rawCatalog = filterAvailableCatalog(config.catalogHierarchy);
   const categoryOrder = Array.isArray(perfil?.zelomenu_category_order) ? (perfil.zelomenu_category_order as string[]) : [];
 
@@ -1790,9 +1955,10 @@ export async function getPublicStoreBySlug(slug: string): Promise<PublicStoreRes
       address: config.address,
       whatsapp: toWhatsAppNumber(config.contato),
       pixEnabled: isPixReceiptConfigActive(config.pixReceiptConfig),
-      deliveryEnabled: config.deliveryConfig?.enabled === true,
-      deliveryEstimatedMinutes: publicDeliveryEstimatedMinutes(perfil?.zelomenu_delivery_estimated_minutes, config.deliveryConfig?.enabled === true),
-      deliveryNeighborhoods: config.deliveryConfig?.neighborhoods ?? [],
+      deliveryEnabled,
+      deliveryMode,
+      deliveryEstimatedMinutes: publicDeliveryEstimatedMinutes(perfil?.zelomenu_delivery_estimated_minutes, deliveryEnabled),
+      deliveryNeighborhoods: publicNeighborhoods,
       logoUrl: perfil?.logo_url ?? null,
       coverUrl: perfil?.zelomenu_cover_url ?? null,
       description: perfil?.zelomenu_description ?? null,
@@ -2052,6 +2218,7 @@ export async function openPublicOrderCartSession(input: {
   mesa_id?: string;
   comanda_id?: string;
 }): Promise<{ sessionId: string; orderingId: string; revision: number; token: string; path: string } | null> {
+  assertClientDeliveryFeeFieldsAbsent(input.fulfillment);
   if (input.context != null && input.context !== 'public_order' && input.context !== 'table_order') {
     throw new Error('INVALID_CART_CONTEXT');
   }
@@ -2084,6 +2251,9 @@ export async function openPublicOrderCartSession(input: {
     observations: input.observations,
     context: input.context ?? 'public_order',
   });
+  if (resolved.fulfillment.type === 'delivery') {
+    assertClientDeliveryModeFieldsAbsent(input.fulfillment, resolved.fulfillment.deliveryMode ?? 'distance');
+  }
   const normalizedSlug = normalizeZeloMenuSlug(input.slug);
   const sourceRef = `public:${randomUUID()}`;
   const now = new Date().toISOString();
@@ -2145,6 +2315,7 @@ export async function updatePublicCartSession(
     couponCode?: string | null;
   },
 ): Promise<PublicCartResponse | null> {
+  if (patch.fulfillment !== undefined) assertClientDeliveryFeeFieldsAbsent(patch.fulfillment);
   const normalized = normalizePublicCartToken(token);
   if (!normalized) return null;
   const tokenRow = await findTokenRowByHash(normalized);
@@ -2180,6 +2351,9 @@ export async function updatePublicCartSession(
     couponCode: nextCouponCode,
     deliveryQuoteOverride,
   });
+  if (resolved.fulfillment.type === 'delivery' && patch.fulfillment !== undefined) {
+    assertClientDeliveryModeFieldsAbsent(patch.fulfillment, resolved.fulfillment.deliveryMode ?? 'distance');
+  }
   const revalidation = revalidationFromResolved(resolved);
   const nextRevision = current.revision + 1;
   const now = new Date().toISOString();
@@ -2348,7 +2522,11 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
       customerName: current.customer.name,
       customerPhone: current.customer.phone,
       fulfillmentType: current.fulfillment.type,
+      deliveryMode: current.fulfillment.deliveryMode,
       deliveryAddress: current.fulfillment.deliveryAddress,
+      deliveryStreet: current.fulfillment.deliveryStreet,
+      deliveryNumber: current.fulfillment.deliveryNumber,
+      deliveryNeighborhood: current.fulfillment.deliveryNeighborhood,
       pickupDate: current.fulfillment.pickupDate,
       pickupTime: current.fulfillment.pickupTime,
     }));

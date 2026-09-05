@@ -60,6 +60,8 @@
     "pickupTime": null,
     "deliveryAddress": "Rua Fixture, 100",
     "deliveryNeighborhood": "Bairro Fixture",
+    "deliveryNeighborhoodId": null,
+    "deliveryMode": "distance",
     "deliveryFee": 12,
     "deliveryFeeToConfirm": true,
     "deliveryPostalCode": "01001000",

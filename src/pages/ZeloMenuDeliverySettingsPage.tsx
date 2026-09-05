@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Loader2, Save } from 'lucide-react';
 import {
   createDeliveryDraft,
   deliveryDraftToSettings,
+  EMPTY_DELIVERY_ADDRESS,
   EMPTY_DELIVERY_SETTINGS,
   formatPostalCode,
   parseDecimal,
@@ -19,6 +20,7 @@ import {
 import { DeliveryCoveragePreview } from '../components/zelomenu/DeliveryCoveragePreview';
 import { DeliveryQuoteQueue } from '../components/zelomenu/DeliveryQuoteQueue';
 import { ZeloMenuDeliverySettingsCard } from '../components/zelomenu/ZeloMenuDeliverySettingsCard';
+import { ZeloMenuDeliveryNeighborhoodSettingsCard } from '../components/zelomenu/ZeloMenuDeliveryNeighborhoodSettingsCard';
 import { DeliveryCustomScheduleDisclosure } from '../components/zelomenu/DeliveryCustomScheduleDisclosure';
 
 type ZeloMenuDeliverySettingsPageProps = {
@@ -36,7 +38,7 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const validation = useMemo(() => validateDeliveryDraft(draft), [draft]);
+  const validation = useMemo(() => validateDeliveryDraft({ ...draft, enabled: true }), [draft]);
   const deliverySettings = useMemo(() => deliveryDraftToSettings(draft), [draft]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(snapshot);
 
@@ -175,6 +177,49 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
     setDraft((current) => ({ ...current, ranges: current.ranges.filter((_, rangeIndex) => rangeIndex !== index) }));
   }
 
+  function updateMode(mode: 'distance' | 'neighborhood') {
+    setSaved(false);
+    setSaveError(null);
+    setDraft((current) => ({ ...current, mode }));
+  }
+
+  function updateNeighborhood(index: number, field: 'name' | 'price', value: string) {
+    setSaved(false);
+    setSaveError(null);
+    setDraft((current) => ({
+      ...current,
+      neighborhoods: current.neighborhoods.map((neighborhood, neighborhoodIndex) => (
+        neighborhoodIndex === index ? { ...neighborhood, [field]: value } : neighborhood
+      )),
+    }));
+  }
+
+  function toggleNeighborhood(index: number) {
+    setSaved(false);
+    setDraft((current) => ({
+      ...current,
+      neighborhoods: current.neighborhoods.map((neighborhood, neighborhoodIndex) => (
+        neighborhoodIndex === index ? { ...neighborhood, active: !neighborhood.active } : neighborhood
+      )),
+    }));
+  }
+
+  function addNeighborhood() {
+    setSaved(false);
+    setDraft((current) => ({
+      ...current,
+      neighborhoods: [...current.neighborhoods, { name: '', price: '', active: true }],
+    }));
+  }
+
+  function removeNeighborhood(index: number) {
+    setSaved(false);
+    setDraft((current) => ({
+      ...current,
+      neighborhoods: current.neighborhoods.filter((_, neighborhoodIndex) => neighborhoodIndex !== index),
+    }));
+  }
+
   async function save() {
     if (validation.general) {
       setSaveError(validation.general);
@@ -182,29 +227,27 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
     }
 
     const baseSettings = deliveryDraftToSettings(draft);
-    if (!baseSettings.address) {
+    if (draft.mode === 'distance' && !baseSettings.address) {
       setSaveError('Complete o endereço da loja antes de salvar.');
       return;
     }
-
-    const baseAddress = baseSettings.address;
     setSaving(true);
     setSaved(false);
     setSaveError(null);
     let geocodingStarted = false;
     try {
-      let address = { ...baseAddress };
+      let address = baseSettings.address ? { ...baseSettings.address } : { ...EMPTY_DELIVERY_ADDRESS };
       let nextSettings: DeliverySettings = {
         ...baseSettings,
         enabled: true,
         address,
       };
 
-      if (
+      if (draft.mode === 'distance' && (
         address.latitude == null
         || address.longitude == null
         || nextSettings.geocodingStatus !== 'ready'
-      ) {
+      )) {
         geocodingStarted = true;
         setGeocoding(true);
         const location = await geocodeDeliveryStore({
@@ -259,7 +302,7 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
         <div>
           <h1 className="text-[22px] font-extrabold tracking-[-0.02em] text-[var(--color-ink)] sm:text-2xl">Configurar entrega</h1>
           <p className="mt-1 max-w-xl text-[13px] leading-relaxed text-[var(--color-ink-muted)] sm:text-sm">
-            Defina o endereço da loja e as faixas de entrega.
+            Escolha como sua loja calcula a entrega e configure apenas o modelo selecionado.
           </p>
         </div>
       </header>
@@ -270,43 +313,79 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
         </p>
       )}
 
+      <section className="mt-5 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-4 shadow-[0_8px_18px_rgba(36,31,54,0.04)] sm:px-5">
+        <label className="block max-w-xl">
+          <span className="mb-1.5 block text-[12px] font-bold text-[var(--color-ink-soft)]">Modelo de entrega</span>
+          <select
+            value={draft.mode}
+            onChange={(event) => updateMode(event.target.value as 'distance' | 'neighborhood')}
+            disabled={loading || saving}
+            className="h-11 w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 text-sm font-semibold text-[var(--color-ink)] outline-none transition-colors focus:border-[var(--color-brand)] focus:ring-2 focus:ring-[var(--color-brand)]/10 sm:max-w-md"
+          >
+            <option value="distance">Por rota / distância</option>
+            <option value="neighborhood">Por bairro</option>
+          </select>
+        </label>
+        <p className="mt-2 text-xs leading-relaxed text-[var(--color-ink-muted)]">
+          {draft.mode === 'neighborhood'
+            ? 'O cliente escolherá um bairro cadastrado. A taxa será o preço definido para esse bairro.'
+            : 'O cliente informa o CEP e o sistema calcula a rota até a loja.'}
+        </p>
+      </section>
+
       <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(390px,0.95fr)] xl:grid-cols-[minmax(0,1.05fr)_minmax(480px,1fr)] lg:items-start lg:gap-6">
         <div className="space-y-4">
-          <ZeloMenuDeliverySettingsCard
-            draft={draft}
-            validation={validation}
-            cepLoading={cepLoading}
-            onLookupCep={() => void handleLookupCep()}
-            onAddressChange={updateAddress}
-            onEstimatedDeliveryMinutesChange={updateEstimatedDeliveryMinutes}
-            onRangeChange={updateRange}
-            onAddRange={addRange}
-            onRemoveRange={removeRange}
-          />
-          <DeliveryCustomScheduleDisclosure
-            pricingRules={draft.pricingRules}
-            ranges={draft.ranges.map((r) => ({
-              maxDistanceM: Math.round((parseDecimal(r.maxDistanceKm) || 0) * 1000),
-              price: r.price,
-              label: (parseDecimal(r.maxDistanceKm) || 0).toFixed(2).replace('.', ',') + ' km',
-            }))}
-            enabled={draft.enabled}
-            onRulesChange={(rules) => {
-              setSaved(false);
-              setSaveError(null);
-              setDraft((prev) => ({ ...prev, pricingRules: rules }));
-            }}
-          />
+          {draft.mode === 'neighborhood' ? (
+            <ZeloMenuDeliveryNeighborhoodSettingsCard
+              draft={draft}
+              validation={validation}
+              onNeighborhoodChange={updateNeighborhood}
+              onToggleNeighborhood={toggleNeighborhood}
+              onAddNeighborhood={addNeighborhood}
+              onRemoveNeighborhood={removeNeighborhood}
+              onEstimatedDeliveryMinutesChange={updateEstimatedDeliveryMinutes}
+            />
+          ) : (
+            <>
+              <ZeloMenuDeliverySettingsCard
+                draft={draft}
+                validation={validation}
+                cepLoading={cepLoading}
+                onLookupCep={() => void handleLookupCep()}
+                onAddressChange={updateAddress}
+                onEstimatedDeliveryMinutesChange={updateEstimatedDeliveryMinutes}
+                onRangeChange={updateRange}
+                onAddRange={addRange}
+                onRemoveRange={removeRange}
+              />
+              <DeliveryCustomScheduleDisclosure
+                pricingRules={draft.pricingRules}
+                ranges={draft.ranges.map((r) => ({
+                  maxDistanceM: Math.round((parseDecimal(r.maxDistanceKm) || 0) * 1000),
+                  price: r.price,
+                  label: (parseDecimal(r.maxDistanceKm) || 0).toFixed(2).replace('.', ',') + ' km',
+                }))}
+                enabled={draft.enabled}
+                onRulesChange={(rules) => {
+                  setSaved(false);
+                  setSaveError(null);
+                  setDraft((prev) => ({ ...prev, pricingRules: rules }));
+                }}
+              />
+            </>
+          )}
         </div>
 
-        <div className="lg:sticky lg:top-5">
-          <DeliveryCoveragePreview
-            ranges={deliverySettings.ranges}
-            address={deliverySettings.address}
-            estimatedDeliveryMinutes={deliverySettings.estimatedDeliveryMinutes}
-            loading={loading || geocoding}
-          />
-        </div>
+        {draft.mode === 'distance' ? (
+          <div className="lg:sticky lg:top-5">
+            <DeliveryCoveragePreview
+              ranges={deliverySettings.ranges}
+              address={deliverySettings.address}
+              estimatedDeliveryMinutes={deliverySettings.estimatedDeliveryMinutes}
+              loading={loading || geocoding}
+            />
+          </div>
+        ) : <div aria-hidden="true" />}
       </div>
 
       <div className="sticky bottom-0 z-20 -mx-4 mt-5 border-t border-[var(--color-line)] bg-[var(--color-canvas)]/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
@@ -328,9 +407,7 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
         </div>
       </div>
 
-      <div className="mt-8">
-        <DeliveryQuoteQueue />
-      </div>
+      {draft.mode === 'distance' ? <div className="mt-8"><DeliveryQuoteQueue /></div> : null}
     </div>
   );
 }

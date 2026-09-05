@@ -2,7 +2,11 @@ export type ZeloMenuCheckoutDetails = {
   customerName: string | null | undefined;
   customerPhone: string | null | undefined;
   fulfillmentType: 'pickup' | 'delivery';
+  deliveryMode?: 'distance' | 'neighborhood';
   deliveryAddress: string | null | undefined;
+  deliveryStreet?: string | null | undefined;
+  deliveryNumber?: string | null | undefined;
+  deliveryNeighborhood?: string | null | undefined;
   pickupDate: string | null | undefined;
   pickupTime: string | null | undefined;
 };
@@ -11,6 +15,9 @@ export type ZeloMenuCheckoutField =
   | 'customerName'
   | 'customerPhone'
   | 'deliveryAddress'
+  | 'deliveryStreet'
+  | 'deliveryNumber'
+  | 'deliveryNeighborhood'
   | 'pickupDate'
   | 'pickupTime';
 
@@ -45,8 +52,17 @@ export function validateZeloMenuCheckoutDetails(
   if (!isValidBrazilianPhone(details.customerPhone)) {
     errors.customerPhone = 'Informe um WhatsApp válido com DDD.';
   }
-  if (details.fulfillmentType === 'delivery' && !(details.deliveryAddress ?? '').trim()) {
+  if (
+    details.fulfillmentType === 'delivery'
+    && details.deliveryMode !== 'neighborhood'
+    && !(details.deliveryAddress ?? '').trim()
+  ) {
     errors.deliveryAddress = 'Informe o endereço da entrega.';
+  }
+  if (details.fulfillmentType === 'delivery' && details.deliveryMode === 'neighborhood') {
+    if (!(details.deliveryStreet ?? '').trim()) errors.deliveryStreet = 'Informe a rua.';
+    if (!(details.deliveryNumber ?? '').trim()) errors.deliveryNumber = 'Informe o número.';
+    if (!(details.deliveryNeighborhood ?? '').trim()) errors.deliveryNeighborhood = 'Escolha um bairro.';
   }
   if (!isRealCivilDate((details.pickupDate ?? '').trim())) {
     errors.pickupDate = 'Informe a data.';
@@ -65,6 +81,9 @@ export function firstZeloMenuCheckoutError(
     errors.customerName
     ?? errors.customerPhone
     ?? errors.deliveryAddress
+    ?? errors.deliveryStreet
+    ?? errors.deliveryNumber
+    ?? errors.deliveryNeighborhood
     ?? errors.pickupDate
     ?? errors.pickupTime
     ?? null

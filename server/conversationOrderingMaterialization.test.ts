@@ -5,6 +5,7 @@ import { bemServidoConversationCatalog } from './fixtures/bemServidoConversation
 
 let products: CatalogProduct[] = [];
 let deliveryConfig: BusinessConfig['deliveryConfig'] = null;
+let deliveryStoreData: { mode: 'distance' | 'neighborhood'; neighborhoods: Array<{ id: string; name: string; normalizedName: string; price: number; active: boolean; sortOrder: number }> } | null = null;
 
 const weeklyHours = {
   sun: [], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [],
@@ -38,6 +39,7 @@ vi.mock('./zelomenuDeliveryService.js', () => ({
   revalidateDeliveryForCart: vi.fn(),
   createDeliveryQuoteRequest: vi.fn(),
   findDeliveryQuoteRequest: vi.fn(),
+  getDeliveryStoreData: vi.fn(async () => deliveryStoreData),
 }));
 
 import { materializeWhatsAppOrderDraft as materializeWhatsAppOrderDraftBase, openPublicOrderCartSession } from './zelomenuCartSessions';
@@ -172,12 +174,22 @@ const EMPRESA_ID = '10000000-0000-4000-8000-000000000001';
 beforeEach(() => {
   products = [product()];
   deliveryConfig = null;
+  deliveryStoreData = null;
 });
 
 describe('materializeWhatsAppOrderDraft', () => {
   it.each(['whatsapp_order', 'internal', '', 123])('rejeita contexto público inválido %s antes de consultar o banco', async (context) => {
     await expect(openPublicOrderCartSession({ slug: 'loja', context: context as 'public_order', items: [] }))
       .rejects.toThrow('INVALID_CART_CONTEXT');
+  });
+
+  it('rejeita taxa ecoada pelo cliente no carrinho público', async () => {
+    await expect(openPublicOrderCartSession({
+      slug: 'loja',
+      context: 'public_order',
+      items: [{ productId: 10, productName: 'X-Bacon oficial', quantity: 1 }],
+      fulfillment: { type: 'delivery', deliveryFee: 8 } as never,
+    })).rejects.toThrow('DELIVERY_FEE_CLIENT_FORBIDDEN');
   });
   it('retorna o lineId produzido pela resolução, sem reparo posicional', () => {
     const source = readFileSync('server/zelomenuCartSessions.ts', 'utf8');
@@ -387,6 +399,74 @@ describe('materializeWhatsAppOrderDraft', () => {
       blocking: true,
       missingFields: ['address', 'number', 'neighborhood'],
     });
+    expect(result.readyForConfirmation).toBe(false);
+  });
+
+  it('usa o preço canônico do bairro ativo e aceita somente o nome exato no WhatsApp', async () => {
+    deliveryConfig = { enabled: true, mode: 'neighborhood', neighborhoods: [] };
+    deliveryStoreData = {
+      mode: 'neighborhood',
+      neighborhoods: [{ id: 'bairro-centro', name: 'Centro', normalizedName: 'centro', price: 7.5, active: true, sortOrder: 0 }],
+    };
+
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+      customer: { name: 'Ana' },
+      fulfillment: {
+        type: 'delivery',
+        deliveryNeighborhoodId: 'bairro-centro',
+        deliveryNeighborhood: 'Centro',
+        deliveryStreet: 'Rua A',
+        deliveryNumber: '10',
+        deliveryAddress: 'Rua A, 10',
+        deliveryFee: 0,
+        deliveryFeeToConfirm: false,
+      },
+      paymentMethod: 'dinheiro',
+    });
+
+    expect(result.fulfillment).toMatchObject({
+      deliveryMode: 'neighborhood',
+      deliveryNeighborhoodId: 'bairro-centro',
+      deliveryNeighborhood: 'Centro',
+      deliveryFee: 7.5,
+      deliveryStatus: 'eligible',
+    });
+    expect(result.pricing.deliveryFee).toBe(7.5);
+    expect(result.readyForConfirmation).toBe(true);
+  });
+
+  it('bloqueia bairro inexistente ou inativo e não aceita correspondência parcial', async () => {
+    deliveryConfig = { enabled: true, mode: 'neighborhood', neighborhoods: [] };
+    deliveryStoreData = {
+      mode: 'neighborhood',
+      neighborhoods: [
+        { id: 'bairro-centro', name: 'Centro', normalizedName: 'centro', price: 7.5, active: true, sortOrder: 0 },
+        { id: 'bairro-rural', name: 'Zona Rural', normalizedName: 'zona rural', price: 10, active: false, sortOrder: 1 },
+      ],
+    };
+
+    const result = await materializeWhatsAppOrderDraft({
+      empresaId: EMPRESA_ID,
+      items: [{ lineId: 'line-1', productId: 10, quantity: 1 }],
+      customer: { name: 'Ana' },
+      fulfillment: {
+        type: 'delivery',
+        deliveryNeighborhoodId: 'bairro-de-outra-empresa',
+        deliveryNeighborhood: 'Centro Novo',
+        deliveryStreet: 'Rua A',
+        deliveryNumber: '10',
+        deliveryAddress: 'Rua A, 10',
+      },
+      paymentMethod: 'dinheiro',
+    });
+
+    expect(result.fulfillment).toMatchObject({ deliveryStatus: 'unavailable', deliveryFee: 0 });
+    expect(result.requirements).toContainEqual(expect.objectContaining({
+      id: 'delivery_address',
+      missingFields: expect.arrayContaining(['neighborhood']),
+    }));
     expect(result.readyForConfirmation).toBe(false);
   });
 
