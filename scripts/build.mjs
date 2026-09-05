@@ -12,7 +12,9 @@ const requested = process.env.PUBLIC_APP_VERSION?.trim();
 if (requested && !requested.startsWith('${') && requested !== commit) {
   throw new Error('PUBLIC_APP_VERSION must equal the full checked-out Git SHA');
 }
-const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim());
+// A Windows checkout can carry CRLF into the Linux build context. Ask Git to
+// apply its text normalization while still rejecting changed or untracked files.
+const dirty = Boolean(execFileSync('git', ['-c', 'core.autocrlf=true', 'status', '--porcelain'], { encoding: 'utf8' }).trim());
 if (dirty && process.env.BUILD_REQUIRE_CLEAN === '1') throw new Error('Production build requires a clean Git checkout, including untracked files');
 const version = `${commit}${dirty ? '-dirty' : ''}`;
 const info = { version, commit, dirty, builtAt: new Date().toISOString(), node: process.versions.node };
