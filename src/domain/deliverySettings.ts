@@ -1,5 +1,16 @@
 export type DeliveryGeocodingStatus = 'not_configured' | 'ready' | 'error' | 'stale';
 
+export type DeliveryMode = 'distance' | 'neighborhood';
+
+export type DeliveryNeighborhood = {
+  id: string;
+  name: string;
+  normalizedName: string;
+  price: number;
+  active: boolean;
+  sortOrder: number;
+};
+
 export type DeliveryAddress = {
   postalCode: string;
   number: string;
@@ -21,6 +32,8 @@ export type DeliveryRange = {
 
 export type DeliverySettings = {
   enabled: boolean;
+  mode?: DeliveryMode;
+  neighborhoods?: DeliveryNeighborhood[];
   estimatedDeliveryMinutes?: number | null;
   address: DeliveryAddress | null;
   ranges: DeliveryRange[];
@@ -68,6 +81,13 @@ export type DeliveryPricingRuleDraft = {
 
 export type DeliverySettingsDraft = {
   enabled: boolean;
+  mode: DeliveryMode;
+  neighborhoods: Array<{
+    id?: string;
+    name: string;
+    price: string;
+    active: boolean;
+  }>;
   estimatedDeliveryMinutes: string;
   address: DeliveryAddress;
   ranges: DeliveryRangeDraft[];
@@ -90,6 +110,8 @@ export const EMPTY_DELIVERY_ADDRESS: DeliveryAddress = {
 
 export const EMPTY_DELIVERY_SETTINGS: DeliverySettings = {
   enabled: false,
+  mode: 'distance',
+  neighborhoods: [],
   address: null,
   ranges: [],
   geocodingStatus: 'not_configured',
@@ -108,6 +130,13 @@ export function createDeliveryDraft(settings: DeliverySettings): DeliverySetting
 
   return {
     enabled: settings.enabled,
+    mode: settings.mode ?? 'distance',
+    neighborhoods: (settings.neighborhoods ?? []).map((neighborhood) => ({
+      id: neighborhood.id,
+      name: neighborhood.name,
+      price: formatMoney(neighborhood.price),
+      active: neighborhood.active,
+    })),
     estimatedDeliveryMinutes: settings.estimatedDeliveryMinutes == null ? '' : String(settings.estimatedDeliveryMinutes),
     address: { ...address },
     ranges: settings.ranges.map((range) => ({
@@ -136,6 +165,20 @@ export function deliveryDraftToSettings(draft: DeliverySettingsDraft): DeliveryS
 
   return {
     enabled: draft.enabled,
+    mode: draft.mode,
+    neighborhoods: draft.neighborhoods.flatMap((neighborhood, index) => {
+      const price = parseDecimal(neighborhood.price);
+      const name = neighborhood.name.trim();
+      if (!name || price == null || price < 0) return [];
+      return [{
+        id: neighborhood.id ?? `new-${index}`,
+        name,
+        normalizedName: normalizeNeighborhoodName(name),
+        price,
+        active: neighborhood.active,
+        sortOrder: index,
+      }];
+    }),
     estimatedDeliveryMinutes: parseEstimatedDeliveryMinutes(draft.estimatedDeliveryMinutes),
     address: hasAddress ? address : null,
     ranges: draft.ranges.flatMap((range) => {
@@ -188,6 +231,7 @@ export function formatPostalCode(value: string): string {
 }
 
 export type DeliveryDraftValidation = {
+  neighborhoods: Array<string | null>;
   estimatedDeliveryMinutes: string | null;
   postalCode: string | null;
   number: string | null;
@@ -204,6 +248,39 @@ export const DELIVERY_ESTIMATED_MINUTES_RANGE = {
 
 export function validateDeliveryDraft(draft: DeliverySettingsDraft): DeliveryDraftValidation {
   const estimatedDeliveryMinutes = validateEstimatedDeliveryMinutes(draft.estimatedDeliveryMinutes);
+  const neighborhoods = draft.neighborhoods.map((neighborhood, index) => {
+    const name = neighborhood.name.trim();
+    const price = parseDecimal(neighborhood.price);
+    if (!name) return 'Informe o nome do bairro.';
+    if (price == null || price < 0) return 'Informe um valor de frete válido.';
+    const normalized = normalizeNeighborhoodName(name);
+    if (draft.neighborhoods.findIndex((candidate) => normalizeNeighborhoodName(candidate.name) === normalized) !== index) {
+      return 'Não use o mesmo bairro mais de uma vez.';
+    }
+    return null;
+  });
+
+  if (draft.mode === 'neighborhood') {
+    let general: string | null = null;
+    if (draft.enabled && !draft.neighborhoods.some((neighborhood, index) => neighborhood.active && neighborhoods[index] === null)) {
+      general = 'Cadastre pelo menos um bairro ativo antes de habilitar a entrega.';
+    } else if (neighborhoods.some((error) => error != null)) {
+      general = 'Corrija os bairros destacados antes de salvar.';
+    } else if (estimatedDeliveryMinutes) {
+      general = 'Corrija o tempo estimado de entrega antes de salvar.';
+    }
+    return {
+      estimatedDeliveryMinutes,
+      postalCode: null,
+      number: null,
+      street: null,
+      city: null,
+      ranges: [],
+      neighborhoods,
+      general,
+    };
+  }
+
   const postalCode = draft.address.postalCode.replace(/\D/g, '').length === 8
     ? null
     : 'Informe um CEP válido com 8 dígitos.';
@@ -231,7 +308,16 @@ export function validateDeliveryDraft(draft: DeliverySettingsDraft): DeliveryDra
   else if (estimatedDeliveryMinutes) general = 'Corrija o tempo estimado de entrega antes de salvar.';
   else if (postalCode || number || street || city) general = 'Complete o endereço da loja antes de salvar.';
 
-  return { estimatedDeliveryMinutes, postalCode, number, street, city, ranges, general };
+  return { estimatedDeliveryMinutes, postalCode, number, street, city, ranges, neighborhoods, general };
+}
+
+function normalizeNeighborhoodName(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLocaleLowerCase('pt-BR')
+    .replace(/\s+/g, ' ');
 }
 
 function validateEstimatedDeliveryMinutes(value: string): string | null {

@@ -24,4 +24,23 @@ describe('ZeloMenu checkout validation', () => {
     });
     expect(Boolean(errors.pickupDate)).toBe(invalid);
   });
+
+  it('requires street, number and registered neighborhood in neighborhood delivery mode', () => {
+    const errors = validateZeloMenuCheckoutDetails({
+      customerName: 'Ana',
+      customerPhone: '11987654321',
+      fulfillmentType: 'delivery',
+      deliveryMode: 'neighborhood',
+      deliveryAddress: 'Centro',
+      deliveryStreet: '',
+      deliveryNumber: '',
+      deliveryNeighborhood: '',
+      pickupDate: '2026-09-05',
+      pickupTime: '18:00',
+    });
+
+    expect(errors.deliveryStreet).toContain('rua');
+    expect(errors.deliveryNumber).toContain('número');
+    expect(errors.deliveryNeighborhood).toContain('bairro');
+  });
 });

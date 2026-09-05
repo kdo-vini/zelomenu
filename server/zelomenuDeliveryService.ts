@@ -9,6 +9,11 @@ import { getServiceSupabase } from './supabaseServer.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isValidDeliveryEstimatedMinutes } from '../src/domain/deliverySettings.js';
 import {
+  normalizeDeliveryNeighborhoodName,
+  validateDeliveryNeighborhoods,
+  type DeliveryNeighborhood,
+} from '../src/domain/deliveryNeighborhoods.js';
+import {
   normalizePostalCode,
   isValidPostalCode,
   buildViaCepUrl,
@@ -841,6 +846,8 @@ export type DeliveryStoreData = {
   coordinates: GeoCoordinates | null;
   locationVersion: number;
   ranges: DeliveryRange[];
+  mode: 'distance' | 'neighborhood';
+  neighborhoods: DeliveryNeighborhood[];
   enabledViaConfig: boolean;
   estimatedDeliveryMinutes: number | null;
   pricingRules: DeliveryPricingRule[];
@@ -866,10 +873,10 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
   const request = (async () => {
   const supabase = getServiceSupabase();
 
-  const [perfilRes, rangesRes, rulesRes] = await Promise.all([
+  const [perfilRes, rangesRes, rulesRes, neighborhoodsRes] = await Promise.all([
     supabase
       .from('empresa_perfil')
-      .select('delivery_latitude, delivery_longitude, delivery_location_version, delivery_config, zelomenu_delivery_estimated_minutes')
+      .select('delivery_latitude, delivery_longitude, delivery_location_version, delivery_config, delivery_mode, zelomenu_delivery_estimated_minutes')
       .eq('id', empresaId)
       .maybeSingle(),
     supabase
@@ -881,13 +888,32 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
       .from('zelomenu_delivery_pricing_rules')
       .select('id, label, start_minute, end_minute, enabled, days_of_week')
       .eq('company_id', empresaId),
+    supabase
+      .from('zelomenu_delivery_neighborhoods')
+      .select('id, name, normalized_name, delivery_price, active, sort_order')
+      .eq('company_id', empresaId)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true }),
   ]);
 
-  if (perfilRes.error) throw perfilRes.error;
+  const profileError = perfilRes.error;
+  if (profileError && profileError.code !== '42703') throw profileError;
   if (rangesRes.error) throw rangesRes.error;
   if (rulesRes.error) throw rulesRes.error;
+  if (neighborhoodsRes.error && !/zelomenu_delivery_neighborhoods|delivery_mode/i.test(neighborhoodsRes.error.message ?? '')) {
+    throw neighborhoodsRes.error;
+  }
 
-  const perfil = perfilRes.data;
+  let perfil = perfilRes.data as (typeof perfilRes.data & { delivery_mode?: string | null }) | null;
+  if (profileError?.code === '42703') {
+    const fallbackProfile = await supabase
+      .from('empresa_perfil')
+      .select('delivery_latitude, delivery_longitude, delivery_location_version, delivery_config, zelomenu_delivery_estimated_minutes')
+      .eq('id', empresaId)
+      .maybeSingle();
+    if (fallbackProfile.error) throw fallbackProfile.error;
+    perfil = fallbackProfile.data as typeof perfil;
+  }
   const lat = perfil?.delivery_latitude;
   const lng = perfil?.delivery_longitude;
   const coordinates: GeoCoordinates | null =
@@ -908,6 +934,23 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
     : null;
   const pricingVersion = dc?.pricingVersion ?? 0;
   const timezone = dc?.timezone ?? 'America/Sao_Paulo';
+  const mode: DeliveryStoreData['mode'] = perfil?.delivery_mode === 'neighborhood' ? 'neighborhood' : 'distance';
+  const neighborhoods: DeliveryNeighborhood[] = (neighborhoodsRes.error ? [] : neighborhoodsRes.data ?? []).flatMap((row) => {
+    const name = typeof row.name === 'string' ? row.name.trim() : '';
+    const id = typeof row.id === 'string' ? row.id : '';
+    const price = Number(row.delivery_price);
+    if (!id || !name || !Number.isFinite(price) || price < 0) return [];
+    return [{
+      id,
+      name,
+      normalizedName: typeof row.normalized_name === 'string' && row.normalized_name
+        ? row.normalized_name
+        : normalizeDeliveryNeighborhoodName(name),
+      price,
+      active: row.active === true,
+      sortOrder: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 0,
+    }];
+  });
 
   // Fetch pricing rule ranges for this company's rules
   const ruleRows = rulesRes.data ?? [];
@@ -942,6 +985,8 @@ export async function getDeliveryStoreData(empresaId: string): Promise<DeliveryS
     coordinates,
     locationVersion: Number(perfil?.delivery_location_version ?? 0),
     ranges,
+    mode,
+    neighborhoods,
     enabledViaConfig,
     estimatedDeliveryMinutes,
     pricingRules,
@@ -1109,12 +1154,16 @@ export async function saveDeliverySettings(
   empresaId: string,
   input: {
     enabled: boolean;
+    mode?: 'distance' | 'neighborhood';
     address: Record<string, unknown>;
     ranges: Array<{ maxDistanceM: number; price: number }>;
+    neighborhoods?: Array<{ id?: string; name: string; price: number; active: boolean; sortOrder?: number }>;
     pricingRules?: Array<Record<string, unknown>>;
     estimatedDeliveryMinutes?: number | null;
   },
 ): Promise<void> {
+  const mode = input.mode ?? 'distance';
+  if (mode !== 'distance' && mode !== 'neighborhood') throw new Error('DELIVERY_CONFIGURATION_INVALID');
   const address = input.address;
   const postalCode = normalizePostalCode(String(address.postalCode ?? ''));
   const latitude = Number(address.latitude);
@@ -1126,7 +1175,7 @@ export async function saveDeliverySettings(
     && !isValidDeliveryEstimatedMinutes(estimatedDeliveryMinutes)) {
     throw new Error('DELIVERY_ESTIMATED_MINUTES_INVALID');
   }
-  if (input.enabled && (
+  if (mode === 'distance' && input.enabled && (
     !isValidPostalCode(postalCode)
     || !String(address.number ?? '').trim()
     || !String(address.street ?? '').trim()
@@ -1139,12 +1188,37 @@ export async function saveDeliverySettings(
     maxDistanceM: Math.round(Number(range.maxDistanceM)),
     price: roundCurrency(Number(range.price)),
   }));
-  if (input.enabled && ranges.length === 0) throw new Error('DELIVERY_CONFIGURATION_INVALID');
-  for (const range of ranges) {
-    if (!Number.isFinite(range.maxDistanceM) || range.maxDistanceM <= 0 || !Number.isFinite(range.price) || range.price < 0 || uniqueDistances.has(range.maxDistanceM)) {
-      throw new Error('DELIVERY_CONFIGURATION_INVALID');
+  if (mode === 'distance' && input.enabled && ranges.length === 0) throw new Error('DELIVERY_CONFIGURATION_INVALID');
+  if (mode === 'distance') {
+    for (const range of ranges) {
+      if (!Number.isFinite(range.maxDistanceM) || range.maxDistanceM <= 0 || !Number.isFinite(range.price) || range.price < 0 || uniqueDistances.has(range.maxDistanceM)) {
+        throw new Error('DELIVERY_CONFIGURATION_INVALID');
+      }
+      uniqueDistances.add(range.maxDistanceM);
     }
-    uniqueDistances.add(range.maxDistanceM);
+  }
+
+  const neighborhoods = (input.neighborhoods ?? []).map((neighborhood) => ({
+    id: neighborhood.id,
+    name: neighborhood.name.trim(),
+    normalizedName: normalizeDeliveryNeighborhoodName(neighborhood.name),
+    price: roundCurrency(Number(neighborhood.price)),
+    active: neighborhood.active === true,
+    sortOrder: Math.max(0, Math.trunc(Number(neighborhood.sortOrder ?? 0))),
+  }));
+  const neighborhoodValidation = validateDeliveryNeighborhoods(neighborhoods.map((neighborhood) => ({
+    id: neighborhood.id,
+    name: neighborhood.name,
+    price: String(neighborhood.price),
+    active: neighborhood.active,
+  })));
+  if (mode === 'neighborhood' && neighborhoodValidation.some((error) => error != null)) {
+    throw new Error(neighborhoodValidation.find((error) => error != null) === 'Não use o mesmo bairro mais de uma vez.'
+      ? 'DELIVERY_NEIGHBORHOOD_DUPLICATE'
+      : 'DELIVERY_CONFIGURATION_INVALID');
+  }
+  if (mode === 'neighborhood' && input.enabled && !neighborhoods.some((neighborhood) => neighborhood.active)) {
+    throw new Error('DELIVERY_NEIGHBORHOOD_REQUIRED');
   }
 
   const pricingRules = (input.pricingRules ?? []).map((rule) => ({
@@ -1159,21 +1233,21 @@ export async function saveDeliverySettings(
   const rpcInput = {
     p_empresa_id: empresaId,
     p_enabled: Boolean(input.enabled),
+    p_mode: mode,
     p_address: input.address,
     p_ranges: ranges,
+    p_neighborhoods: neighborhoods,
     p_pricing_rules: pricingRules,
+    p_estimated_delivery_minutes: estimatedDeliveryMinutes ?? null,
   };
-  const { error } = estimatedDeliveryMinutes === undefined
-    ? await getDb().rpc('save_zelomenu_delivery_settings', rpcInput)
-    : await getDb().rpc('save_zelomenu_delivery_settings', {
-      ...rpcInput,
-      p_estimated_delivery_minutes: estimatedDeliveryMinutes,
-    });
+  const { error } = await getDb().rpc('save_zelomenu_delivery_configuration', rpcInput);
   if (error) throw new Error(error.message.includes('DELIVERY_CONFIGURATION_INVALID') ? 'DELIVERY_CONFIGURATION_INVALID'
     : error.message.includes('DELIVERY_ESTIMATED_MINUTES_INVALID') ? 'DELIVERY_ESTIMATED_MINUTES_INVALID'
     : error.message.includes('DELIVERY_PRICING_RULE_INVALID') ? 'DELIVERY_PRICING_RULE_INVALID'
     : error.message.includes('DELIVERY_PRICING_RULE_OVERLAP') ? 'DELIVERY_PRICING_RULE_OVERLAP'
     : error.message.includes('DELIVERY_PRICING_RANGE_PRICE_MISSING') ? 'DELIVERY_PRICING_RANGE_PRICE_MISSING'
+    : error.message.includes('DELIVERY_NEIGHBORHOOD_DUPLICATE') ? 'DELIVERY_NEIGHBORHOOD_DUPLICATE'
+    : error.message.includes('DELIVERY_NEIGHBORHOOD_REQUIRED') ? 'DELIVERY_NEIGHBORHOOD_REQUIRED'
     : 'DELIVERY_SETTINGS_SAVE_FAILED');
   invalidateDeliveryStoreData(empresaId);
 }

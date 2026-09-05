@@ -17,8 +17,8 @@ import type { ConversationModifierGroupDefinition } from './conversationOrderReq
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
-export type DeliveryNeighborhood = { name: string; fee: number };
-export type DeliveryConfig = { enabled: boolean; neighborhoods: DeliveryNeighborhood[] };
+export type DeliveryNeighborhood = { id?: string; name: string; fee: number };
+export type DeliveryConfig = { enabled: boolean; neighborhoods: DeliveryNeighborhood[]; mode?: 'distance' | 'neighborhood' };
 
 export type PixReceiptConfig = {
   available: boolean;
@@ -119,6 +119,7 @@ export type BusinessConfig = {
   schedulingEnabled: boolean;
   schedulingLeadTimeMinutes: number;
   deliveryConfig: DeliveryConfig | null;
+  deliveryMode?: 'distance' | 'neighborhood';
   pixReceiptConfig: PixReceiptConfig | null;
   /**
    * Chave Pix da loja + tipo declarado, para montar o Pix Copia e Cola do
@@ -141,6 +142,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   schedulingEnabled: true,
   schedulingLeadTimeMinutes: 60,
   deliveryConfig: null,
+  deliveryMode: 'distance',
   pixReceiptConfig: null,
   pixPayment: null,
   publicationSummary: {
@@ -178,20 +180,19 @@ function normalizeNumber(value: unknown): number {
 
 function normalizeDeliveryConfig(value: unknown): DeliveryConfig | null {
   if (!value || typeof value !== 'object') return null;
-  const row = value as { enabled?: unknown; neighborhoods?: unknown };
-  const neighborhoods = Array.isArray(row.neighborhoods)
-    ? row.neighborhoods
-      .map((item) => {
-        if (!item || typeof item !== 'object') return null;
-        const n = item as { name?: unknown; fee?: unknown };
-        const name = normalizeText(n.name);
-        const fee = normalizeNumber(n.fee);
-        if (!name || fee < 0) return null;
-        return { name, fee };
-      })
-      .filter((item): item is DeliveryNeighborhood => item !== null)
+  const row = value as { enabled?: unknown; neighborhoods?: unknown; mode?: unknown };
+  const neighborhoods: DeliveryNeighborhood[] = Array.isArray(row.neighborhoods)
+    ? row.neighborhoods.reduce<DeliveryNeighborhood[]>((result, item) => {
+      if (!item || typeof item !== 'object') return result;
+      const n = item as { id?: unknown; name?: unknown; fee?: unknown };
+      const name = normalizeText(n.name);
+      const fee = normalizeNumber(n.fee);
+      if (!name || fee < 0) return result;
+      result.push({ id: typeof n.id === 'string' ? n.id : undefined, name, fee });
+      return result;
+    }, [])
     : [];
-  return { enabled: row.enabled === true, neighborhoods };
+  return { enabled: row.enabled === true, neighborhoods, mode: row.mode === 'neighborhood' ? 'neighborhood' : row.mode === 'distance' ? 'distance' : undefined };
 }
 
 function normalizePixReceiptConfig(value: unknown): PixReceiptConfig | null {
@@ -443,7 +444,8 @@ function buildCatalogHierarchy(
 // ─── Loader ───────────────────────────────────────────────────────────────────
 
 // `chave_pix` já existe (compartilhada com o ZeloChat) — sempre selecionável.
-const PERFIL_BASE_COLUMNS = 'user_id, nome_exibicao, endereco, contato, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone, chave_pix';
+const PERFIL_BASE_COLUMNS = 'user_id, nome_exibicao, endereco, contato, delivery_config, delivery_mode, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone, chave_pix';
+const PERFIL_LEGACY_BASE_COLUMNS = 'user_id, nome_exibicao, endereco, contato, delivery_config, pix_receipt_config, horario_abertura, horario_fechamento, dias_fechamento, timezone, chave_pix';
 
 /** `horario_semanal` e `zelomenu_pix_key_type` são colunas novas. Se alguma
  * ainda não existir neste banco, o select falha com 42703 — nesse caso
@@ -464,24 +466,24 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_pix_key_type, zelomenu_scheduling_enabled, zelomenu_scheduling_lead_time_minutes`)
     .eq('id', empresaId)
     .maybeSingle();
-  if (perfilRes.error && isMissingColumnError(perfilRes.error, ['zelomenu_pix_key_type'])) {
+  if (perfilRes.error && isMissingColumnError(perfilRes.error, ['zelomenu_pix_key_type', 'delivery_mode'])) {
     perfilRes = await supabase
       .from('empresa_perfil')
-      .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_scheduling_enabled, zelomenu_scheduling_lead_time_minutes`)
+      .select(`${PERFIL_LEGACY_BASE_COLUMNS}, horario_semanal, zelomenu_scheduling_enabled, zelomenu_scheduling_lead_time_minutes`)
       .eq('id', empresaId)
       .maybeSingle();
   }
   if (perfilRes.error && isMissingColumnError(perfilRes.error, ['zelomenu_scheduling_enabled', 'zelomenu_scheduling_lead_time_minutes'])) {
     perfilRes = await supabase
       .from('empresa_perfil')
-      .select(`${PERFIL_BASE_COLUMNS}, horario_semanal, zelomenu_pix_key_type`)
+      .select(`${PERFIL_LEGACY_BASE_COLUMNS}, horario_semanal, zelomenu_pix_key_type`)
       .eq('id', empresaId)
       .maybeSingle();
   }
   if (perfilRes.error && isMissingColumnError(perfilRes.error, ['horario_semanal'])) {
     perfilRes = await supabase
       .from('empresa_perfil')
-      .select(PERFIL_BASE_COLUMNS)
+      .select(PERFIL_LEGACY_BASE_COLUMNS)
       .eq('id', empresaId)
       .maybeSingle();
   }
@@ -495,6 +497,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     endereco?: string | null;
     contato?: string | null;
     delivery_config?: unknown;
+    delivery_mode?: string | null;
     pix_receipt_config?: unknown;
     horario_abertura?: string | null;
     horario_fechamento?: string | null;
@@ -726,6 +729,11 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
       : 60,
     timezone: normalizeText(row.timezone) || undefined,
     deliveryConfig: normalizeDeliveryConfig(row.delivery_config),
+    deliveryMode: row.delivery_mode === 'neighborhood'
+      ? 'neighborhood'
+      : row.delivery_mode === 'distance'
+        ? 'distance'
+        : normalizeDeliveryConfig(row.delivery_config)?.mode ?? 'distance',
     pixReceiptConfig: normalizePixReceiptConfig(row.pix_receipt_config),
     pixPayment: normalizePixPayment(row.chave_pix, row.zelomenu_pix_key_type),
     publicationSummary,

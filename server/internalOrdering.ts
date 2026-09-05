@@ -159,9 +159,9 @@ function parseDraft(value: unknown, isUpdate: boolean): {
       if (own(candidate, 'type') && candidate.type !== 'pickup' && candidate.type !== 'delivery') return { ok: false, message: 'Escolha entrega ou retirada.' };
       if (own(candidate, 'deliveryFee') || own(candidate, 'deliveryFeeToConfirm')) return { ok: false, message: 'A taxa de entrega é calculada pela loja.' };
       const parsed: Record<string, unknown> = {};
-      for (const key of ['type', 'asap', 'pickupDate', 'pickupTime', 'deliveryAddress', 'deliveryNeighborhood', 'deliveryPostalCode', 'deliveryNumber', 'deliveryComplement']) {
+      for (const key of ['type', 'asap', 'pickupDate', 'pickupTime', 'deliveryAddress', 'deliveryNeighborhood', 'deliveryNeighborhoodId', 'deliveryPostalCode', 'deliveryNumber', 'deliveryComplement', 'deliveryStreet', 'deliveryCity', 'deliveryState']) {
         if (!own(candidate, key)) continue;
-        const max = key === 'deliveryAddress' ? 250 : key === 'deliveryNeighborhood' ? 120 : key === 'deliveryComplement' ? 100 : key === 'deliveryNumber' ? 20 : key === 'deliveryPostalCode' ? 10 : key === 'pickupDate' ? 10 : key === 'pickupTime' ? 5 : 20;
+        const max = key === 'deliveryAddress' || key === 'deliveryStreet' ? 250 : key === 'deliveryNeighborhood' || key === 'deliveryCity' ? 120 : key === 'deliveryNeighborhoodId' ? 80 : key === 'deliveryComplement' ? 100 : key === 'deliveryNumber' ? 20 : key === 'deliveryPostalCode' ? 10 : key === 'deliveryState' ? 2 : key === 'pickupDate' ? 10 : key === 'pickupTime' ? 5 : 20;
         if (key === 'asap') {
           if (typeof candidate[key] !== 'boolean') return { ok: false, message: 'Revise a agenda do pedido.' };
           parsed[key] = candidate[key];

@@ -72,6 +72,7 @@
     "pickupTime": null,
     "deliveryAddress": null,
     "deliveryNeighborhood": null,
+    "deliveryNeighborhoodId": null,
     "deliveryFee": 0,
     "deliveryFeeToConfirm": false,
     "deliveryPostalCode": null,

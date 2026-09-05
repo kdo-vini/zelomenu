@@ -84,6 +84,8 @@ export type ZeloMenuCartSessionPayload = {
     pickupTime: string | null;
     deliveryAddress: string | null;
     deliveryNeighborhood: string | null;
+    deliveryNeighborhoodId?: string | null;
+    deliveryMode?: 'distance' | 'neighborhood';
     deliveryPostalCode?: string | null;
     deliveryNumber?: string | null;
     deliveryComplement?: string | null;
@@ -132,7 +134,8 @@ export type ZeloMenuPublicCartResponse = {
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryEstimatedMinutes: number | null;
-    deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    deliveryMode?: 'distance' | 'neighborhood';
+    deliveryNeighborhoods: Array<{ id: string; name: string; fee: number }>;
     whatsapp?: string | null;
     featuredEnabled?: boolean;
     featuredProductIds?: number[];
@@ -179,6 +182,7 @@ export type ZeloMenuUpdateCartPayload = {
     pickupTime?: string | null;
     deliveryAddress?: string | null;
     deliveryNeighborhood?: string | null;
+    deliveryNeighborhoodId?: string | null;
     deliveryPostalCode?: string | null;
     deliveryNumber?: string | null;
     deliveryComplement?: string | null;
@@ -198,7 +202,8 @@ export type ZeloMenuPublicStoreResponse = {
     pixEnabled: boolean;
     deliveryEnabled: boolean;
     deliveryEstimatedMinutes: number | null;
-    deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    deliveryMode?: 'distance' | 'neighborhood';
+    deliveryNeighborhoods: Array<{ id: string; name: string; fee: number }>;
     whatsapp?: string | null;
     logoUrl?: string | null;
     coverUrl?: string | null;

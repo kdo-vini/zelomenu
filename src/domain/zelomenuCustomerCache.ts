@@ -6,6 +6,7 @@ export type ZeloMenuCustomerCache = {
   phone: string;
   deliveryAddress: string;
   deliveryNeighborhood: string;
+  deliveryNeighborhoodId?: string;
   deliveryPostalCode?: string;
   deliveryNumber?: string;
   deliveryComplement?: string;
@@ -76,7 +77,7 @@ export function loadZeloMenuCustomerCache(slug: string): ZeloMenuCustomerCache |
       return null;
     }
     if (!parsed.name && !parsed.phone && !parsed.deliveryAddress && !parsed.deliveryPostalCode) return null;
-    return {
+    const customer: ZeloMenuCustomerCache = {
       name: parsed.name ?? '',
       phone: parsed.phone ?? '',
       deliveryAddress: parsed.deliveryAddress ?? '',
@@ -88,6 +89,8 @@ export function loadZeloMenuCustomerCache(slug: string): ZeloMenuCustomerCache |
       deliveryCity: parsed.deliveryCity ?? '',
       deliveryState: parsed.deliveryState ?? '',
     };
+    if (parsed.deliveryNeighborhoodId) customer.deliveryNeighborhoodId = parsed.deliveryNeighborhoodId;
+    return customer;
   } catch {
     return null;
   }

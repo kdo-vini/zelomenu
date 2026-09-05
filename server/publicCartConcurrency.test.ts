@@ -14,6 +14,7 @@ vi.mock('./configStore.js', async (original) => ({ ...await original<typeof impo
 vi.mock('./zelomenuDeliveryService.js', () => ({
   revalidateDeliveryForCart: async () => ({ fee: state.pending ? 0 : state.quoteFee, feeToConfirm: state.pending, detail: { status: state.pending ? 'unavailable' : 'eligible', deliveryFee: state.quoteFee, address: {}, coordinates: {}, distanceM: 100, cacheLayer: 'l1' } }),
   findDeliveryQuoteRequest: vi.fn(), createDeliveryQuoteRequest: async () => ({ id: 'quote-1' }),
+  getDeliveryStoreData: vi.fn(async () => null),
 }));
 vi.mock('./supabaseServer.js', () => ({
   getEmpresaUserId: async () => 'owner',

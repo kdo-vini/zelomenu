@@ -102,6 +102,7 @@ type DraftState = {
   pickupTime: string;
   deliveryAddress: string;
   deliveryNeighborhood: string;
+  deliveryNeighborhoodId: string;
   deliveryPostalCode: string;
   deliveryNumber: string;
   deliveryComplement: string;
@@ -182,6 +183,7 @@ function buildDraftFromPayload(
     pickupTime: payload.session.fulfillment.pickupTime ?? nowTimeBR(),
     deliveryAddress: payload.session.fulfillment.deliveryAddress ?? '',
     deliveryNeighborhood: payload.session.fulfillment.deliveryNeighborhood ?? '',
+    deliveryNeighborhoodId: payload.session.fulfillment.deliveryNeighborhoodId ?? '',
     deliveryPostalCode: payload.session.fulfillment.deliveryPostalCode ?? '',
     deliveryNumber: payload.session.fulfillment.deliveryNumber ?? '',
     deliveryComplement: payload.session.fulfillment.deliveryComplement ?? '',
@@ -221,6 +223,7 @@ function estimateDraftTotals(
   draft: DraftState,
   catalog: ZeloMenuCatalogGroup[],
   serverDelivery?: ZeloMenuPublicCartResponse['session']['fulfillment'],
+  deliveryMode?: 'distance' | 'neighborhood',
 ) {
   const products = catalogProductMap(catalog);
   const items = draft.items.flatMap((item) => {
@@ -250,7 +253,7 @@ function estimateDraftTotals(
     }];
   });
   const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
-  const quoteMatchesDraft = deliveryQuoteMatchesDraft(draft, serverDelivery);
+  const quoteMatchesDraft = deliveryQuoteMatchesDraft(draft, serverDelivery, deliveryMode);
   const deliveryFee = quoteMatchesDraft ? Number(serverDelivery?.deliveryFee ?? 0) : 0;
   const deliveryFeeToConfirm = draft.fulfillmentType === 'delivery'
     && (!quoteMatchesDraft || serverDelivery?.deliveryFeeToConfirm === true);
@@ -265,12 +268,19 @@ function estimateDraftTotals(
   };
 }
 
-type DeliveryQuoteUiState = 'not_applicable' | 'missing_address' | 'calculating' | 'ready' | 'out_of_area' | 'unavailable';
+type DeliveryQuoteUiState = 'not_applicable' | 'missing_address' | 'missing_neighborhood' | 'calculating' | 'ready' | 'out_of_area' | 'unavailable';
 
 function deliveryQuoteMatchesDraft(
   draft: DraftState,
   serverDelivery?: ZeloMenuPublicCartResponse['session']['fulfillment'],
+  deliveryMode: 'distance' | 'neighborhood' = 'distance',
 ): boolean {
+  if (deliveryMode === 'neighborhood') {
+    return draft.fulfillmentType === 'delivery'
+      && serverDelivery?.type === 'delivery'
+      && Boolean(draft.deliveryNeighborhoodId)
+      && draft.deliveryNeighborhoodId === (serverDelivery.deliveryNeighborhoodId ?? '');
+  }
   const normalizedDraftPostalCode = draft.deliveryPostalCode.replace(/\D/g, '');
   const normalizedServerPostalCode = (serverDelivery?.deliveryPostalCode ?? '').replace(/\D/g, '');
   return draft.fulfillmentType === 'delivery'
@@ -287,6 +297,13 @@ function resolveDeliveryQuoteUiState(
   saveFailed = false,
 ): DeliveryQuoteUiState {
   if (!draft || draft.fulfillmentType !== 'delivery') return 'not_applicable';
+  const deliveryMode = payload?.business.deliveryMode ?? 'distance';
+  if (deliveryMode === 'neighborhood') {
+    if (!draft.deliveryNeighborhoodId) return 'missing_neighborhood';
+    const serverDelivery = payload?.session.fulfillment;
+    if (!deliveryQuoteMatchesDraft(draft, serverDelivery, deliveryMode)) return saveFailed ? 'unavailable' : 'calculating';
+    return serverDelivery?.deliveryStatus === 'eligible' ? 'ready' : 'unavailable';
+  }
   const postalCode = draft.deliveryPostalCode.replace(/\D/g, '');
   if (postalCode.length !== 8 || !draft.deliveryNumber.trim()) return 'missing_address';
 
@@ -392,6 +409,7 @@ function buildCartUpdatePayload(
   draft: DraftState,
   scheduleMode: 'asap' | 'scheduled',
   expectedRevision: number,
+  deliveryMode: 'distance' | 'neighborhood' = 'distance',
 ): ZeloMenuUpdateCartPayload {
   const pickupDate = scheduleMode === 'asap' ? todayISOdate() : draft.pickupDate;
   const pickupTime = scheduleMode === 'asap' ? nowTimeBR() : draft.pickupTime;
@@ -414,12 +432,13 @@ function buildCartUpdatePayload(
       pickupTime: pickupTime || null,
       deliveryAddress: draft.fulfillmentType === 'delivery' ? (draft.deliveryAddress || null) : null,
       deliveryNeighborhood: draft.fulfillmentType === 'delivery' ? (draft.deliveryNeighborhood || null) : null,
-      deliveryPostalCode: draft.fulfillmentType === 'delivery' ? (draft.deliveryPostalCode || null) : null,
+      deliveryNeighborhoodId: draft.fulfillmentType === 'delivery' && deliveryMode === 'neighborhood' ? (draft.deliveryNeighborhoodId || null) : null,
+      deliveryPostalCode: draft.fulfillmentType === 'delivery' && deliveryMode === 'distance' ? (draft.deliveryPostalCode || null) : null,
       deliveryNumber: draft.fulfillmentType === 'delivery' ? (draft.deliveryNumber || null) : null,
       deliveryComplement: draft.fulfillmentType === 'delivery' ? (draft.deliveryComplement || null) : null,
       deliveryStreet: draft.fulfillmentType === 'delivery' ? (draft.deliveryStreet || null) : null,
-      deliveryCity: draft.fulfillmentType === 'delivery' ? (draft.deliveryCity || null) : null,
-      deliveryState: draft.fulfillmentType === 'delivery' ? (draft.deliveryState || null) : null,
+      deliveryCity: draft.fulfillmentType === 'delivery' && deliveryMode === 'distance' ? (draft.deliveryCity || null) : null,
+      deliveryState: draft.fulfillmentType === 'delivery' && deliveryMode === 'distance' ? (draft.deliveryState || null) : null,
     },
     paymentMethod: draft.paymentMethod || null,
     couponCode: draft.couponCode || null,
@@ -600,6 +619,7 @@ function ZeloMenuCartPageContent() {
             customerPhone: fresh.customerPhone || cached.phone,
             deliveryAddress: fresh.deliveryAddress || cached.deliveryAddress,
             deliveryNeighborhood: fresh.deliveryNeighborhood || cached.deliveryNeighborhood,
+            deliveryNeighborhoodId: fresh.deliveryNeighborhoodId || cached.deliveryNeighborhoodId || '',
             deliveryPostalCode: fresh.deliveryPostalCode || cached.deliveryPostalCode || '',
             deliveryNumber: fresh.deliveryNumber || cached.deliveryNumber || '',
             deliveryComplement: fresh.deliveryComplement || cached.deliveryComplement || '',
@@ -652,7 +672,7 @@ function ZeloMenuCartPageContent() {
 
   const estimated = useMemo(() => {
     if (!payload || !draft) return null;
-    return estimateDraftTotals(draft, payload.catalog, payload.session.fulfillment);
+    return estimateDraftTotals(draft, payload.catalog, payload.session.fulfillment, payload.business.deliveryMode);
   }, [payload, draft]);
 
   const confirmedProductsById = useMemo(
@@ -712,7 +732,11 @@ function ZeloMenuCartPageContent() {
       customerName: draft.customerName,
       customerPhone: draft.customerPhone,
       fulfillmentType: draft.fulfillmentType,
+      deliveryMode: payload.business.deliveryMode,
       deliveryAddress: draft.deliveryAddress,
+      deliveryStreet: draft.deliveryStreet,
+      deliveryNumber: draft.deliveryNumber,
+      deliveryNeighborhood: draft.deliveryNeighborhood,
       pickupDate: effectivePickupDate,
       pickupTime: effectivePickupTime,
     })
@@ -759,8 +783,8 @@ function ZeloMenuCartPageContent() {
     && deliveryQuoteReady;
 
   const autosavePayload = useMemo(
-    () => draft && payload ? buildCartUpdatePayload(draft, scheduleMode, payload.session.revision) : null,
-    [draft, scheduleMode, payload?.session.revision],
+    () => draft && payload ? buildCartUpdatePayload(draft, scheduleMode, payload.session.revision, payload.business.deliveryMode) : null,
+    [draft, scheduleMode, payload?.session.revision, payload?.business.deliveryMode],
   );
   const autosaveSignature = useMemo(() => {
     if (!autosavePayload) return '';
@@ -823,6 +847,7 @@ function ZeloMenuCartPageContent() {
     const deliveryPostalCode = autosavePayload.fulfillment?.deliveryPostalCode?.replace(/\D/g, '') ?? '';
     const deliveryNumber = autosavePayload.fulfillment?.deliveryNumber?.trim() ?? '';
     const isReadyToRequestDeliveryQuote = autosavePayload.fulfillment?.type === 'delivery'
+      && payload?.business.deliveryMode !== 'neighborhood'
       && deliveryPostalCode.length === 8
       && deliveryNumber.length > 0;
     const debounceMs = isReadyToRequestDeliveryQuote
@@ -840,7 +865,7 @@ function ZeloMenuCartPageContent() {
         autosaveTimerRef.current = null;
       }
     };
-  }, [autosaveSignature, deliveryAddressEditing, deliveryCepLoading, enqueueAutosave, isCartOpen, isStale]);
+  }, [autosaveSignature, deliveryAddressEditing, deliveryCepLoading, enqueueAutosave, isCartOpen, isStale, payload?.business.deliveryMode]);
 
   useEffect(() => {
     const flushAutosave = () => {
@@ -901,7 +926,7 @@ function ZeloMenuCartPageContent() {
       setError(null);
       const flushed = await flushPendingAutosave();
       const latestPayload = flushed ?? payload;
-      const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode, latestPayload.session.revision));
+      const updated = await updatePublicCart(token, buildCartUpdatePayload(draft, scheduleMode, latestPayload.session.revision, latestPayload.business.deliveryMode));
       syncStoreCacheFromResponse(updated);
 
       const updateIssues = updated.revalidation.issues ?? [];
@@ -938,6 +963,7 @@ function ZeloMenuCartPageContent() {
             phone: normalizePhoneNumber(draft.customerPhone).slice(0, 11),
             deliveryAddress: draft.deliveryAddress,
             deliveryNeighborhood: draft.deliveryNeighborhood,
+            deliveryNeighborhoodId: draft.deliveryNeighborhoodId,
             deliveryPostalCode: draft.deliveryPostalCode,
             deliveryNumber: draft.deliveryNumber,
             deliveryComplement: draft.deliveryComplement,
@@ -1200,6 +1226,7 @@ function ZeloMenuCartPageContent() {
   const STEP_TITLES = ['Sua sacola', 'Entrega ou retirada', 'Revisar e confirmar'] as const;
   const isDelivery = draft.fulfillmentType === 'delivery';
   const deliveryEnabled = payload.business.deliveryEnabled;
+  const isNeighborhoodDelivery = isDelivery && payload.business.deliveryMode === 'neighborhood';
   const deliveryEstimateLabel = isDelivery
     ? formatEstimatedDeliveryMinutes(payload.business.deliveryEstimatedMinutes)
     : null;
@@ -1236,8 +1263,10 @@ function ZeloMenuCartPageContent() {
     : step === 0
       ? (storeClosedWithSchedule ? 'Agendar retirada' : 'Escolher retirada')
       : step === 1
-        ? deliveryQuoteState === 'missing_address'
+      ? deliveryQuoteState === 'missing_address'
           ? 'Informe o endereço'
+          : deliveryQuoteState === 'missing_neighborhood'
+            ? 'Escolha o bairro'
           : deliveryQuoteState === 'calculating'
           ? 'Calculando entrega…'
           : deliveryQuoteState === 'out_of_area'
@@ -1949,82 +1978,130 @@ function ZeloMenuCartPageContent() {
                               Tempo estimado de entrega: <strong>{deliveryEstimateLabel}</strong>
                             </p>
                           ) : null}
-                          <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>CEP *</span>
-                            <input
-                              value={draft.deliveryPostalCode}
-                              onChange={(event) => updateField('deliveryPostalCode', event.target.value.replace(/\D/g, '').slice(0, 8))}
-                              readOnly={!isCartOpen}
-                              inputMode="numeric"
-                              required
-                              onFocus={beginDeliveryAddressEdit}
-                              onBlur={() => {
-                                endDeliveryAddressEdit();
-                                void lookupDeliveryCep();
-                              }}
-                              className={inputCls}
-                              placeholder="00000-000"
-                            />
-                            {deliveryCepLoading ? <Loader2 className="h-4 w-4 animate-spin text-[var(--zm-primary)]" /> : null}
-                          </label>
+                          {isNeighborhoodDelivery ? (
+                            <>
+                              <label className="flex flex-col gap-1.5">
+                                <span className={labelCls}>Bairro {requiredMark}</span>
+                                <select
+                                  value={draft.deliveryNeighborhoodId}
+                                  onChange={(event) => {
+                                    const selectedId = event.target.value;
+                                    const selected = payload.business.deliveryNeighborhoods.find((item) => item.id === selectedId);
+                                    updateField('deliveryNeighborhoodId', selectedId);
+                                    updateField('deliveryNeighborhood', selected?.name ?? '');
+                                  }}
+                                  disabled={!isCartOpen}
+                                  required
+                                  aria-invalid={showErrors && Boolean(detailErrors.deliveryNeighborhood)}
+                                  className={`${inputCls} ${showErrors && detailErrors.deliveryNeighborhood ? invalidInputCls : ''}`}
+                                >
+                                  <option value="">Selecione seu bairro</option>
+                                  {payload.business.deliveryNeighborhoods.map((neighborhood) => (
+                                    <option key={neighborhood.id} value={neighborhood.id}>{neighborhood.name}</option>
+                                  ))}
+                                </select>
+                                {fieldError(detailErrors.deliveryNeighborhood)}
+                              </label>
 
-                          <label className="flex flex-col gap-1.5">
-                            <span className={labelCls}>Rua {requiredMark}</span>
-                            <input
-                              value={draft.deliveryStreet}
-                              onChange={(event) => updateField('deliveryStreet', event.target.value)}
-                              readOnly={!isCartOpen}
-                              required
-                              className={inputCls}
-                              placeholder="Rua, avenida..."
-                            />
-                          </label>
+                              <label className="flex flex-col gap-1.5">
+                                <span className={labelCls}>Rua {requiredMark}</span>
+                                <input
+                                  value={draft.deliveryStreet}
+                                  onChange={(event) => updateField('deliveryStreet', event.target.value)}
+                                  readOnly={!isCartOpen}
+                                  required
+                                  aria-invalid={showErrors && Boolean(detailErrors.deliveryStreet)}
+                                  className={`${inputCls} ${showErrors && detailErrors.deliveryStreet ? invalidInputCls : ''}`}
+                                  placeholder="Rua, avenida..."
+                                />
+                                {fieldError(detailErrors.deliveryStreet)}
+                              </label>
 
-                          <div className="grid grid-cols-2 gap-3">
-                            <label className="flex flex-col gap-1.5">
-                              <span className={labelCls}>Número {requiredMark}</span>
-                              <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} readOnly={!isCartOpen} required className={inputCls} placeholder="123" />
-                            </label>
-                            <label className="flex flex-col gap-1.5">
-                              <span className={labelCls}>Complemento</span>
-                              <input value={draft.deliveryComplement} onChange={(event) => updateField('deliveryComplement', event.target.value)} onFocus={beginDeliveryAddressEdit} onBlur={endDeliveryAddressEdit} readOnly={!isCartOpen} className={inputCls} placeholder="Apto, bloco..." />
-                            </label>
-                          </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <label className="flex flex-col gap-1.5">
+                                  <span className={labelCls}>Número {requiredMark}</span>
+                                  <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} readOnly={!isCartOpen} required aria-invalid={showErrors && Boolean(detailErrors.deliveryNumber)} className={`${inputCls} ${showErrors && detailErrors.deliveryNumber ? invalidInputCls : ''}`} placeholder="123" />
+                                  {fieldError(detailErrors.deliveryNumber)}
+                                </label>
+                                <label className="flex flex-col gap-1.5">
+                                  <span className={labelCls}>Complemento</span>
+                                  <input value={draft.deliveryComplement} onChange={(event) => updateField('deliveryComplement', event.target.value)} readOnly={!isCartOpen} className={inputCls} placeholder="Casa, sítio, referência..." />
+                                </label>
+                              </div>
+                              <p className="rounded-xl border border-[var(--zm-brand-soft)] bg-[var(--zm-brand-soft)]/45 px-3 py-2.5 text-[12px] leading-relaxed text-[var(--zm-brand-deep)]">
+                                Selecione um bairro cadastrado pela loja. O valor da entrega é definido por esse bairro.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <label className="flex flex-col gap-1.5">
+                                <span className={labelCls}>CEP *</span>
+                                <input
+                                  value={draft.deliveryPostalCode}
+                                  onChange={(event) => updateField('deliveryPostalCode', event.target.value.replace(/\D/g, '').slice(0, 8))}
+                                  readOnly={!isCartOpen}
+                                  inputMode="numeric"
+                                  required
+                                  onFocus={beginDeliveryAddressEdit}
+                                  onBlur={() => {
+                                    endDeliveryAddressEdit();
+                                    void lookupDeliveryCep();
+                                  }}
+                                  className={inputCls}
+                                  placeholder="00000-000"
+                                />
+                                {deliveryCepLoading ? <Loader2 className="h-4 w-4 animate-spin text-[var(--zm-primary)]" /> : null}
+                              </label>
 
-                          <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_72px] gap-3">
-                            <label className="flex min-w-0 flex-col gap-1.5">
-                              <span className={labelCls}>Bairro</span>
-                              <input
-                                value={draft.deliveryNeighborhood}
-                                readOnly
-                                className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`}
-                                placeholder="Preenchido pelo CEP"
-                              />
-                            </label>
-                            <label className="flex min-w-0 flex-col gap-1.5">
-                              <span className={labelCls}>Cidade</span>
-                              <input
-                                value={draft.deliveryCity}
-                                readOnly
-                                className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`}
-                                placeholder="Preenchida pelo CEP"
-                              />
-                            </label>
-                            <label className="flex min-w-0 flex-col gap-1.5">
-                              <span className={labelCls}>UF</span>
-                              <input
-                                value={draft.deliveryState}
-                                readOnly
-                                className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`}
-                                placeholder="UF"
-                              />
-                            </label>
-                          </div>
+                              <label className="flex flex-col gap-1.5">
+                                <span className={labelCls}>Rua {requiredMark}</span>
+                                <input
+                                  value={draft.deliveryStreet}
+                                  onChange={(event) => updateField('deliveryStreet', event.target.value)}
+                                  readOnly={!isCartOpen}
+                                  required
+                                  className={inputCls}
+                                  placeholder="Rua, avenida..."
+                                />
+                              </label>
+
+                              <div className="grid grid-cols-2 gap-3">
+                                <label className="flex flex-col gap-1.5">
+                                  <span className={labelCls}>Número {requiredMark}</span>
+                                  <input value={draft.deliveryNumber} onChange={(event) => updateField('deliveryNumber', event.target.value)} readOnly={!isCartOpen} required className={inputCls} placeholder="123" />
+                                </label>
+                                <label className="flex flex-col gap-1.5">
+                                  <span className={labelCls}>Complemento</span>
+                                  <input value={draft.deliveryComplement} onChange={(event) => updateField('deliveryComplement', event.target.value)} onFocus={beginDeliveryAddressEdit} onBlur={endDeliveryAddressEdit} readOnly={!isCartOpen} className={inputCls} placeholder="Apto, bloco..." />
+                                </label>
+                              </div>
+
+                              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_72px] gap-3">
+                                <label className="flex min-w-0 flex-col gap-1.5">
+                                  <span className={labelCls}>Bairro</span>
+                                  <input value={draft.deliveryNeighborhood} readOnly className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`} placeholder="Preenchido pelo CEP" />
+                                </label>
+                                <label className="flex min-w-0 flex-col gap-1.5">
+                                  <span className={labelCls}>Cidade</span>
+                                  <input value={draft.deliveryCity} readOnly className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`} placeholder="Preenchida pelo CEP" />
+                                </label>
+                                <label className="flex min-w-0 flex-col gap-1.5">
+                                  <span className={labelCls}>UF</span>
+                                  <input value={draft.deliveryState} readOnly className={`${inputCls} bg-[var(--zm-surface-muted)] text-[var(--zm-ink-soft)]`} placeholder="UF" />
+                                </label>
+                              </div>
+                            </>
+                          )}
 
                           {fieldError(detailErrors.deliveryAddress)}
                           {deliveryQuoteState === 'missing_address' ? (
                             <span className="text-[11px] leading-snug text-[var(--zm-ink-soft)]">
                               Informe o CEP e o número para calcular a entrega.
+                            </span>
+                          ) : null}
+                          {deliveryQuoteState === 'missing_neighborhood' ? (
+                            <span className="text-[11px] leading-snug text-[var(--zm-ink-soft)]">
+                              Selecione um bairro para calcular a entrega.
                             </span>
                           ) : null}
                           {deliveryQuoteModalOpen ? (

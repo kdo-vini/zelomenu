@@ -99,4 +99,39 @@ describe('deliverySettings', () => {
     expect(isValidDeliveryEstimatedMinutes(1441)).toBe(false);
     expect(isValidDeliveryEstimatedMinutes('50')).toBe(false);
   });
+
+  it('no modelo por bairro valida bairros ativos sem exigir CEP ou faixas', () => {
+    const draft = createDeliveryDraft({
+      enabled: true,
+      mode: 'neighborhood',
+      neighborhoods: [
+        { id: '1', name: 'Centro', normalizedName: 'centro', price: 5, active: true, sortOrder: 0 },
+      ],
+      address: null,
+      ranges: [],
+      geocodingStatus: 'not_configured',
+    });
+
+    const validation = validateDeliveryDraft(draft);
+
+    expect(validation.general).toBeNull();
+    expect(validation.postalCode).toBeNull();
+    expect(validation.ranges).toEqual([]);
+    expect(validation.neighborhoods).toEqual([null]);
+  });
+
+  it('não permite ativar por bairro sem nenhum bairro ativo', () => {
+    const draft = createDeliveryDraft({
+      enabled: true,
+      mode: 'neighborhood',
+      neighborhoods: [
+        { id: '1', name: 'Centro', normalizedName: 'centro', price: 5, active: false, sortOrder: 0 },
+      ],
+      address: null,
+      ranges: [],
+      geocodingStatus: 'not_configured',
+    });
+
+    expect(validateDeliveryDraft(draft).general).toContain('bairro ativo');
+  });
 });
