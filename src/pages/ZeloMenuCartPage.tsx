@@ -1,3 +1,7 @@
+import { ProductAddModal } from '../components/zelomenu/ZeloMenuProductAddModal';
+import { buildPizzaSignature } from '../domain/pizza.js';
+import { resolvePizza } from '../domain/pizza.js';
+import { pizzaSelectionFromSnapshot, type PizzaSelection, type PizzaSnapshot } from '../domain/pizzaTypes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -86,6 +90,8 @@ type DraftState = {
     productName: string;
     quantity: number;
     notes: string;
+    pizzaSelection?: PizzaSelection;
+    pizza?: PizzaSnapshot | null;
     selectedOptions: ZeloMenuModifierSelectionInput[];
     selectedModifiers: ZeloMenuSelectedModifierGroup[];
     baseUnitPrice: number;
@@ -158,7 +164,9 @@ function buildDraftFromPayload(
       productName: item.productName,
       quantity: item.quantity,
       notes: item.notes ?? '',
-      selectedOptions: item.selectedModifiers.map((group) => ({
+      pizza: item.pizza,
+      pizzaSelection: pizzaSelectionFromSnapshot(item.pizza),
+      selectedOptions: item.selectedModifiers.filter(group=>!group.groupId.startsWith('__pizza_')).map((group) => ({
         groupId: group.groupId,
         optionSelections: group.selectedOptions.map((option) => ({
           optionId: option.optionId,
@@ -222,16 +230,18 @@ function estimateDraftTotals(
     let unitPrice = item.baseUnitPrice + item.modifierDeltaTotal;
     let selectedModifiers = item.selectedModifiers;
     if (product) {
-      const resolved = resolveModifierSelections(product.modifierGroups, item.selectedOptions, product.basePrice);
+      const pizzaResult = product.productType === 'pizza' ? resolvePizza(product.pizza, item.pizzaSelection) : null;
+      const resolved = resolveModifierSelections(product.modifierGroups, item.selectedOptions, pizzaResult?.ok ? pizzaResult.baseUnitPrice : item.pizza ? item.baseUnitPrice : product.basePrice);
       if (resolved.ok) {
         unitPrice = Number(resolved.finalUnitPrice.toFixed(2));
-        selectedModifiers = resolved.selectedGroups;
+        selectedModifiers = [...(pizzaResult?.ok ? pizzaResult.modifiers : item.selectedModifiers.filter(g=>g.groupId.startsWith('__pizza_'))), ...resolved.selectedGroups];
       }
     }
     const lineTotal = quantity * Number(unitPrice || 0);
     return [{
       productId: item.productId,
       productName: product?.name ?? item.productName,
+      pizza: item.pizza,
       selectedModifiers,
       quantity,
       unitPrice,
@@ -310,13 +320,13 @@ function draftItemKey(item: DraftState['items'][number]): string {
     .sort()
     .join('|');
   const normalizedNotes = item.notes.trim();
-  return `${idPart}::${selections || 'plain'}${normalizedNotes ? `::note:${normalizedNotes}` : ''}`;
+  return `${idPart}::${selections || 'plain'}${item.pizzaSelection ? `::pizza:${buildPizzaSignature(item.pizzaSelection)}` : ''}${normalizedNotes ? `::note:${normalizedNotes}` : ''}`;
 }
 
 function selectedOptionsFromSelectedModifiers(
   selectedModifiers: ZeloMenuSelectedModifierGroup[],
 ): ZeloMenuModifierSelectionInput[] {
-  return selectedModifiers.map((group) => ({
+  return selectedModifiers.filter(group=>!group.groupId.startsWith('__pizza_')).map((group) => ({
     groupId: group.groupId,
     optionSelections: group.selectedOptions.map((option) => ({
       optionId: option.optionId,
@@ -333,6 +343,7 @@ function estimatedItemKey(
     notes?: string | null;
     selectedModifiers: ZeloMenuSelectedModifierGroup[];
     unitPrice: number;
+    pizza?: PizzaSnapshot | null;
   },
 ): string {
   return draftItemKey({
@@ -340,6 +351,8 @@ function estimatedItemKey(
     productName: item.productName,
     quantity: item.quantity,
     notes: item.notes ?? '',
+    pizza: item.pizza,
+    pizzaSelection: pizzaSelectionFromSnapshot(item.pizza),
     selectedOptions: selectedOptionsFromSelectedModifiers(item.selectedModifiers),
     selectedModifiers: item.selectedModifiers,
     baseUnitPrice: item.unitPrice,
@@ -391,6 +404,7 @@ function buildCartUpdatePayload(
       productName: item.productName,
       quantity: item.quantity,
       notes: item.notes || null,
+      pizzaSelection: item.pizzaSelection,
       selectedOptions: item.selectedOptions,
     })),
     fulfillment: {
@@ -513,6 +527,7 @@ function ZeloMenuCartPageContent() {
   const saveVersionRef = useRef(0);
   const latestAutosaveRef = useRef<ZeloMenuUpdateCartPayload | null>(null);
   const loadRequestRef = useRef(0);
+  const [pizzaEditKey, setPizzaEditKey] = useState<string | null>(null);
   const [recModalProduct, setRecModalProduct] = useState<ZeloMenuCatalogProduct | null>(null);
   const [recModalSelections, setRecModalSelections] = useState<Record<string, Record<string, number>>>({});
   const pixCodeRef = useRef<HTMLParagraphElement>(null);
@@ -1692,6 +1707,7 @@ function ZeloMenuCartPageContent() {
                                   </div>
                                 )}
                                 <p className="mt-0.5 text-[11.5px] tabular-nums text-[var(--zm-ink-soft)]">{toBRL(item.unitPrice)} cada</p>
+                                {item.pizza && isCartOpen && <button type="button" className="text-left text-sm underline" onClick={()=>setPizzaEditKey(key)}>Editar pizza</button>}
                               </div>
                               <div className="inline-flex h-9 flex-none items-center rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)]">
                                 <button
@@ -1770,6 +1786,7 @@ function ZeloMenuCartPageContent() {
                                   type="button"
                                   disabled={!isCartOpen}
                                   onClick={() => {
+                                    if (p.productType === 'pizza') { window.location.assign(`/${payload?.session.metadata.slug ?? ''}`); return; }
                                     const hasRequired = p.modifierGroups.some((g) =>
                                       g.active && (g.minSelections > 0 || (g.allowsQuantity && g.minTotalQuantity > 0)),
                                     );
@@ -2349,6 +2366,19 @@ function ZeloMenuCartPageContent() {
       </div>
 
       {/* ── Modifier modal para recomendações ── */}
+      {pizzaEditKey && draft && payload && (()=>{
+        const index=draft.items.findIndex(i=>draftItemKey(i)===pizzaEditKey);
+        const item=draft.items[index];
+        const product=item?.productId ? catalogProductMap(payload.catalog).get(item.productId) : null;
+        if (!item || !product) return null;
+        return <ProductAddModal key={pizzaEditKey} product={product} initialQuantity={item.quantity} initialNotes={item.notes} initialPizzaSelection={item.pizzaSelection} initialOptions={item.selectedOptions} onClose={()=>setPizzaEditKey(null)} onConfirm={(quantity,notes,selections,pizzaSelection)=>{
+          const pizzaResult=resolvePizza(product.pizza,pizzaSelection); if(!pizzaResult.ok)return;
+          const selectedOptions=Object.entries(selections).map(([groupId,optionSelections])=>({groupId,optionSelections}));
+          const resolved=resolveModifierSelections(product.modifierGroups,selectedOptions,pizzaResult.baseUnitPrice);if(!resolved.ok)return;
+          setDraft(current=>current ? {...current,items:current.items.map((old,i)=>i===index?{...old,quantity,notes,pizzaSelection,pizza:pizzaResult.pizza,selectedOptions,selectedModifiers:[...pizzaResult.modifiers,...resolved.selectedGroups],baseUnitPrice:pizzaResult.baseUnitPrice,modifierDeltaTotal:resolved.deltaTotal}:old)}:current);
+          setPizzaEditKey(null);
+        }}/>;
+      })()}
       {recModalProduct ? (
         <ModifierModal
           product={recModalProduct}

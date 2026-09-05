@@ -19,6 +19,8 @@ export type Subcategoria = {
 };
 
 export type ProdutoRow = {
+  tipo_produto?: 'simples' | 'pizza';
+  pizza_config?: import('../domain/pizzaTypes').PizzaConfig | null;
   id: number;
   nome: string;
   preco: number;
@@ -122,6 +124,8 @@ export function normalizeProdutoRow(row: any): ProdutoRow {
     id: Number(row.id),
     nome: row.nome,
     preco: Number(row.preco ?? 0),
+    tipo_produto: row.tipo_produto === 'pizza' ? 'pizza' : 'simples',
+    pizza_config: row.pizza_config ?? null,
     id_categoria: row.id_categoria == null ? null : Number(row.id_categoria),
     id_subcategoria: row.id_subcategoria == null ? null : Number(row.id_subcategoria),
     controlar_estoque: !!row.controlar_estoque,

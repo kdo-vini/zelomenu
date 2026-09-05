@@ -24,6 +24,8 @@ export type ZeloMenuCatalogProduct = {
   name: string;
   price: number;
   basePrice: number;
+  productType?: 'simple' | 'pizza';
+  pizza?: import('../domain/pizzaTypes').PizzaConfig | null;
   available: boolean;
   description?: string | null;
   photoUrl?: string | null;
@@ -167,6 +169,7 @@ export type ZeloMenuUpdateCartPayload = {
     productName: string;
     quantity: number;
     notes?: string | null;
+    pizzaSelection?: import('../domain/pizzaTypes').PizzaSelection;
     selectedOptions?: ZeloMenuModifierSelectionInput[];
   }>;
   fulfillment?: {

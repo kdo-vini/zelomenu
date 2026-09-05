@@ -268,3 +268,18 @@ nenhuma exigência bloqueante e taxa de entrega já resolvida.
 - CI executa unit, typechecks, E2E Chromium, PostgreSQL descartável com dois backends, build compilado, audit e imagem Docker/smoke. As migrations efetivas são mantidas no PDV e os testes Menu usam espelhos com SHA256 em `supabase/tests/fixtures`.
 - Após push em `master`, o job `production` espera até 12 minutos por `/api/health` e HTML/JS servidos no domínio com o SHA40 esperado. Valida `x-app-version`, HTML `no-store` e todos os chunks JS/CSS referenciados, inclusive lazy; HTTP e corpo têm deadline de 5 s. Falta de convergência deixa a CI vermelha sem reenviar deploy nem alterar dados. Branches de validação não aguardam produção.
 - O mesmo verificador roda contra o servidor compilado e o container antes de publicar; URLs de chunks preservam query/fragment. Falhas de transporte indicam endpoint, fase e causa. Testes HTTP reais cobrem desconexão/recuperação, versões misturadas, 4xx, bundle antigo e corpo travado. CI usa token somente leitura e cancela runs substituídos no mesmo ref; problemas de rede não dispensam as assertions de publicação.
+
+
+## Pizzas montáveis (2026-09-05)
+
+`produtos.tipo_produto = pizza` e `pizza_config` são cadastrados exclusivamente no PDV. O editor genérico do Menu é somente leitura para esses produtos; exclusão e alteração de produto/complementos são bloqueadas nos hooks. Publicar somente depois da migration canônica do PDV e dos consumidores atualizados.
+
+O catálogo expõe `productType` e `pizza`. A montagem envia apenas `pizzaSelection` (revisão, tamanho, IDs dos sabores). `src/domain/pizza.js` é cópia literal do contrato puro do PDV; sincronizar ambas em qualquer alteração. Valores dos sabores são preços de pizzas inteiras. Extras usam o resolvedor existente sobre a base calculada; `substituir` não é permitido para pizza.
+
+O servidor resolve valores e composição, armazena `pizza` e acrescenta as projeções de apresentação `__pizza_size`/`__pizza_flavors` a `selectedModifiers`. Essas projeções nunca devem voltar ao resolvedor genérico como `selectedOptions`. Cache, edição, autosave e revalidação preservam a montagem. Revalidação consulta a configuração atual; alteração de valor segue o aceite de preço existente.
+
+Estoque por tamanho substitui o principal; sabores não consomem estoque. O mapa interno de produtos inclui alvos de estoque não publicados e valida a quantidade agregada de todas as linhas. Conversação sem `pizzaSelection` falha com orientação para montar no cardápio digital. Pizzas não podem ser componentes de complementos genéricos.
+
+Validação: testes de domínio e servidor em `pizza.test.ts`/`pizzaOrdering.test.ts`; fluxo Playwright `e2e/pizza-flow.spec.ts` cobre meio a meio, preço, reload do cache e edição/autosave em desktop e celular. Nenhum teste grava pedido em produção.
+
+Na confirmação QR de mesa, quando a revisão/composição da pizza mudou sem alterar preço, o servidor atualiza os snapshots resolvidos antes de chamar `confirm_zelomenu_cart`. A escrita usa CAS de revisão, titular/empresa, token e estado aberto, incrementando a revisão entregue ao RPC. Concorrência aborta com `REVISION_CONFLICT`; alteração de preço permanece aguardando aceite e não regrava o carrinho nessa etapa.

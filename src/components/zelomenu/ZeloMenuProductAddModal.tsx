@@ -1,3 +1,5 @@
+import { resolvePizza } from '../../domain/pizza.js';
+import type { PizzaSelection } from '../../domain/pizzaTypes';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, Check, ImageIcon, Minus, Plus, X } from 'lucide-react';
 import { previewModifierPrice, resolveModifierSelections, sortModifierGroups } from '../../domain/zelomenuModifiers';
@@ -120,6 +122,8 @@ export function ProductAddModal({
   product,
   initialQuantity,
   initialNotes,
+  initialPizzaSelection,
+  initialOptions,
   onClose,
   onConfirm,
   categoryName,
@@ -132,8 +136,10 @@ export function ProductAddModal({
   product: ZeloMenuCatalogProduct;
   initialQuantity: number;
   initialNotes: string;
+  initialPizzaSelection?: PizzaSelection;
+  initialOptions?: import('../../domain/zelomenuModifiers').ZeloMenuModifierSelectionInput[];
   onClose: () => void;
-  onConfirm: (quantity: number, notes: string, selections: Record<string, Array<{ optionId: string; quantity: number }>>) => void;
+  onConfirm: (quantity: number, notes: string, selections: Record<string, Array<{ optionId: string; quantity: number }>>, pizzaSelection?: PizzaSelection) => void;
   categoryName?: string;
   categorySuggestions?: Record<string, number[]>;
   catalog?: ZeloMenuCatalogGroup[];
@@ -141,9 +147,17 @@ export function ProductAddModal({
   existingLineCount?: number;
   onQuickAdd?: (product: ZeloMenuCatalogProduct) => void;
 }) {
-  const [selections, setSelections] = useState<Record<string, Record<string, number>>>({});
+  const [selections, setSelections] = useState<Record<string, Record<string, number>>>(()=>Object.fromEntries((initialOptions??[]).map(g=>[g.groupId,Object.fromEntries(g.optionSelections.map(o=>[o.optionId,o.quantity]))])));
   const [qtyDraft, setQtyDraft] = useState(String(Math.max(1, initialQuantity)));
   const [notes, setNotes] = useState(initialNotes);
+  const [pizzaSize, setPizzaSize] = useState(initialPizzaSelection?.sizeId ?? '');
+  const [flavorCount, setFlavorCount] = useState(initialPizzaSelection?.flavorIds.length ?? 1);
+  const [flavorIds, setFlavorIds] = useState<string[]>(initialPizzaSelection?.flavorIds ?? []);
+  const [flavorSearch, setFlavorSearch] = useState('');
+  const [pizzaNotice,setPizzaNotice] = useState('');
+  const pizzaSelection = {revision: product.pizza?.revision ?? '', sizeId:pizzaSize, flavorIds};
+  const pizzaResult = product.productType === 'pizza' ? resolvePizza(product.pizza, pizzaSelection) : null;
+  const pizzaBase = pizzaResult?.ok ? pizzaResult.baseUnitPrice : product.basePrice;
   const isEditing = initialQuantity > 0;
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -241,7 +255,7 @@ export function ProductAddModal({
       optionSelections: Object.entries(options).map(([optionId, quantity]) => ({ optionId, quantity })),
     }))
     .filter((sel) => sel.optionSelections.length > 0);
-  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
+  const resolution = resolveModifierSelections(product.modifierGroups, selectedOptions, pizzaBase);
   const activeGroups = sortModifierGroups(product.modifierGroups.filter((group) => group.active));
   const nextRequiredGroup = activeGroups.find((group) => (
     (group.minSelections > 0 && Object.keys(selections[group.id] ?? {}).length < group.minSelections)
@@ -249,7 +263,7 @@ export function ProductAddModal({
       && group.minTotalQuantity > 0
       && quantityTotal(selections[group.id] ?? {}) < group.minTotalQuantity)
   ));
-  const pricePreview = previewModifierPrice(product.modifierGroups, selectedOptions, product.basePrice);
+  const pricePreview = previewModifierPrice(product.modifierGroups, selectedOptions, pizzaBase);
   const displayedUnitPrice = resolution.ok ? resolution.finalUnitPrice : pricePreview.unitPrice;
   const displayedPriceLabel = !resolution.ok && pricePreview.hasRequiredGroup && !pricePreview.hasSelectedRequiredOption
     ? `A partir de ${toBRL(displayedUnitPrice)}`
@@ -257,7 +271,7 @@ export function ProductAddModal({
   const hasActiveModifiers = activeGroups.length > 0;
   const quantity = parseInt(qtyDraft, 10);
   const validQuantity = !isNaN(quantity) && quantity > 0;
-  const canConfirm = resolution.ok && validQuantity;
+  const canConfirm = resolution.ok && validQuantity && (!pizzaResult || (pizzaResult.ok && flavorIds.length === flavorCount));
   const canScrollToRequiredGroup = Boolean(nextRequiredGroup && validQuantity);
   const primaryActionLabel = nextRequiredGroup
     ? nextRequiredGroup.allowsQuantity && nextRequiredGroup.minTotalQuantity > quantityTotal(selections[nextRequiredGroup.id] ?? {})
@@ -276,7 +290,7 @@ export function ProductAddModal({
       if (entries.length > 0) acc[groupId] = entries;
       return acc;
     }, {});
-    onConfirm(quantity, notes.trim(), selectionsArray);
+    onConfirm(quantity, notes.trim(), selectionsArray, product.productType === 'pizza' ? pizzaSelection : undefined);
   }
 
   function handlePrimaryAction() {
@@ -355,7 +369,32 @@ export function ProductAddModal({
               ) : null}
             </div>
 
-            {activeGroups.map((group) => (
+            {product.productType === 'pizza' && <section className="space-y-4 p-4" aria-label="Monte sua pizza">
+            <h3 className="font-bold">Monte sua pizza</h3>
+            <label className="block">Tamanho
+              <select className="block w-full rounded border p-3" value={pizzaSize} onChange={e => {const id=e.target.value; const max=product.pizza?.sizes.find(s=>s.id===id)?.maxFlavors??1; const kept=flavorIds.filter(fid=>product.pizza?.flavors.some(f=>f.id===fid&&f.active!==false&&f.prices[id]!=null)).slice(0,max); setPizzaSize(id); setFlavorIds(kept); setFlavorCount(Math.min(flavorCount,max));setPizzaNotice(kept.length!==flavorIds.length?'Alguns sabores não estão disponíveis neste tamanho ou excedem seu limite. Revise a montagem.':'');}}>
+                <option value="">Escolha o tamanho</option>
+                {product.pizza?.sizes.filter(s=>s.active!==false).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
+            {pizzaNotice && <p role="status">{pizzaNotice}</p>}
+            {pizzaSize && <>
+              <label className="block">Quantidade de sabores
+                <select className="block w-full rounded border p-3" value={flavorCount} onChange={e=>{setFlavorCount(Number(e.target.value));setFlavorIds([]);}}>
+                  {Array.from({length:product.pizza?.sizes.find(s=>s.id===pizzaSize)?.maxFlavors ?? 1},(_,i)=><option key={i} value={i+1}>{i+1} {i===0?'sabor inteiro':'sabores em partes iguais'}</option>)}
+                </select>
+              </label>
+              <p>Escolha {flavorCount} sabores · {flavorIds.length} de {flavorCount}</p>
+              <input className="w-full rounded border p-3" aria-label="Buscar sabor" placeholder="Buscar sabor" value={flavorSearch} onChange={e=>setFlavorSearch(e.target.value)} />
+              {product.pizza?.flavors.filter(f=>f.active!==false && f.prices[pizzaSize]!=null && f.name.toLocaleLowerCase('pt-BR').includes(flavorSearch.toLocaleLowerCase('pt-BR'))).map(f=><label key={f.id} className="flex items-center gap-3 rounded border p-3">
+                <input type="checkbox" checked={flavorIds.includes(f.id)} disabled={!flavorIds.includes(f.id)&&flavorIds.length>=flavorCount} onChange={()=>setFlavorIds(ids=>ids.includes(f.id)?ids.filter(id=>id!==f.id):[...ids,f.id])}/>
+                {f.photoUrl && <img src={f.photoUrl} alt="" className="h-12 w-12 rounded object-cover" loading="lazy" />}
+                <span className="flex-1">{flavorCount===1?'Inteira':flavorCount===2?'½':flavorCount===3?'⅓':'¼'} {f.name}{f.description && <small className="block">{f.description}</small>}</span><span>{toBRL(f.prices[pizzaSize])}</span>
+              </label>)}
+              <p className="text-sm">{product.pizza?.pricingMode==='average'?'Preço proporcional aos sabores escolhidos.':'Cobrança pelo sabor de maior preço.'} Os valores dos sabores são da pizza inteira. Borda, massa e extras são somados.</p>
+            </>}
+          </section>}
+          {activeGroups.map((group) => (
               <section
                 key={group.id}
                 ref={(element) => {

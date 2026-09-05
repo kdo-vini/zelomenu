@@ -87,7 +87,7 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
           .order('id').range(from, to)),
         readAllRows((from, to) => supabase
           .from('produtos')
-          .select('id, nome, preco, id_categoria, id_subcategoria, controlar_estoque, estoque_atual, eh_item_por_unidade, ocultar_no_pdv')
+          .select('id, nome, preco, id_categoria, id_subcategoria, controlar_estoque, estoque_atual, eh_item_por_unidade, ocultar_no_pdv, tipo_produto, pizza_config')
           .eq('id_usuario', userId)
           .order('nome')
           .order('id').range(from, to)),

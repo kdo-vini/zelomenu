@@ -280,6 +280,13 @@ export function ProductModal({
     if (await flushAll()) onNavigate(target, tab);
   }
 
+  if (initial?.tipo_produto === 'pizza') return <ModalShell title={initial.nome} onClose={onClose}>
+    <div className="space-y-4"><p>Pizza montável. Tamanhos, sabores, preços e publicação são administrados no ZeloPDV.</p>
+    <p>{initial.pizza_config?.sizes.map(s=>`${s.name}: até ${s.maxFlavors} sabores`).join(' · ')}</p>
+    <p>{initial.pizza_config?.flavors.map(f=>f.name).join(', ')}</p>
+    <a className="font-semibold underline" href="https://zelopdv.com.br/gestao/produtos" target="_blank" rel="noreferrer">Editar no ZeloPDV</a></div>
+  </ModalShell>;
+
   return (
     <ModalShell
       title={initial?.nome ?? 'Novo produto'}

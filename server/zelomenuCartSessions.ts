@@ -1,3 +1,5 @@
+import { resolvePizza } from '../src/domain/pizza.js';
+import { pizzaSelectionFromSnapshot, type PizzaSelection, type PizzaSnapshot } from '../src/domain/pizzaTypes.js';
 import { readAllRows } from '../src/utils/readAllRows.js';
 import { BoundedMap } from './boundedMap.js';
 import { randomUUID } from 'node:crypto';
@@ -187,6 +189,7 @@ export type ZeloMenuCartItemInput = {
   productName: string;
   quantity: number;
   notes?: string | null;
+  pizzaSelection?: PizzaSelection;
   selectedOptions?: ZeloMenuModifierSelectionInput[] | null;
 };
 
@@ -574,6 +577,7 @@ function parseCartSnapshot(value: unknown): ZeloMenuCartSnapshot {
       const typed = item as {
         productId?: unknown;
         productName?: unknown;
+        pizza?: PizzaSnapshot;
         baseUnitPrice?: unknown;
         selectedModifiers?: unknown;
         modifierDeltaTotal?: unknown;
@@ -594,6 +598,7 @@ function parseCartSnapshot(value: unknown): ZeloMenuCartSnapshot {
         productId: Number.isFinite(productId) ? productId : null,
         productName,
         baseUnitPrice: Number.isFinite(baseUnitPrice) ? baseUnitPrice : unitPrice,
+        ...(typed.pizza ? {pizza: typed.pizza} : {}),
         selectedModifiers: parseSelectedModifiers(typed.selectedModifiers),
         modifierDeltaTotal: Number.isFinite(modifierDeltaTotal) ? modifierDeltaTotal : 0,
         quantity,
@@ -901,7 +906,7 @@ function normalizeIncomingItems(items: unknown): ZeloMenuCartItemInput[] {
   if (items.length > 50) throw new Error('CART_LINE_LIMIT_EXCEEDED');
   return items.flatMap((item) => {
     if (!item || typeof item !== 'object') return [];
-    const typed = item as { productId?: unknown; productName?: unknown; quantity?: unknown; notes?: unknown; selectedOptions?: unknown };
+    const typed = item as { productId?: unknown; productName?: unknown; quantity?: unknown; notes?: unknown; pizzaSelection?: PizzaSelection; selectedOptions?: unknown };
     const productName = sanitizeText(typed.productName, 120);
     const productId = typed.productId == null ? null : Number(typed.productId);
     const quantity = normalizePositiveInt(typed.quantity);
@@ -911,6 +916,7 @@ function normalizeIncomingItems(items: unknown): ZeloMenuCartItemInput[] {
       productName,
       quantity,
       notes: sanitizeText(typed.notes, 200),
+      pizzaSelection: typed.pizzaSelection,
       selectedOptions: normalizeIncomingModifierSelections(typed.selectedOptions),
     }];
   });
@@ -927,7 +933,8 @@ function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
     productName: item.productName,
     quantity: item.quantity,
     notes: item.notes ?? null,
-    selectedOptions: item.selectedModifiers.map((group) => ({
+    pizzaSelection: pizzaSelectionFromSnapshot(item.pizza),
+    selectedOptions: item.selectedModifiers.filter(group => !group.groupId.startsWith('__pizza_')).map((group) => ({
       groupId: group.groupId,
       optionSelections: group.selectedOptions.map((option) => ({
         optionId: option.optionId,
@@ -967,17 +974,17 @@ type ResolveSnapshotsParams = {
   deliveryQuoter?: typeof revalidateDeliveryForCart;
 };
 
-async function resolveSnapshots(
+export async function resolveSnapshots(
   empresaId: string,
   params: ResolveSnapshotsParams & { allowMissingFulfillment: true },
   loadedConfig?: BusinessConfig,
 ): Promise<ResolvedCart<ConversationFulfillmentSnapshot>>;
-async function resolveSnapshots(
+export async function resolveSnapshots(
   empresaId: string,
   params: ResolveSnapshotsParams & { allowMissingFulfillment?: false },
   loadedConfig?: BusinessConfig,
 ): Promise<ResolvedCart>;
-async function resolveSnapshots(
+export async function resolveSnapshots(
   empresaId: string,
   params: ResolveSnapshotsParams,
   loadedConfig?: BusinessConfig,
@@ -993,12 +1000,18 @@ async function resolveSnapshots(
     const unavailableOnlyBecauseOfStock = product.stockControlled
       && Number(product.stockQuantity ?? 0) <= 0;
     if (!product.available && !unavailableOnlyBecauseOfStock) throw new Error('PRODUCT_UNAVAILABLE');
-    const directAgg = (aggregated.get(product.id) ?? 0) + item.quantity;
+    if (product.productType === 'pizza' && !item.pizzaSelection) throw new Error('MODIFIER_INVALID:Monte sua pizza pelo cardápio digital para escolher tamanho e sabores.');
+    const pizzaResolution = product.productType === 'pizza' ? resolvePizza(product.pizza, item.pizzaSelection) : null;
+    if (pizzaResolution && !pizzaResolution.ok) throw new Error(`MODIFIER_INVALID:${pizzaResolution.message}`);
+    if (product.productType === 'pizza' && product.modifierGroups.some(g => g.active && g.pricingMode === 'substituir')) throw new Error('MODIFIER_INVALID:Pizza não aceita complemento com preço substituído.');
+    const stockId = pizzaResolution?.ok ? pizzaResolution.pizza.stockProductId ?? product.id : product.id;
+    if (!productsById.has(stockId)) throw new Error('PRODUCT_UNAVAILABLE');
+    const directAgg = (aggregated.get(stockId) ?? 0) + item.quantity;
     if (!Number.isSafeInteger(item.quantity) || !Number.isSafeInteger(directAgg)) {
       throw new Error('INVALID_QUANTITY');
     }
-    aggregated.set(product.id, directAgg);
-    const baseUnitPrice = Number(product.basePrice ?? product.price);
+    aggregated.set(stockId, directAgg);
+    const baseUnitPrice = pizzaResolution?.ok ? pizzaResolution.baseUnitPrice : Number(product.basePrice ?? product.price);
     const modifierGroups = params.allowIncompleteModifiers
       ? product.modifierGroups.map((group) => ({ ...group, minSelections: 0, minTotalQuantity: 0 }))
       : product.modifierGroups;
@@ -1033,7 +1046,8 @@ async function resolveSnapshots(
       productId: product.id ?? null,
       productName: product.name,
       baseUnitPrice,
-      selectedModifiers: modifierResolution.selectedGroups,
+      ...(pizzaResolution?.ok ? {pizza: pizzaResolution.pizza} : {}),
+      selectedModifiers: [...(pizzaResolution?.ok ? pizzaResolution.modifiers : []), ...modifierResolution.selectedGroups],
       modifierDeltaTotal: modifierResolution.deltaTotal,
       quantity: item.quantity,
       unitPrice,
@@ -1483,7 +1497,8 @@ type InternalZeloMenuCartRevalidation = ZeloMenuCartRevalidation & {
   previewFulfillment: ZeloMenuFulfillmentSnapshot | null;
 };
 
-async function runRevalidation(session: PublicCartSession, loadedConfig?: BusinessConfig): Promise<InternalZeloMenuCartRevalidation> {
+export async function runRevalidation(session: PublicCartSession, loadedConfig?: BusinessConfig): Promise<InternalZeloMenuCartRevalidation> {
+  if (!loadedConfig) { await loadCatalogFromDb(session.metadata.empresaId as string); loadedConfig = getConfig(session.metadata.empresaId as string); }
   const currentInput = toCartItemInputs(session.cart);
   const issues: ZeloMenuCartRevalidationIssue[] = [];
   let previewCart: ZeloMenuCartSnapshot | null = null;
@@ -1493,7 +1508,10 @@ async function runRevalidation(session: PublicCartSession, loadedConfig?: Busine
 
   try {
     const resolved = await resolveSnapshots(session.metadata.empresaId as string, {
-      items: currentInput,
+      items: currentInput.map(item => {
+        const product = loadedConfig?.products.find(p=>p.id===item.productId);
+        return item.pizzaSelection && product?.pizza ? {...item,pizzaSelection:{...item.pizzaSelection,revision:product.pizza.revision}} : item;
+      }),
       fulfillment: session.fulfillment,
       paymentMethod: session.payment.declaredMethod,
       observations: session.cart.observations,
@@ -2410,13 +2428,43 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: null } };
   }
 
+  // The table RPC consumes stored snapshots. Refresh a successfully revalidated
+  // pizza configuration using the same revision/token fence as cart edits before
+  // invoking it. Price changes returned above still require explicit acceptance.
+  let confirmationRevision = expectedRevision;
+  const tablePizzaChanged = sessionRow.context === 'table_order'
+    && revalidation.previewCart.items.some((item, index) => item.pizza
+      && JSON.stringify(item.pizza) !== JSON.stringify(current.cart.items[index]?.pizza));
+  if (tablePizzaChanged) {
+    const { data: refreshed, error: refreshError } = await getServiceSupabase()
+      .from('zelomenu_cart_sessions')
+      .update({
+        cart_snapshot: revalidation.previewCart,
+        fulfillment_snapshot: revalidation.previewFulfillment ?? current.fulfillment,
+        pricing_snapshot: revalidation.previewPricing,
+        payment_snapshot: revalidation.previewPayment,
+        revision: expectedRevision + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', sessionRow.id)
+      .eq('empresa_id', sessionRow.empresa_id)
+      .eq('revision', expectedRevision)
+      .eq('current_token_hash', tokenRow.token_hash)
+      .eq('state', 'cart_open')
+      .select('revision')
+      .maybeSingle();
+    if (refreshError) throw refreshError;
+    if (!refreshed) throw new Error('REVISION_CONFLICT');
+    confirmationRevision = Number(refreshed.revision);
+  }
+
   // ── Direct canonical creation for public_order; table_order stays on the
   // compatibility RPC until the PDV migration patches it to the same engine.
   const confirmationRpc = usesDirectCanonicalOrderEngine(sessionRow.context)
     ? getServiceSupabase().rpc('confirm_public_zelo_order_atomic', {
       p_session_id: sessionRow.id,
       p_token_hash: tokenRow.token_hash,
-      p_expected_revision: expectedRevision,
+      p_expected_revision: confirmationRevision,
       p_idempotency_key: idempotencyKey,
       p_snapshots: buildCanonicalOrderSnapshots({
         empresaId: sessionRow.empresa_id,
@@ -2430,7 +2478,7 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     : getServiceSupabase().rpc('confirm_zelomenu_cart', {
       p_session_id: sessionRow.id,
       p_token_hash: tokenRow.token_hash,
-      p_expected_revision: expectedRevision,
+      p_expected_revision: confirmationRevision,
       p_idempotency_key: idempotencyKey,
     });
   const { data: confirmation, error: confirmationError } = await confirmationRpc;

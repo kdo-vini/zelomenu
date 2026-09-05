@@ -1,3 +1,5 @@
+import { buildPizzaSignature } from './pizza.js';
+import type { PizzaSelection } from './pizzaTypes';
 import type { ZeloMenuModifierSelectionInput } from './zelomenuModifiers';
 
 export function buildModifierSignature(
@@ -20,7 +22,8 @@ export function buildCartItemKey(
   productId: string | number,
   selectedOptions: ZeloMenuModifierSelectionInput[] | null | undefined,
   notes?: string | null,
+  pizzaSelection?: PizzaSelection,
 ): string {
   const normalizedNotes = notes?.trim() ?? '';
-  return `${productId}::${buildModifierSignature(selectedOptions)}${normalizedNotes ? `::note:${normalizedNotes}` : ''}`;
+  return `${productId}::${buildModifierSignature(selectedOptions)}${pizzaSelection ? `::pizza:${buildPizzaSignature(pizzaSelection)}` : ''}${normalizedNotes ? `::note:${normalizedNotes}` : ''}`;
 }

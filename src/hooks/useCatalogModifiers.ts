@@ -23,6 +23,7 @@ export function useCatalogModifiers(
   ): Promise<ZeloMenuModifierGroupRow[]> => {
     if (!userId) throw new Error('Faça login para continuar.');
 
+    if (dataRef.current.produtos.find(p=>p.id===productId)?.tipo_produto === 'pizza') throw new Error('Edite os complementos da pizza no ZeloPDV.');
     const currentGroups = dataRef.current.productModifierGroups[productId] ?? [];
     const productsById = new Map(dataRef.current.produtos.map((product) => [product.id, product]));
     const nextGroups = groups.map((group, groupIndex) => {

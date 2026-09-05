@@ -32,6 +32,7 @@ function toBRL(value: number): string {
 }
 
 function getProductPriceLabel(product: ZeloMenuCatalogProduct): string {
+  if (product.productType === 'pizza') return `A partir de ${toBRL(product.price)}`;
   if (product.basePrice > 0) return toBRL(product.basePrice);
 
   const substituteGroup = product.modifierGroups
@@ -552,7 +553,7 @@ function ZeloMenuStorePageContent({
       {/* ── Card de produto (foto, observação, quantidade e complementos) ── */}
       {cart.sheetProduct ? (() => {
         const product = cart.sheetProduct;
-        const hasActiveModifiers = product.modifierGroups.some((group) => group.active);
+        const hasActiveModifiers = product.productType === 'pizza' || product.modifierGroups.some((group) => group.active);
         const existing = hasActiveModifiers
           ? undefined
           : Object.values(cart.items).find((item) => item.productId === product.id && item.selectedOptions.length === 0);
@@ -565,7 +566,7 @@ function ZeloMenuStorePageContent({
             initialQuantity={existing?.quantity ?? 0}
             initialNotes={existing?.notes ?? ''}
             onClose={() => cart.setSheetProduct(null)}
-            onConfirm={(quantity, notes, selections) => cart.confirmSheet(product, quantity, notes, selections)}
+            onConfirm={(quantity, notes, selections, pizzaSelection) => cart.confirmSheet(product, quantity, notes, selections, pizzaSelection)}
             categoryName={categoryName}
             categorySuggestions={store.business.categorySuggestions}
             catalog={store.catalog}
@@ -608,7 +609,7 @@ function ProductGrid({
 }) {
   if (hasPhotos) {
     return (
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className={`grid grid-cols-1 gap-3 ${products.some(p=>p.productType==='pizza')?'':'md:grid-cols-2'}`}>
         {products.map((p) => (
           <PhotoRow key={p.id} product={p} items={items} onAdd={() => onAdd(p)} onChangeQty={onChangeQty} onSetQty={onSetQty} />
         ))}
@@ -745,7 +746,7 @@ function PhotoRow({
   onSetQty: (key: string, qty: number) => void;
 }) {
   const qty = getProductQty(product.id, items);
-  const hasModifiers = product.modifierGroups.some((group) => group.active);
+  const hasModifiers = product.productType === 'pizza' || product.modifierGroups.some((group) => group.active);
   const isUnit = product.unitBased === true;
 
   return (
@@ -828,7 +829,7 @@ function FeaturedCard({
   onSetQty: (key: string, qty: number) => void;
 }) {
   const qty = getProductQty(product.id, items);
-  const hasModifiers = product.modifierGroups.some((group) => group.active);
+  const hasModifiers = product.productType === 'pizza' || product.modifierGroups.some((group) => group.active);
   const isUnit = product.unitBased === true;
 
   return (
@@ -905,7 +906,7 @@ function ListRow({
   divider: boolean;
 }) {
   const qty = getProductQty(product.id, items);
-  const hasModifiers = product.modifierGroups.some((group) => group.active);
+  const hasModifiers = product.productType === 'pizza' || product.modifierGroups.some((group) => group.active);
   const isUnit = product.unitBased === true;
 
   return (

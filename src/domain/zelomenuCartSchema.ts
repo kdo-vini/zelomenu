@@ -1,6 +1,7 @@
 import type { ZeloMenuSelectedModifierGroup } from './zelomenuModifiers';
 
 export type ZeloMenuCartItem = {
+  pizza?: import('./pizzaTypes').PizzaSnapshot | null;
   lineId?: string;
   productId: number | null;
   productName: string;

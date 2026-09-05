@@ -44,10 +44,13 @@ vi.mock('./supabaseServer.js', () => ({
     },
   }),
 }));
+import { resolvePizza } from '../src/domain/pizza.js';
 import { confirmPublicCartSession } from './zelomenuCartSessions';
 
+const initialProducts = structuredClone(config.products);
 const token = 'a'.repeat(43);
 beforeEach(() => {
+  config.products = structuredClone(initialProducts);
   vi.clearAllMocks(); state.updates.length = 0; state.race = false; state.quoteFee = 7; state.pending = false;
   state.token = { id: 'token-1', session_id: 'session-1', token_hash: createHash('sha256').update(token).digest('hex'), revoked_at: null, expires_at: null, last_seen_at: new Date().toISOString() };
   state.session = { id: 'session-1', empresa_id: 'empresa', ordering_id: 'legacy-1', context: 'public_order', state: 'cart_open', revision: 5,
@@ -97,4 +100,66 @@ it('recovers a confirmed order with the same valid token even if the submitted r
   expect(result?.confirmation.alreadyConfirmed).toBe(true);
   expect(result?.order?.id).toBe('order-1');
   expect(state.rpc).not.toHaveBeenCalled();
+});
+
+function tablePizza(price = 60) {
+  const pizza = { version: 1 as const, revision: 'r1', pricingMode: 'highest' as const,
+    sizes: [{ id: 'g', name: 'Grande', maxFlavors: 2, active: true, stockProductId: null }],
+    flavors: [{ id: 'a', name: 'Calabresa', active: true, prices: { g: 40 } }, { id: 'b', name: 'Portuguesa', active: true, prices: { g: 60 } }],
+  };
+  const resolved = resolvePizza(pizza, { revision: 'r1', sizeId: 'g', flavorIds: ['a', 'b'] });
+  if (!resolved.ok) throw new Error(resolved.message);
+  config.products = [{ id: 1, name: 'Pizza', price, basePrice: 40, available: true, modifierGroups: [], productType: 'pizza',
+    pizza: { ...pizza, revision: 'r2', flavors: pizza.flavors.map(f => ({ ...f, prices: { g: f.id === 'b' ? price : 40 } })) },
+  }];
+  state.session.context = 'table_order';
+  state.session.fulfillment_snapshot = { type: 'pickup', asap: true };
+  state.session.cart_snapshot = { items: [{ productId: 1, productName: 'Pizza', quantity: 1, unitPrice: 60, baseUnitPrice: 60, lineTotal: 60, selectedModifiers: resolved.modifiers, modifierDeltaTotal: 0, pizza: resolved.pizza }], observations: null };
+  state.session.pricing_snapshot = { subtotal: 60, deliveryFee: 0, discount: 0, total: 60 };
+}
+
+it('refreshes a table pizza revision before the stored-snapshot RPC with a CAS', async () => {
+  tablePizza();
+  state.rpc.mockImplementation(async (name, payload) => {
+    expect(name).toBe('confirm_zelomenu_cart');
+    expect(payload.p_expected_revision).toBe(6);
+    expect(state.session.cart_snapshot.items[0].pizza.revision).toBe('r2');
+    expect(state.session.cart_snapshot.items[0].unitPrice).toBe(60);
+    state.session.state = 'confirmed_waiting_review';
+    return { data: { alreadyConfirmed: false }, error: null };
+  });
+  const result = await confirmPublicCartSession(token, 5, 'table-pizza-1234567890');
+  expect(result?.confirmation.confirmed).toBe(true);
+  expect(state.updates[0].filters).toEqual(expect.arrayContaining([['revision', 5], ['current_token_hash', state.token.token_hash], ['state', 'cart_open'], ['empresa_id', 'empresa']]));
+});
+
+it('does not refresh a table pizza over a concurrent cart edit', async () => {
+  tablePizza(); state.race = true;
+  await expect(confirmPublicCartSession(token, 5, 'table-pizza-1234567890')).rejects.toThrow('REVISION_CONFLICT');
+  expect(state.session.cart_snapshot.items[0].pizza.revision).toBe('r1');
+  expect(state.rpc).not.toHaveBeenCalled();
+});
+
+it('keeps table pizza price changes pending acceptance without confirming', async () => {
+  tablePizza(70);
+  const result = await confirmPublicCartSession(token, 5, 'table-pizza-1234567890');
+  expect(result?.confirmation.confirmed).toBe(false);
+  expect(state.session.cart_snapshot.items[0].pizza.revision).toBe('r1');
+  expect(state.session.cart_snapshot.items[0].unitPrice).toBe(60);
+  expect(state.rpc).not.toHaveBeenCalled();
+  expect(state.session.last_revalidation.issues).toContainEqual(expect.objectContaining({ code: 'price_changed', currentUnitPrice: 70 }));
+});
+
+it('submits the full revalidated pizza composition to public atomic confirmation', async () => {
+  tablePizza();
+  state.session.context = 'public_order';
+  state.session.fulfillment_snapshot = { type: 'pickup', asap: true, pickupDate: '2099-01-01', pickupTime: '14:30' };
+  state.rpc.mockImplementation(async (name, payload) => {
+    expect(name).toBe('confirm_public_zelo_order_atomic');
+    expect(payload.p_snapshots.cart.items[0]).toMatchObject({ unitPrice: 60, pizza: { revision: 'r2', sizeName: 'Grande', flavors: [{ name: 'Calabresa', denominator: 2 }, { name: 'Portuguesa', denominator: 2 }] } });
+    state.session.state = 'confirmed_waiting_review';
+    return { data: { alreadyConfirmed: false }, error: null };
+  });
+  const result = await confirmPublicCartSession(token, 5, 'public-pizza-1234567890');
+  expect(result?.confirmation.confirmed).toBe(true);
 });

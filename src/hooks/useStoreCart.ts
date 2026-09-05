@@ -1,3 +1,5 @@
+import { resolvePizza } from '../domain/pizza.js';
+import type { PizzaSelection } from '../domain/pizzaTypes';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveModifierSelections } from '../domain/zelomenuModifiers';
@@ -67,6 +69,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
   }
 
   function quickAddProduct(product: ZeloMenuCatalogProduct) {
+    if (product.productType === 'pizza') { setSheetProduct(product); return; }
     const key = `${product.id}::plain`;
     setItems((prev) => {
       const existing = prev[key];
@@ -91,6 +94,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
     quantity: number,
     notes: string,
     selections: Record<string, Array<{ optionId: string; quantity: number }>>,
+    pizzaSelection?: PizzaSelection,
   ) {
     if (quantity <= 0) return;
     const selectedOptions = Object.keys(selections)
@@ -99,12 +103,14 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
         optionSelections: (selections[groupId] ?? []).filter((s) => s.quantity > 0),
       }))
       .filter((sel) => sel.optionSelections.length > 0);
-    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions, product.basePrice);
+    const pizzaResult = product.productType === 'pizza' ? resolvePizza(product.pizza, pizzaSelection) : null;
+    if (pizzaResult && !pizzaResult.ok) return;
+    const resolved = resolveModifierSelections(product.modifierGroups, selectedOptions, pizzaResult?.ok ? pizzaResult.baseUnitPrice : product.basePrice);
     if (!resolved.ok) return;
     const trimmedNotes = notes.trim();
-    const hasActiveModifiers = product.modifierGroups.some((group) => group.active);
+    const hasActiveModifiers = product.productType === 'pizza' || product.modifierGroups.some((group) => group.active);
     const key = hasActiveModifiers
-      ? buildCartItemKey(product.id, selectedOptions, trimmedNotes)
+      ? buildCartItemKey(product.id, selectedOptions, trimmedNotes, pizzaSelection)
       : `${product.id}::plain`;
     setItems((prev) => {
       const existingEntry = hasActiveModifiers
@@ -124,6 +130,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
         productName: product.name,
         quantity: nextQuantity,
         selectedOptions,
+        pizzaSelection,
         unitPrice: Number(resolved.finalUnitPrice.toFixed(2)),
         notes: trimmedNotes ? trimmedNotes : null,
       };
@@ -142,6 +149,7 @@ export function useStoreCart(slug: string, tableOrderContext?: TableOrderContext
           productName: line.productName,
           quantity: line.quantity,
           selectedOptions: line.selectedOptions,
+          pizzaSelection: line.pizzaSelection,
           notes: line.notes ?? null,
         })),
         fulfillment: {

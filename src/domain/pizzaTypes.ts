@@ -1,0 +1,4 @@
+export type PizzaSelection = { revision: string; sizeId: string; flavorIds: string[] };
+export type PizzaConfig = { version: 1; revision: string; pricingMode: 'highest' | 'average'; archived?: boolean; sizes: Array<{id:string;name:string;maxFlavors:number;active:boolean;stockProductId:number|null}>; flavors:Array<{id:string;name:string;description?:string;photoUrl?:string;active:boolean;prices:Record<string,number>}> };
+export type PizzaSnapshot = {version:1;revision:string;sizeId:string;sizeName:string;flavors:Array<{id:string;name:string;numerator:1;denominator:number;price:number}>;pricingMode:'highest'|'average';baseUnitPrice:number;stockProductId:number|null};
+export function pizzaSelectionFromSnapshot(pizza?: PizzaSnapshot | null): PizzaSelection | undefined { return pizza ? {revision:pizza.revision,sizeId:pizza.sizeId,flavorIds:pizza.flavors.map(f=>f.id)} : undefined; }

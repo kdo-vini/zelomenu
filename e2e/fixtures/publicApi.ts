@@ -16,7 +16,7 @@ type PublicApiMockState = {
 
 export const publicApiMockStates = new WeakMap<Page, PublicApiMockState>();
 
-function buildMockCartResponse(state: PublicApiMockState) {
+export function buildMockCartResponse(state: PublicApiMockState) {
   const deliveryFee = state.quote.deliveryFee;
   const fulfillment = {
     ...state.fulfillment,

@@ -1,3 +1,4 @@
+import { pizzaStartingPrice } from '../src/domain/pizza.js';
 import { readAllRows } from '../src/utils/readAllRows.js';
 import { getServiceSupabase } from './supabaseServer.js';
 import {
@@ -34,6 +35,8 @@ export type CatalogProduct = {
   name: string;
   price: number;
   basePrice: number;
+  productType?: 'simple' | 'pizza';
+  pizza?: import('../src/domain/pizzaTypes.js').PizzaConfig | null;
   available: boolean;
   description?: string | null;
   photoUrl?: string | null;
@@ -227,6 +230,8 @@ function normalizeProductRow(row: unknown): CatalogProductWithPlacement | null {
     id?: unknown;
     nome?: unknown;
     preco?: unknown;
+    tipo_produto?: unknown;
+    pizza_config?: unknown;
     id_categoria?: unknown;
     id_subcategoria?: unknown;
     eh_item_por_unidade?: unknown;
@@ -240,13 +245,15 @@ function normalizeProductRow(row: unknown): CatalogProductWithPlacement | null {
   const idCategoria = product.id_categoria == null ? null : normalizeNumber(product.id_categoria);
   const idSubcategoria = product.id_subcategoria == null ? null : normalizeNumber(product.id_subcategoria);
   const ocultarNoPdv = product.ocultar_no_pdv === true;
-  const stockControlled = product.controlar_estoque === true;
+  const stockControlled = product.controlar_estoque === true && !(product.tipo_produto === 'pizza' && (product.pizza_config as CatalogProduct['pizza'])?.sizes.some(size => size.stockProductId != null));
   const stockQuantity = normalizeNumber(product.estoque_atual);
   return {
     id,
     name,
     price: normalizeNumber(product.preco),
-    basePrice: normalizeNumber(product.preco),
+    basePrice: product.tipo_produto === 'pizza' ? pizzaStartingPrice(product.pizza_config) ?? 0 : normalizeNumber(product.preco),
+    productType: product.tipo_produto === 'pizza' ? 'pizza' : 'simple',
+    pizza: product.pizza_config as CatalogProduct['pizza'],
     available: !stockControlled || stockQuantity > 0,
     unitBased: product.eh_item_por_unidade === true,
     stockControlled,
@@ -352,6 +359,8 @@ function toPublicCatalogProduct(product: CatalogProductWithPlacement): CatalogPr
     name: product.name,
     price: product.price,
     basePrice: product.basePrice,
+    productType: product.productType,
+    pizza: product.pizza,
     available: product.available,
     description: product.description ?? null,
     photoUrl: product.photoUrl ?? null,
@@ -504,7 +513,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
   const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierComponentsRes, modifierOptionProductsRes] = await Promise.all([
     readAllRows((from, to) => supabase.from('categorias').select('id, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome').order('id').range(from, to)),
     readAllRows((from, to) => supabase.from('subcategorias').select('id, id_categoria, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome').order('id').range(from, to)),
-    readAllRows((from, to) => supabase.from('produtos').select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual').eq('id_usuario', userId).order('nome').order('id').range(from, to)),
+    readAllRows((from, to) => supabase.from('produtos').select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual, tipo_produto, pizza_config').eq('id_usuario', userId).order('nome').order('id').range(from, to)),
     readAllRows((from, to) => supabase.from('zelomenu_product_publications').select('id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem').eq('id_usuario', userId).order('ordem').order('id_produto').range(from, to)),
     readAllRows((from, to) => supabase.from('zelomenu_modifier_groups').select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, minimo_total_quantidade, maximo_total_quantidade, permite_quantidade, maximo_por_opcao, ativo, ordem').eq('id_usuario', userId).order('ordem').order('id').range(from, to)),
     readAllRows((from, to) => supabase.from('zelomenu_modifier_options').select('id, id_grupo, nome, price_delta, ativo, ordem').eq('id_usuario', userId).order('ordem').order('id').range(from, to)),
@@ -594,7 +603,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
       ...product,
       name: resolved.name,
       price: resolved.price,
-      basePrice: resolved.price,
+      basePrice: product.productType === 'pizza' ? product.basePrice : resolved.price,
       available: resolved.available,
       description: resolved.description,
       photoUrl: resolved.photoUrl,
@@ -628,7 +637,7 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
       }
       if (link.productId == null) return option;
       const linkedCatalogProduct = rawProductMap.get(link.productId) ?? null;
-      if (!linkedCatalogProduct) {
+      if (!linkedCatalogProduct || linkedCatalogProduct.productType === 'pizza') {
         // Linked product was deleted — option becomes available: false until admin reconfigures
         return {
           ...option,
@@ -677,7 +686,8 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
       }, modifierGroups);
       return {
         ...product,
-        available: product.available && availability.available,
+        price: product.productType === 'pizza' ? previewModifierPrice(modifierGroups, [], product.basePrice).unitPrice : product.price,
+        available: product.available && availability.available && (product.productType !== 'pizza' || pizzaStartingPrice(product.pizza) != null),
         modifierGroups,
       };
     });

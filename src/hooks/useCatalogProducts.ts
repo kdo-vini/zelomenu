@@ -37,7 +37,7 @@ export function useCatalogProducts(
     const { data: row, error: dbError } = await supabase
       .from('produtos')
       .insert(payload)
-      .select('id, nome, preco, id_categoria, id_subcategoria, controlar_estoque, estoque_atual, eh_item_por_unidade, ocultar_no_pdv')
+      .select('id, nome, preco, id_categoria, id_subcategoria, controlar_estoque, estoque_atual, eh_item_por_unidade, ocultar_no_pdv, tipo_produto, pizza_config')
       .single();
     if (dbError) throw dbError;
     const created: ProdutoRow = normalizeProdutoRow(row);
@@ -47,6 +47,7 @@ export function useCatalogProducts(
 
   const updateProduto = useCallback(async (id: number, patch: Partial<ProdutoInput>): Promise<void> => {
     if (!userId) throw new Error('Faça login para continuar.');
+    if (dataRef.current.produtos.find(p=>p.id===id)?.tipo_produto === 'pizza') throw new Error('Edite pizzas montáveis no ZeloPDV.');
     const update: Record<string, unknown> = {};
     if (patch.nome !== undefined) update.nome = patch.nome.trim();
     if (patch.preco !== undefined) update.preco = patch.preco;
@@ -68,6 +69,7 @@ export function useCatalogProducts(
 
   const deleteProduto = useCallback(async (id: number): Promise<void> => {
     if (!userId) throw new Error('Faça login para continuar.');
+    if (dataRef.current.produtos.find(p=>p.id===id)?.tipo_produto === 'pizza') throw new Error('Arquive pizzas montáveis no ZeloPDV.');
     const publicationPhotoUrl = dataRef.current.productPublications[id]?.foto_url ?? null;
     const { error: dbError } = await supabase.from('produtos').delete().eq('id', id).eq('id_usuario', userId);
     if (dbError) throw dbError;
