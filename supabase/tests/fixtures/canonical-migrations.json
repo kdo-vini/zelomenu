@@ -1,0 +1,20 @@
+[
+  {
+    "fixture": "public_order_coupon_atomic.sql",
+    "repository": "kdo-vini/zelopdv",
+    "path": "supabase/migrations/20260904232549_public_order_coupon_atomic.sql",
+    "sha256": "2a3cf01fa7e3a9c1e0f86312ab3d0cb5269c203d305775b0157d8853f6852154"
+  },
+  {
+    "fixture": "push_subscription_dispatch_lease.sql",
+    "repository": "kdo-vini/zelopdv",
+    "path": "supabase/migrations/20260904234946_push_subscription_dispatch_lease.sql",
+    "sha256": "a77c7b373ca8d63cf4d89e322300d0a233099310c339f9042980c06f8c468152"
+  },
+  {
+    "fixture": "delivery_quote_request_current_cart_guard.sql",
+    "repository": "kdo-vini/zelopdv",
+    "path": "supabase/migrations/20260904235540_delivery_quote_request_current_cart_guard.sql",
+    "sha256": "87ed05994194dc641ea97c0c411af0097002d5c2f92b223c05f55b66512bd0e9"
+  }
+]

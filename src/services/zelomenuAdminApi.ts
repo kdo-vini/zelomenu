@@ -111,7 +111,7 @@ async function authHeader(): Promise<Record<string, string>> {
 const ERROR_MESSAGES: Record<string, string> = {
   BUSINESS_HOURS_INVALID: 'Horarios invalidos. Use inicio antes do fim em cada faixa (00:00-00:00 = 24h).',
   BUSINESS_HOURS_UNAVAILABLE: 'Os horarios ainda nao estao disponiveis neste banco. Aplique a migracao compartilhada e tente novamente.',
-  INTERNAL_ERROR: 'NÃ£o foi possÃ­vel salvar as configuraÃ§Ãµes. Tente novamente.',
+  INTERNAL_ERROR: 'Não foi possível salvar as configurações. Tente novamente.',
   SLUG_TAKEN: 'Esse link já está em uso.',
   INVALID_SLUG: 'Link inválido.',
   RESERVED_SLUG: 'Esse link é reservado.',
@@ -131,6 +131,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   DELIVERY_PRICING_RANGE_PRICE_MISSING: 'Informe um preço para cada faixa em todos os horários.',
   QUOTE_REQUEST_NOT_FOUND: 'Solicitação de cotação não encontrada.',
   QUOTE_REQUEST_NOT_PENDING: 'Esta solicitação já foi processada ou cancelada.',
+  QUOTE_REQUEST_STALE: 'O carrinho mudou desde esta solicitação. Atualize a fila e use a cotação atual.',
   QUOTE_REQUEST_MISSING_ADDRESS: 'Endereço não disponível para recálculo.',
   INVALID_FEE: 'Valor de frete inválido.',
 };
@@ -138,7 +139,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
-  timeoutMs = 8_000,
+  timeoutMs = 20_000,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -147,7 +148,7 @@ async function fetchWithTimeout(
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('DELIVERY_TIMEOUT');
+      throw new Error('A solicitação demorou demais. Verifique sua conexão e tente novamente.');
     }
     throw error;
   } finally {
@@ -179,7 +180,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 // ─── Endpoints ─────────────────────────────────────────────────────────────────
 
 export async function getZeloMenuSettings(): Promise<ZeloMenuStoreSettings> {
-  const response = await fetch('/api/admin/zelomenu/settings', {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/settings', {
     headers: await authHeader(),
     cache: 'no-store',
   });
@@ -189,7 +190,7 @@ export async function getZeloMenuSettings(): Promise<ZeloMenuStoreSettings> {
 export async function updateZeloMenuSettings(
   patch: ZeloMenuSettingsPatch,
 ): Promise<{ ok: true }> {
-  const response = await fetch('/api/admin/zelomenu/settings', {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/settings', {
     method: 'PATCH',
     headers: await authHeader(),
     body: JSON.stringify(patch),
@@ -276,7 +277,7 @@ export async function getDeliveryQuoteRequestDetail(id: string): Promise<Deliver
 export type DeliveryHealthStatus = {
   supabase: 'ok' | 'error';
   circuits: Record<string, { state: 'open' | 'closed' | 'half-open'; failures: number; opensInMs: number | null }>;
-  pendingRequests: number;
+  pendingRequests: number | null;
   oldestPendingMs: number | null;
 };
 
@@ -326,7 +327,7 @@ export async function generateZeloMenuWelcome(params: {
   companySpecialty: string;
   categories: string[];
 }): Promise<string> {
-  const response = await fetch('/api/admin/zelomenu/welcome', {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/welcome', {
     method: 'POST',
     headers: await authHeader(),
     body: JSON.stringify(params),
@@ -337,7 +338,7 @@ export async function generateZeloMenuWelcome(params: {
 }
 
 export async function generateZeloMenuProductDescription(productName: string): Promise<string> {
-  const response = await fetch('/api/admin/zelomenu/product-description', {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/product-description', {
     method: 'POST',
     headers: await authHeader(),
     body: JSON.stringify({ productName }),
@@ -347,7 +348,7 @@ export async function generateZeloMenuProductDescription(productName: string): P
 }
 
 export async function getZeloMenuSlug(): Promise<{ slug: string | null }> {
-  const response = await fetch('/api/admin/zelomenu/slug', {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/slug', {
     headers: await authHeader(),
     cache: 'no-store',
   });
@@ -355,7 +356,7 @@ export async function getZeloMenuSlug(): Promise<{ slug: string | null }> {
 }
 
 export async function setZeloMenuSlug(slug: string): Promise<{ slug: string }> {
-  const response = await fetch('/api/admin/zelomenu/slug', {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/slug', {
     method: 'PUT',
     headers: await authHeader(),
     body: JSON.stringify({ slug }),
@@ -374,7 +375,7 @@ export type MesaRow = {
 };
 
 export async function listMesasAdmin(): Promise<MesaRow[]> {
-  const response = await fetch('/api/admin/zelomenu/mesas', {
+  const response = await fetchWithTimeout('/api/admin/zelomenu/mesas', {
     headers: await authHeader(),
     cache: 'no-store',
   });
@@ -398,22 +399,22 @@ export type ZeloMenuCoupon = {
 export type ZeloMenuCouponInput = Omit<ZeloMenuCoupon, 'id'>;
 
 export async function listZeloMenuCouponsAdmin(): Promise<ZeloMenuCoupon[]> {
-  const response = await fetch('/api/admin/zelomenu/coupons', { headers: await authHeader(), cache: 'no-store' });
+  const response = await fetchWithTimeout('/api/admin/zelomenu/coupons', { headers: await authHeader(), cache: 'no-store' });
   const body = await parseResponse<{ coupons: ZeloMenuCoupon[] }>(response);
   return body.coupons;
 }
 
 export async function createZeloMenuCouponAdmin(input: ZeloMenuCouponInput): Promise<ZeloMenuCoupon> {
-  const response = await fetch('/api/admin/zelomenu/coupons', { method: 'POST', headers: await authHeader(), body: JSON.stringify(input) });
+  const response = await fetchWithTimeout('/api/admin/zelomenu/coupons', { method: 'POST', headers: await authHeader(), body: JSON.stringify(input) });
   return parseResponse<ZeloMenuCoupon>(response);
 }
 
 export async function updateZeloMenuCouponAdmin(id: string, patch: Partial<ZeloMenuCouponInput>): Promise<ZeloMenuCoupon> {
-  const response = await fetch(`/api/admin/zelomenu/coupons/${encodeURIComponent(id)}`, { method: 'PATCH', headers: await authHeader(), body: JSON.stringify(patch) });
+  const response = await fetchWithTimeout(`/api/admin/zelomenu/coupons/${encodeURIComponent(id)}`, { method: 'PATCH', headers: await authHeader(), body: JSON.stringify(patch) });
   return parseResponse<ZeloMenuCoupon>(response);
 }
 
 export async function deleteZeloMenuCouponAdmin(id: string): Promise<{ ok: true }> {
-  const response = await fetch(`/api/admin/zelomenu/coupons/${encodeURIComponent(id)}`, { method: 'DELETE', headers: await authHeader() });
+  const response = await fetchWithTimeout(`/api/admin/zelomenu/coupons/${encodeURIComponent(id)}`, { method: 'DELETE', headers: await authHeader() });
   return parseResponse<{ ok: true }>(response);
 }

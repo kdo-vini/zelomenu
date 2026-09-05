@@ -14,6 +14,7 @@ import type {
   ZeloMenuProductPublicationInput,
 } from './useCatalogTypes';
 import { normalizeProdutoRow, normalizeProductPublicationRow, normalizeOptionalText } from './useCatalogTypes';
+import { getOwnedZeloMenuPublicationImagePath } from '../domain/zelomenuPublicationImages';
 
 export function useCatalogProducts(
   userId: string | null,
@@ -108,14 +109,19 @@ export function useCatalogProducts(
       visivel_online: patch.visivel_online ?? current?.visivel_online ?? false,
       pausado_manualmente: patch.pausado_manualmente ?? current?.pausado_manualmente ?? false,
       ordem: Math.max(0, Math.trunc(patch.ordem ?? current?.ordem ?? 0)),
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(Math.max(Date.now(), Date.parse(current?.updated_at ?? '') + 1 || 0)).toISOString(),
     };
-
-    const { data: row, error: dbError } = await supabase
-      .from('zelomenu_product_publications')
-      .upsert(payload, { onConflict: 'id_usuario,id_produto' })
-      .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem')
-      .single();
+    const conflict = 'Este produto foi alterado em outra sessão. Atualize o catálogo antes de salvar novamente.';
+    const existing = current && !current.id.startsWith('optimistic-');
+    if (existing && !current.updated_at) throw new Error(conflict);
+    const table = supabase.from('zelomenu_product_publications');
+    const mutation = existing
+      ? table.update(payload).eq('id', current.id).eq('id_usuario', userId).eq('updated_at', current.updated_at!)
+      : table.insert(payload);
+    const { data: row, error: dbError } = await mutation
+      .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem, updated_at')
+      .maybeSingle();
+    if (dbError?.code === '23505' || (!dbError && !row)) throw new Error(conflict);
     if (dbError) throw dbError;
 
     const saved = normalizeProductPublicationRow(row);
@@ -123,6 +129,12 @@ export function useCatalogProducts(
       ...prev,
       productPublications: { ...prev.productPublications, [productId]: saved },
     }));
+    const previousImagePath = getOwnedZeloMenuPublicationImagePath(current?.foto_url);
+    if (previousImagePath && previousImagePath !== getOwnedZeloMenuPublicationImagePath(saved.foto_url)) {
+      void deleteOwnedZeloMenuPublicationImage(current.foto_url).catch((error) => {
+        console.warn('[Catalog] Failed to remove previous publication image after saving:', error);
+      });
+    }
     return saved;
   }, [userId, dataRef, commitData]);
 
@@ -153,19 +165,14 @@ export function useCatalogProducts(
         return {
           id_usuario: userId,
           id_produto: productId,
-          nome_publico: current?.nome_publico ?? null,
-          descricao_publica: current?.descricao_publica ?? null,
-          foto_url: current?.foto_url ?? null,
-          visivel_online: current?.visivel_online ?? false,
-          pausado_manualmente: current?.pausado_manualmente ?? false,
           ordem,
-          updated_at: new Date().toISOString(),
+          updated_at: new Date(Math.max(Date.now(), Date.parse(current?.updated_at ?? '') + 1 || 0)).toISOString(),
         };
       });
       const { data: rows, error: dbError } = await supabase
         .from('zelomenu_product_publications')
         .upsert(payload, { onConflict: 'id_usuario,id_produto' })
-        .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem');
+        .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem, updated_at');
       if (dbError) throw dbError;
       const saved = { ...optimistic };
       for (const row of rows ?? []) {

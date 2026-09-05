@@ -13,6 +13,7 @@ vi.mock('./supabaseServer.js', () => ({
   getServiceSupabase: vi.fn(() => ({
     from: vi.fn(() => {
       const query = {
+        range: vi.fn(() => query),
         select: vi.fn(() => query),
         eq: vi.fn(() => query),
         in: vi.fn(() => query),

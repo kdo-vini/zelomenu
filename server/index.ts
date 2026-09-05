@@ -1,4 +1,9 @@
 import 'dotenv/config';
+import { readBuildVersion } from './buildInfo.js';
+import { fetchWithDeadline } from './fetchWithDeadline.js';
+import { hasValidInternalCatalogKey } from './internalCatalogAuth.js';
+import { withCatalogScope } from './configStore.js';
+import { startDeliveryQuoteCleanup } from './zelomenuDeliveryService.js';
 import express from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import cors from 'cors';
@@ -18,16 +23,19 @@ import { listBusinesses } from './zelomenuBusinessDirectory.js';
 import { removePublicPushSubscription, savePublicPushSubscription, startOrderStatusPushDispatcher, type PublicPushSubscriptionPayload } from './zelomenuPushSubscriptions.js';
 import { getVapidConfig } from './vapidConfig.js';
 import { snapshot as metricsSnapshot } from './deliveryMetrics.js';
-import { CatalogDiscovery, parseInternalCatalogSearchRequest } from './internalCatalogSearch.js';
+import { createInternalCatalogSearchHandler } from './internalCatalogSearch.js';
 import { createInternalCatalogFailureLimiter, makeInternalCatalogRateLimitKey } from './internalCatalogRateLimit.js';
 import { createInternalOrderingRouter } from './internalOrdering.js';
 import { ConversationOrdering } from './supabaseConversationOrderingAdapter.js';
 import type { DeliveryAddress } from '../src/domain/zelomenuDelivery.js';
 import type { Request } from 'express';
+import { internalOrderingErrorCode } from './internalOrderingErrorCodes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const buildVersion = readBuildVersion();
 
 const app = express();
+app.use((_req, _res, next) => withCatalogScope(next));
 const PORT = Number(process.env.PORT) || 3101;
 const corsOrigins = (process.env.CORS_ORIGINS ?? '')
   .split(',')
@@ -40,28 +48,49 @@ app.use((req, res, next) => {
   const requestId = req.header('x-request-id')?.slice(0, 100) || randomUUID();
   res.locals.requestId = requestId;
   res.setHeader('x-request-id', requestId);
+  if (buildVersion) res.setHeader('x-app-version', buildVersion);
   next();
 });
 
 // This route-specific guard intentionally runs before JSON parsing. Invalid
 // bodies and oversized requests must be counted without affecting other APIs.
-app.use('/internal/catalog/search', internalCatalogFailureLimiter);
-app.use('/internal/ordering', internalOrderingFailureLimiter);
+// Its pre-parse stage never knows the empresaId, so it is always keyed by IP
+// (see internalCatalogRateLimit.ts).
+app.use('/internal/catalog/search', internalCatalogFailureLimiter.preParse);
+app.use('/internal/ordering', internalOrderingFailureLimiter.preParse);
 
 // Production is same-origin by default. Separate frontend origins must be
 // explicitly allowlisted instead of inheriting a wildcard CORS policy.
 app.use(cors({ origin: corsOrigins.length > 0 ? corsOrigins : false }));
 app.use(express.json({ limit: '1mb' }));
-app.use((error: unknown, _req: Request, res: Response, next: (error: unknown) => void) => {
+app.use((error: unknown, req: Request, res: Response, next: (error: unknown) => void) => {
   const status = typeof error === 'object' && error !== null && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+  const isBodyParseFailure = (error instanceof SyntaxError && status === 400) || status === 413;
+  if (isBodyParseFailure && res.locals.internalCatalogKeyValid === true) {
+    // A malformed/oversized body throws before postParse ever runs (Express
+    // skips every regular middleware once an error is thrown), so it must be
+    // recorded here instead — see recordAuthenticatedParseFailure's docstring.
+    if (req.path === '/internal/catalog/search' || req.path.startsWith('/internal/catalog/search/')) {
+      internalCatalogFailureLimiter.recordAuthenticatedParseFailure(req);
+    } else if (req.path === '/internal/ordering' || req.path.startsWith('/internal/ordering/')) {
+      internalOrderingFailureLimiter.recordAuthenticatedParseFailure(req);
+    }
+  }
   if (error instanceof SyntaxError && status === 400) {
-    return res.status(400).json({ error: 'JSON_INVALIDO', detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
+    return res.status(400).json({ error: internalOrderingErrorCode('JSON_INVALIDO'), detail: 'Envie dados em JSON válido.', requestId: res.locals.requestId });
   }
   if (status === 413) {
-    return res.status(413).json({ error: 'PAYLOAD_MUITO_GRANDE', detail: 'Os dados enviados são grandes demais.', requestId: res.locals.requestId });
+    return res.status(413).json({ error: internalOrderingErrorCode('PAYLOAD_MUITO_GRANDE'), detail: 'Os dados enviados são grandes demais.', requestId: res.locals.requestId });
   }
   return next(error);
 });
+
+// CT#10 fix: mounted AFTER JSON parsing so it can key an authenticated
+// caller's failures by its own empresaId (falling back to IP), instead of
+// letting one tenant's guaranteed 4xx traffic throttle every other tenant
+// sharing this single Dokploy container's egress IP.
+app.use('/internal/catalog/search', internalCatalogFailureLimiter.postParse);
+app.use('/internal/ordering', internalOrderingFailureLimiter.postParse);
 
 // Trust proxy headers when behind a reverse proxy
 app.set('trust proxy', 1);
@@ -111,7 +140,7 @@ const internalCatalogSearchLimiter = rateLimit({
     return makeInternalCatalogRateLimitKey(empresaId ?? 'consulta-invalida', ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown'));
   },
   handler: (_req, res) => res.status(429).json({
-    error: 'MUITAS_REQUISICOES',
+    error: internalOrderingErrorCode('MUITAS_REQUISICOES'),
     detail: 'Muitas consultas em pouco tempo. Tente novamente em instantes.',
     requestId: res.locals.requestId,
   }),
@@ -119,42 +148,7 @@ const internalCatalogSearchLimiter = rateLimit({
 
 // ─── Internal catalog discovery (ZeloChat) ───────────────────────────────────
 
-async function executeInternalCatalogSearch(_req: Request, res: Response, parsed: Extract<ReturnType<typeof parseInternalCatalogSearchRequest>, { ok: true }>): Promise<void> {
-  try {
-    const result = await CatalogDiscovery.search(parsed.value);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json(result);
-  } catch (error) {
-    // Do not log request headers/body: both can contain the internal key.
-    console.error('[ZeloMenu] internal catalog search error:', error);
-    res.status(500).json({
-      error: 'CONSULTA_INDISPONIVEL',
-      detail: 'Não foi possível consultar o cardápio agora. Tente novamente em instantes.',
-      requestId: res.locals.requestId,
-    });
-  }
-}
-
-app.post('/internal/catalog/search', async (req, res) => {
-  if (res.locals.internalCatalogKeyValid !== true) {
-    return res.status(401).json({
-      error: 'NAO_AUTORIZADO',
-      detail: 'Não foi possível autorizar esta consulta.',
-      requestId: res.locals.requestId,
-    });
-  }
-
-  const parsed = parseInternalCatalogSearchRequest(req.body);
-  if (!parsed.ok) {
-    return res.status(400).json({
-      error: 'CONSULTA_INVALIDA',
-      detail: parsed.message,
-      requestId: res.locals.requestId,
-    });
-  }
-  (req as Request & { internalCatalogEmpresaId?: string }).internalCatalogEmpresaId = parsed.value.empresaId;
-  return internalCatalogSearchLimiter(req, res, () => { void executeInternalCatalogSearch(req, res, parsed); });
-});
+app.post('/internal/catalog/search', createInternalCatalogSearchHandler({ rateLimit: internalCatalogSearchLimiter }));
 
 app.use('/internal/ordering', createInternalOrderingRouter(ConversationOrdering));
 
@@ -193,10 +187,12 @@ app.post('/api/public/zelomenu/store/:slug/cart', generalPublicLimiter, async (r
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[ZeloMenu] openPublicOrderCartSession error:', error);
+    if (message === 'INVALID_CART_CONTEXT') return res.status(400).json({ error: message, requestId: res.locals.requestId });
     if (message === 'EMPTY_CART') return res.status(400).json({ error: 'EMPTY_CART' });
     if (message === 'PRODUCT_NOT_FOUND') return res.status(400).json({ error: 'PRODUCT_NOT_FOUND' });
     if (message === 'PRODUCT_UNAVAILABLE') return res.status(400).json({ error: 'PRODUCT_UNAVAILABLE' });
     if (message === 'PRODUCT_STOCK_EXCEEDED' || message.startsWith('PRODUCT_STOCK_EXCEEDED:')) return res.status(400).json({ error: 'PRODUCT_STOCK_EXCEEDED' });
+    if (message === 'INVALID_QUANTITY' || message === 'CART_LINE_LIMIT_EXCEEDED' || message === 'ORDER_TOTAL_LIMIT_EXCEEDED') return res.status(400).json({ error: message, requestId: res.locals.requestId });
     if (message === 'DELIVERY_DISABLED') return res.status(400).json({ error: 'DELIVERY_DISABLED' });
     if (message === 'MODIFIER_QUANTITY_INVALID') return res.status(400).json({ error: 'MODIFIER_QUANTITY_INVALID', detail: 'A quantidade de complemento precisa ser um número inteiro positivo.' });
     if (message.startsWith('MODIFIER_INVALID:')) return res.status(400).json({ error: 'MODIFIER_INVALID', detail: message.slice('MODIFIER_INVALID:'.length) });
@@ -313,6 +309,7 @@ function sendAdminError(res: Response, error: unknown): void {
   if (message === 'DELIVERY_SETTINGS_SAVE_FAILED') return void res.status(503).json({ error: 'DELIVERY_SETTINGS_SAVE_FAILED' });
   if (message === 'QUOTE_REQUEST_NOT_FOUND') return void res.status(404).json({ error: 'QUOTE_REQUEST_NOT_FOUND' });
   if (message === 'QUOTE_REQUEST_NOT_PENDING') return void res.status(409).json({ error: 'QUOTE_REQUEST_NOT_PENDING' });
+  if (message === 'QUOTE_REQUEST_STALE') return void res.status(409).json({ error: 'QUOTE_REQUEST_STALE' });
   if (message === 'QUOTE_REQUEST_MISSING_ADDRESS') return void res.status(400).json({ error: 'QUOTE_REQUEST_MISSING_ADDRESS' });
   if (message === 'CART_SESSION_NOT_OPEN') return void res.status(409).json({ error: 'CART_SESSION_NOT_OPEN' });
   if (message === 'DELIVERY_QUOTE_RESOLUTION_FAILED') return void res.status(503).json({ error: 'DELIVERY_QUOTE_RESOLUTION_FAILED' });
@@ -419,7 +416,7 @@ app.post('/api/admin/zelomenu/welcome', async (req, res) => {
 
     const prompt = `Escreva um texto de boas-vindas para o cardápio digital da loja "${companyName}"${companySpecialty ? ` (${companySpecialty})` : ''}. Categorias do cardápio: ${catList || 'variadas'}.\n\nRegras: máximo 2 a 3 linhas, tom acolhedor e animado, sem usar emojis, em português brasileiro. Retorne apenas o texto, sem aspas ou explicações.`;
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetchWithDeadline('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -453,7 +450,7 @@ app.post('/api/admin/zelomenu/product-description', async (req, res) => {
 
     const prompt = `Escreva uma descrição curta e atraente para o produto "${productName}" de um cardápio digital de restaurante.\n\nRegras: máximo 2 frases, tom apetitoso e direto, sem emojis, em português brasileiro. Retorne apenas o texto, sem aspas ou explicações.`;
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetchWithDeadline('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -570,7 +567,8 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: process.env.PUBLIC_APP_VERSION?.trim() || undefined,
+    version: buildVersion,
+    sourceCommit: buildVersion?.slice(0, 40),
   });
 });
 
@@ -774,14 +772,13 @@ app.post('/api/admin/zelomenu/delivery/quote-requests/:id/cancel', async (req, r
   }
 });
 
-// GET /api/admin/zelomenu/delivery/metrics — delivery operations metrics
-app.get('/api/admin/zelomenu/delivery/metrics', async (req, res) => {
-  try {
-    await requireEmpresaId(req);
-    res.json(metricsSnapshot());
-  } catch (error) {
-    sendAdminError(res, error);
+// Process-wide telemetry belongs to operators, not an individual store admin.
+app.get('/internal/metrics/delivery', (req, res) => {
+  if (!hasValidInternalCatalogKey(req.header('x-metrics-key'), process.env.ZELOMENU_METRICS_KEY ?? '')) {
+    return res.status(401).json({ error: 'UNAUTHORIZED' });
   }
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(metricsSnapshot());
 });
 
 // GET /api/admin/zelomenu/delivery/health — provider health check
@@ -873,13 +870,23 @@ app.post('/api/public/zelomenu/delivery/cep', cepLookupLimiter, async (req, res)
 
 // ─── Serve built frontend in production ──────────────────────────────────────
 
+// Missing APIs must remain machine-readable failures, never successful SPA HTML.
+app.use(['/api', '/internal'], (_req, res) => {
+  res.status(404).json({ error: 'NOT_FOUND', requestId: res.locals.requestId });
+});
+
 const distPath = path.resolve(__dirname, '..', 'dist');
+app.get('/index.html', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(getIndexHtml(false));
+});
 app.use('/assets', express.static(path.join(distPath, 'assets'), {
   maxAge: '1y',
   immutable: true,
 }));
 app.use(express.static(distPath, {
   maxAge: '1h',
+  index: false,
 }));
 
 // Inject runtime env vars into the HTML so the frontend doesn't depend on
@@ -889,7 +896,7 @@ const runtimeEnv = {
   VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL ?? '',
   VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY ?? '',
 };
-const envScript = `<script>window.__ENV__ = ${JSON.stringify(runtimeEnv)};</script>`;
+const envScript = `<script>window.__ENV__ = ${JSON.stringify(runtimeEnv).replace(/</g, '\\u003c')};</script>`;
 
 // `index.html` ships end-user copy (link previews for `/{slug}` etc. — the
 // links actually shared with customers). `/admin` is the owner-only config
@@ -924,10 +931,12 @@ function getIndexHtml(isAdmin: boolean): string {
 // SPA fallback — any non-API request returns index.html with runtime env
 app.get('*', (req, res) => {
   const isAdmin = req.path === '/admin' || req.path.startsWith('/admin/');
+  res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(getIndexHtml(isAdmin));
 });
 
 app.listen(PORT, () => {
   console.log(`[ZeloMenu] Server listening on port ${PORT}`);
   startOrderStatusPushDispatcher();
+  startDeliveryQuoteCleanup();
 });

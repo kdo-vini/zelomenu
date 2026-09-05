@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head><meta charset="UTF-8"><title>Publication photo regression fixture</title></head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { ProductModal } from '/src/components/views/catalog/ProductEditorModal.tsx';
+      import '/src/index.css';
+
+      const product = { id: 1, nome: 'Produto de teste', preco: 10, id_categoria: 1, id_subcategoria: null };
+      const publication = { id: 'pub-1', id_produto: 1, nome_publico: null, descricao_publica: null,
+        foto_url: 'https://photo.test/old.jpg', visivel_online: true, pausado_manualmente: false, ordem: 0 };
+      window.photoEvents = [];
+      const root = createRoot(document.getElementById('root'));
+      function render(open) {
+        root.render(React.createElement(ProductModal, {
+          open, initial: product, initialTab: 'publicacao', initialPublication: publication,
+          categorias: [{ id: 1, nome: 'Lanches', ordem: 0 }], subcategorias: [], products: [product],
+          modifierGroups: [], modifierOptionProducts: {},
+          uploadImage: async () => { throw new Error('Upload is outside this fixture'); },
+          deleteImage: async (url) => { window.photoEvents.push({ type: 'delete', url }); },
+          onClose: () => render(false), onSubmit: async () => product, onSaveModifierGroups: async () => [],
+          onSavePublication: async (_productId, patch) => {
+            window.photoEvents.push({ type: 'save', patch });
+            return { ...publication, ...patch };
+          },
+        }));
+      }
+      render(true);
+    </script>
+  </body>
+</html>

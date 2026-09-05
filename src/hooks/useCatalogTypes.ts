@@ -39,6 +39,7 @@ export type ZeloMenuProductPublicationRow = {
   visivel_online: boolean;
   pausado_manualmente: boolean;
   ordem: number;
+  updated_at?: string | null;
 };
 
 export type ZeloMenuModifierGroupRow = ZeloMenuModifierGroup;
@@ -140,6 +141,7 @@ export function normalizeProductPublicationRow(row: any): ZeloMenuProductPublica
     visivel_online: !!row.visivel_online,
     pausado_manualmente: !!row.pausado_manualmente,
     ordem: Math.max(0, Number(row.ordem ?? 0)),
+    updated_at: normalizeOptionalText(row.updated_at),
   };
 }
 

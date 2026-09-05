@@ -1,6 +1,8 @@
 import type { Request } from 'express';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
+import { fetchWithDeadline } from './fetchWithDeadline.js';
+import { BoundedMap } from './boundedMap.js';
 
 let serviceClient: SupabaseClient | null = null;
 
@@ -21,17 +23,18 @@ export function getServiceSupabase(): SupabaseClient {
     serviceClient = createClient(getSupabaseUrl(), getServiceRoleKey(), {
       auth: { autoRefreshToken: false, persistSession: false },
       realtime: { transport: ws as any },
+      global: { fetch: fetchWithDeadline },
     });
   }
   return serviceClient;
 }
 
-const empresaUserIdCache = new Map<string, { userId: string; cachedAt: number }>();
+const empresaUserIdCache = new BoundedMap<string, { userId: string; cachedAt: number }>(1000);
 const EMPRESA_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // ─── Bearer-auth helpers ────────────────────────────────────────────────────────
 
-const empresaIdCache = new Map<string, { empresaId: string; cachedAt: number }>();
+const empresaIdCache = new BoundedMap<string, { empresaId: string; cachedAt: number }>(1000);
 
 export function extractBearerToken(req: Request): string | null {
   const header = req.headers.authorization;
@@ -80,7 +83,8 @@ export async function getEmpresaUserId(empresaId: string): Promise<string | null
     .select('user_id')
     .eq('id', empresaId)
     .maybeSingle();
-  if (error || !data?.user_id) return null;
+  if (error) throw error;
+  if (!data?.user_id) return null;
   empresaUserIdCache.set(empresaId, { userId: data.user_id, cachedAt: Date.now() });
   return data.user_id;
 }

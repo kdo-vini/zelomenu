@@ -1,3 +1,4 @@
+import { readAllRows } from '../src/utils/readAllRows.js';
 import { getServiceSupabase } from './supabaseServer.js';
 import { getEligibleZeloMenuUserIds } from './zelomenuAccess.js';
 
@@ -43,6 +44,15 @@ export interface BusinessDirectoryHighlight {
  * A rota é pública (sem autenticação) e usa o client service-role.
  */
 export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
+  const entries: BusinessDirectoryEntry[] = [];
+  for (let offset = 0; ; offset += 50) {
+    const page = await listBusinessesPage(offset);
+    entries.push(...page.entries);
+    if (!page.hasMore) return entries.sort((a, b) => Number(b.sponsored) - Number(a.sponsored));
+  }
+}
+
+async function listBusinessesPage(offset: number): Promise<{ entries: BusinessDirectoryEntry[]; hasMore: boolean }> {
   const supabase = getServiceSupabase();
 
   const baseSelect = 'id, user_id, nome_exibicao, endereco, logo_url, zelomenu_slug, delivery_city, delivery_state';
@@ -51,10 +61,11 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
     .from('empresa_perfil')
     .select(`${baseSelect}, ${optionalSelect}`)
     .not('zelomenu_slug', 'is', null)
-    .limit(50);
+    .order('id').range(offset, offset + 49);
 
   let profiles = initialProfilesResult.data as Array<Record<string, unknown>> | null;
   let error = initialProfilesResult.error;
+  if (error && error.code !== '42703' && error.code !== 'PGRST204') throw error;
 
   // Keep the public directory available while a new optional column is being
   // rolled out. The migration is still the source of truth for new data.
@@ -68,27 +79,25 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
       .from('empresa_perfil')
       .select(`${baseSelect}, zelomenu_welcome_text, zelomenu_featured_enabled, zelomenu_featured_product_ids`)
       .not('zelomenu_slug', 'is', null)
-      .limit(50);
+      .order('id').range(offset, offset + 49);
     profiles = fallbackProfilesResult.data as Array<Record<string, unknown>> | null;
     error = fallbackProfilesResult.error;
   }
 
+  if (error && error.code !== '42703' && error.code !== 'PGRST204') throw error;
   if (error) {
     const minimalProfilesResult = await supabase
       .from('empresa_perfil')
       .select(baseSelect)
       .not('zelomenu_slug', 'is', null)
-      .limit(50);
+      .order('id').range(offset, offset + 49);
     profiles = minimalProfilesResult.data as Array<Record<string, unknown>> | null;
     error = minimalProfilesResult.error;
   }
 
-  if (error) {
-    console.error('[ZeloMenu] listBusinesses error:', error);
-    return [];
-  }
+  if (error) throw error;
 
-  if (!profiles || profiles.length === 0) return [];
+  if (!profiles || profiles.length === 0) return { entries: [], hasMore: false };
 
   const userIds = profiles
     .map((row: Record<string, unknown>) => String(row.user_id ?? '').trim())
@@ -96,6 +105,8 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
   const companyIds = profiles
     .map((row: Record<string, unknown>) => String(row.id ?? '').trim())
     .filter(Boolean);
+  const featuredProductIds = [...new Set(profiles.flatMap((profile) => profile.zelomenu_featured_enabled === true && Array.isArray(profile.zelomenu_featured_product_ids)
+    ? profile.zelomenu_featured_product_ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0) : []))];
   const [eligibleUserIds, deliveryRangesResult, productsAndPublicationsResult, categoriesResult] = await Promise.all([
     getEligibleZeloMenuUserIds(userIds),
     companyIds.length > 0
@@ -105,33 +116,35 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
           .in('company_id', companyIds)
           .order('max_distance_m', { ascending: true })
       : Promise.resolve({ data: [], error: null }),
-    userIds.length > 0
+    userIds.length > 0 && featuredProductIds.length > 0
       ? Promise.all([
-          supabase
+          readAllRows((from, to) => supabase
             .from('produtos')
             .select('id, id_usuario, nome, preco, controlar_estoque, estoque_atual')
             .in('id_usuario', userIds)
-            .limit(5000),
-          supabase
+            .in('id', featuredProductIds)
+            .order('id').range(from, to)),
+          readAllRows((from, to) => supabase
             .from('zelomenu_product_publications')
             .select('id_usuario, id_produto, nome_publico, foto_url, visivel_online, pausado_manualmente, ordem')
             .in('id_usuario', userIds)
+            .in('id_produto', featuredProductIds)
             .order('ordem')
-            .limit(5000),
+            .order('id').range(from, to)),
         ])
       : Promise.resolve([{ data: [], error: null }, { data: [], error: null }]),
     userIds.length > 0
-      ? supabase
+      ? readAllRows((from, to) => supabase
           .from('categorias')
           .select('id_usuario, nome, ordem')
           .in('id_usuario', userIds)
           .order('ordem')
           .order('nome')
-          .limit(1000)
+          .order('id').range(from, to))
       : Promise.resolve({ data: [], error: null }),
   ]);
   const eligibleProfiles = profiles.filter((row) => eligibleUserIds.has(String(row.user_id ?? '').trim()));
-  if (eligibleProfiles.length === 0) return [];
+  if (eligibleProfiles.length === 0) return { entries: [], hasMore: profiles.length === 50 };
 
   const [productsResult, publicationsResult] = productsAndPublicationsResult;
 
@@ -171,7 +184,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
     categoriesByUser.set(userId, names);
   }
 
-  return eligibleProfiles.map((row: Record<string, unknown>) => {
+  const entries = eligibleProfiles.map((row: Record<string, unknown>) => {
     const city = String(row.delivery_city ?? '') || extractCityFromAddress(String(row.endereco ?? ''));
     const state = String(row.delivery_state ?? '') || extractStateFromAddress(String(row.endereco ?? ''));
     const slug = row.zelomenu_slug ? String(row.zelomenu_slug) : null;
@@ -210,8 +223,8 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
         : row.zelomenu_welcome_text
           ? String(row.zelomenu_welcome_text)
           : null,
-      latitude: Number.isFinite(Number(row.delivery_latitude)) ? Number(row.delivery_latitude) : null,
-      longitude: Number.isFinite(Number(row.delivery_longitude)) ? Number(row.delivery_longitude) : null,
+      latitude: row.delivery_latitude != null && Number.isFinite(Number(row.delivery_latitude)) ? Number(row.delivery_latitude) : null,
+      longitude: row.delivery_longitude != null && Number.isFinite(Number(row.delivery_longitude)) ? Number(row.delivery_longitude) : null,
       maxDeliveryDistanceM: deliveryConfig?.enabled === true ? maxDeliveryDistanceByCompany.get(String(row.id)) ?? null : null,
       rating: null,
       ratingCount: 0,
@@ -222,6 +235,7 @@ export async function listBusinesses(): Promise<BusinessDirectoryEntry[]> {
       menuUrl: slug ? `/${slug}` : null,
     };
   }).sort((a, b) => Number(b.sponsored) - Number(a.sponsored));
+  return { entries, hasMore: profiles.length === 50 };
 }
 
 function extractCityFromAddress(address: string): string | null {

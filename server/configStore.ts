@@ -1,3 +1,4 @@
+import { readAllRows } from '../src/utils/readAllRows.js';
 import { getServiceSupabase } from './supabaseServer.js';
 import {
   resolveZeloMenuPublicationCatalogProduct,
@@ -6,11 +7,12 @@ import {
   summarizeZeloMenuPublication,
 } from '../src/domain/zelomenuPublication.js';
 import { resolveCatalogProductAvailability } from '../src/domain/zelomenuCatalog.js';
-import { sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
+import { previewModifierPrice, resolveModifierOptionPrice, sortModifierGroups } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuModifierGroup, ZeloMenuModifierOption, ZeloMenuLinkedModifierProduct } from '../src/domain/zelomenuModifiers.js';
 import type { ZeloMenuProductPublication, ZeloMenuPublicationProduct, ZeloMenuPublicationSummary } from '../src/domain/zelomenuPublication.js';
 import { deriveWeeklyFromLegacy, normalizeWeeklyHours, type WeeklyHours } from '../src/domain/businessHours.js';
 import { isPixKeyType, type PixKeyType } from '../src/domain/pixBrCode.js';
+import type { ConversationModifierGroupDefinition } from './conversationOrderRequirements.js';
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -47,6 +49,55 @@ export type CatalogCategoriaGroup = {
   subcategorias: Array<{ nome: string; produtos: CatalogProduct[] }>;
   produtosDireto: CatalogProduct[];
 };
+
+export type ConversationCatalogDisplayPrice = {
+  kind: 'fixed' | 'from';
+  amount: number;
+};
+
+/**
+ * Maps the cached catalog into the conversation contract without sorting or
+ * filtering the cached arrays in place. Inactive options remain visible as
+ * unavailable so a consumer never has to infer their current state.
+ */
+export function toConversationModifierGroups(
+  groups: readonly ZeloMenuModifierGroup[],
+): ConversationModifierGroupDefinition[] {
+  return sortModifierGroups([...groups])
+    .filter((group) => group.active)
+    .map((group) => ({
+      id: group.id,
+      name: group.name,
+      kind: group.kind,
+      pricingMode: group.pricingMode,
+      minSelections: group.minSelections,
+      maxSelections: group.maxSelections,
+      minTotalQuantity: group.minTotalQuantity,
+      maxTotalQuantity: group.maxTotalQuantity,
+      allowsQuantity: group.allowsQuantity,
+      maxPerOption: group.maxPerOption,
+      order: group.order,
+      options: group.options.map((option) => ({
+        id: option.id,
+        name: option.name,
+        currentPrice: resolveModifierOptionPrice(option),
+        priceDelta: option.priceDelta,
+        available: option.active && option.linkedProduct?.available !== false,
+        order: option.order,
+      })),
+    }));
+}
+
+/** Resolves the cheapest complete required path shown before any selection. */
+export function resolveConversationCatalogDisplayPrice(
+  product: Pick<CatalogProduct, 'basePrice' | 'modifierGroups'>,
+): ConversationCatalogDisplayPrice {
+  const preview = previewModifierPrice([...product.modifierGroups], [], product.basePrice);
+  return {
+    kind: preview.hasRequiredGroup ? 'from' : 'fixed',
+    amount: preview.unitPrice,
+  };
+}
 
 export type BusinessConfig = {
   name: string;
@@ -103,7 +154,8 @@ const DEFAULT_CONFIG: BusinessConfig = {
   products: [],
 };
 
-const configMap = new Map<string, BusinessConfig>();
+const configMap = new ScopedCache<string, BusinessConfig>(100);
+export const withCatalogScope = <T>(callback: () => T): T => configMap.run(callback);
 
 export function getConfig(empresaId: string): BusinessConfig {
   return configMap.get(empresaId) ?? { ...DEFAULT_CONFIG };
@@ -450,14 +502,14 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
   if (!userId) throw new Error(`empresa_perfil.user_id missing for ${empresaId}`);
 
   const [categoriasRes, subcategoriasRes, produtosRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierComponentsRes, modifierOptionProductsRes] = await Promise.all([
-    supabase.from('categorias').select('id, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome'),
-    supabase.from('subcategorias').select('id, id_categoria, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome'),
-    supabase.from('produtos').select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual').eq('id_usuario', userId).order('nome'),
-    supabase.from('zelomenu_product_publications').select('id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem').eq('id_usuario', userId).order('ordem').limit(2000),
-    supabase.from('zelomenu_modifier_groups').select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, minimo_total_quantidade, maximo_total_quantidade, permite_quantidade, maximo_por_opcao, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(4000),
-    supabase.from('zelomenu_modifier_options').select('id, id_grupo, nome, price_delta, ativo, ordem').eq('id_usuario', userId).order('ordem').limit(8000),
-    supabase.from('zelomenu_modifier_components').select('id, nome, pausado_manualmente').eq('id_usuario', userId).limit(4000),
-    supabase.from('zelomenu_modifier_option_products').select('id_opcao, id_produto, id_componente, price_override').eq('id_usuario', userId).limit(4000),
+    readAllRows((from, to) => supabase.from('categorias').select('id, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome').order('id').range(from, to)),
+    readAllRows((from, to) => supabase.from('subcategorias').select('id, id_categoria, nome, ordem').eq('id_usuario', userId).order('ordem').order('nome').order('id').range(from, to)),
+    readAllRows((from, to) => supabase.from('produtos').select('id, nome, preco, id_categoria, id_subcategoria, eh_item_por_unidade, ocultar_no_pdv, controlar_estoque, estoque_atual').eq('id_usuario', userId).order('nome').order('id').range(from, to)),
+    readAllRows((from, to) => supabase.from('zelomenu_product_publications').select('id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem').eq('id_usuario', userId).order('ordem').order('id_produto').range(from, to)),
+    readAllRows((from, to) => supabase.from('zelomenu_modifier_groups').select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, minimo_total_quantidade, maximo_total_quantidade, permite_quantidade, maximo_por_opcao, ativo, ordem').eq('id_usuario', userId).order('ordem').order('id').range(from, to)),
+    readAllRows((from, to) => supabase.from('zelomenu_modifier_options').select('id, id_grupo, nome, price_delta, ativo, ordem').eq('id_usuario', userId).order('ordem').order('id').range(from, to)),
+    readAllRows((from, to) => supabase.from('zelomenu_modifier_components').select('id, nome, pausado_manualmente').eq('id_usuario', userId).order('id').range(from, to)),
+    readAllRows((from, to) => supabase.from('zelomenu_modifier_option_products').select('id_opcao, id_produto, id_componente, price_override').eq('id_usuario', userId).order('id_opcao').range(from, to)),
   ]);
 
   if (categoriasRes.error) throw categoriasRes.error;
@@ -671,3 +723,4 @@ export async function loadCatalogFromDb(empresaId: string): Promise<void> {
     products,
   });
 }
+import { ScopedCache } from './boundedMap.js';

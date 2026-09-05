@@ -1,5 +1,8 @@
 node_modules
 dist
+server-build/
+BUILD_INFO.json
+APP_VERSION
 .env
 .env.local
 .env.*.local

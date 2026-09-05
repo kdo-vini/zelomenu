@@ -16,6 +16,12 @@ export default defineConfig({
   timeout: 30_000,
   retries: 1,
   fullyParallel: true,
+  webServer: e2eBaseUrl === 'http://127.0.0.1:3100' ? {
+    command: 'npm run dev -- --host 127.0.0.1',
+    url: e2eBaseUrl,
+    reuseExistingServer: !process.env.CI,
+    timeout: 30_000,
+  } : undefined,
   use: {
     // Aponte a suíte para outro ambiente com E2E_BASE_URL (ex.: http://localhost:3100).
     // Default seguro: localhost. Produção exige E2E_ALLOW_PRODUCTION=true.

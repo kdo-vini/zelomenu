@@ -80,7 +80,8 @@ curl -H "Authorization: Bearer <token>" \
 
 ### Cleanup de expirados
 
-Solicitações com `expires_at` vencido e status `pending` são automaticamente marcadas como `expired`.
+Solicitações com `expires_at` vencido e status `pending` são marcadas como `expired`
+pelo scheduler do servidor a cada minuto ou quando o endpoint de cleanup abaixo é executado. O servidor agenda cleanup idempotente a cada minuto; o endpoint permanece para operação manual. O processo precisa estar em execução e a falha é registrada em log.
 
 Endpoint de cleanup manual:
 ```bash
@@ -90,9 +91,10 @@ curl -X POST -H "Authorization: Bearer <token>" \
 
 ## Métricas
 
-Endpoint: `GET /api/admin/zelomenu/delivery/metrics` (requer sessão admin)
+Endpoint operacional: `GET /internal/metrics/delivery`, header `x-metrics-key` igual à `ZELOMENU_METRICS_KEY` privada. Vazia desabilita o endpoint. Os contadores são globais, não acessíveis com sessão de lojista.
 
-Métricas disponíveis:
+Métricas em JSON, agregadas por processo (não por empresa), perdidas no reinício.
+O endpoint não expõe o formato de scrape Prometheus. Métricas disponíveis:
 - `delivery_quote_total:<status>` — contagem por status (eligible, out_of_area, unavailable, etc.)
 - `delivery_cache_hit:<layer>` — hits por camada (memory, supabase)
 - `delivery_provider:<provider>:<result>` — chamadas por provider (success, failure, timeout, fallback)
@@ -178,3 +180,5 @@ Em caso de incidente grave:
 3. Comunicar operação
 4. Preservar logs e request IDs para investigação
 5. Não remover migrations
+
+A partir de 2026-09-04, resolução manual exige que `deliveryQuoteRequestId` ainda aponte para a solicitação no carrinho. `QUOTE_REQUEST_STALE` significa endereço/carrinho alterado: atualize a fila, sem reaplicar frete antigo. Health retorna `pendingRequests: null` com DB em erro; nunca interprete como fila vazia.

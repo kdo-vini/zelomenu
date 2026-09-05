@@ -1,3 +1,4 @@
+import { readAllRows } from '../utils/readAllRows';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
@@ -33,12 +34,6 @@ export type { ZeloMenuModifierComponentRow, ZeloMenuModifierOptionProductLink } 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CATALOG_CATEGORY_LIMIT = 500;
-const CATALOG_SUBCATEGORY_LIMIT = 1000;
-const CATALOG_PRODUCT_LIMIT = 2000;
-const CATALOG_PUBLICATION_LIMIT = 2000;
-const CATALOG_MODIFIER_GROUP_LIMIT = 4000;
-const CATALOG_MODIFIER_OPTION_LIMIT = 8000;
 
 type UseCatalogOptions = {
   enabled?: boolean;
@@ -76,55 +71,55 @@ export function useCatalog(session: Session | null, options: UseCatalogOptions =
     setError(null);
     try {
       const [catsRes, subsRes, prodsRes, publicationsRes, modifierGroupsRes, modifierOptionsRes, modifierComponentsRes, modifierOptionProductsRes] = await Promise.all([
-        supabase
+        readAllRows((from, to) => supabase
           .from('categorias')
           .select('id, nome, ordem')
           .eq('id_usuario', userId)
           .order('ordem')
           .order('nome')
-          .limit(CATALOG_CATEGORY_LIMIT),
-        supabase
+          .order('id').range(from, to)),
+        readAllRows((from, to) => supabase
           .from('subcategorias')
           .select('id, id_categoria, nome, ordem')
           .eq('id_usuario', userId)
           .order('ordem')
           .order('nome')
-          .limit(CATALOG_SUBCATEGORY_LIMIT),
-        supabase
+          .order('id').range(from, to)),
+        readAllRows((from, to) => supabase
           .from('produtos')
           .select('id, nome, preco, id_categoria, id_subcategoria, controlar_estoque, estoque_atual, eh_item_por_unidade, ocultar_no_pdv')
           .eq('id_usuario', userId)
           .order('nome')
-          .limit(CATALOG_PRODUCT_LIMIT),
-        supabase
+          .order('id').range(from, to)),
+        readAllRows((from, to) => supabase
           .from('zelomenu_product_publications')
-          .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem')
+          .select('id, id_produto, nome_publico, descricao_publica, foto_url, visivel_online, pausado_manualmente, ordem, updated_at')
           .eq('id_usuario', userId)
           .order('ordem')
-          .limit(CATALOG_PUBLICATION_LIMIT),
-        supabase
+          .order('id').range(from, to)),
+        readAllRows((from, to) => supabase
           .from('zelomenu_modifier_groups')
           .select('id, id_produto, nome, tipo, modo_preco, min_selecoes, max_selecoes, minimo_total_quantidade, maximo_total_quantidade, permite_quantidade, maximo_por_opcao, ativo, ordem')
           .eq('id_usuario', userId)
           .order('ordem')
-          .limit(CATALOG_MODIFIER_GROUP_LIMIT),
-        supabase
+          .order('id').range(from, to)),
+        readAllRows((from, to) => supabase
           .from('zelomenu_modifier_options')
           .select('id, id_grupo, nome, price_delta, ativo, ordem')
           .eq('id_usuario', userId)
           .order('ordem')
-          .limit(CATALOG_MODIFIER_OPTION_LIMIT),
-        supabase
+          .order('id').range(from, to)),
+        readAllRows((from, to) => supabase
           .from('zelomenu_modifier_components')
           .select('id, nome, nome_chave, pausado_manualmente')
           .eq('id_usuario', userId)
           .order('nome')
-          .limit(CATALOG_MODIFIER_OPTION_LIMIT),
-        supabase
+          .order('id').range(from, to)),
+        readAllRows((from, to) => supabase
           .from('zelomenu_modifier_option_products')
           .select('id_opcao, id_produto, id_componente, price_override')
           .eq('id_usuario', userId)
-          .limit(CATALOG_MODIFIER_OPTION_LIMIT),
+          .order('id_opcao').range(from, to)),
       ]);
       if (catsRes.error) throw catsRes.error;
       if (subsRes.error) throw subsRes.error;

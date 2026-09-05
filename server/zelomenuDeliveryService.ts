@@ -1,3 +1,4 @@
+import { BoundedMap } from './boundedMap.js';
 // ZeloMenu — server-side delivery service (CEP lookup, geocoding, routing, cache).
 //
 // Todos os provedores externos (ViaCEP, Nominatim, OSRM) são chamados com
@@ -847,7 +848,7 @@ export type DeliveryStoreData = {
   timezone: string;
 };
 
-const deliveryStoreDataL1 = new Map<string, { result: DeliveryStoreData; expiresAt: number }>();
+const deliveryStoreDataL1 = new BoundedMap<string, { result: DeliveryStoreData; expiresAt: number }>(200);
 const deliveryStoreDataInFlight = new Map<string, Promise<DeliveryStoreData>>();
 
 function invalidateDeliveryStoreData(empresaId: string): void {
@@ -1311,6 +1312,7 @@ async function resolveQuoteRequestAndSession(
   });
   if (error) {
     if (error.message.includes('QUOTE_REQUEST_NOT_PENDING')) throw new Error('QUOTE_REQUEST_NOT_PENDING');
+    if (error.message.includes('QUOTE_REQUEST_STALE')) throw new Error('QUOTE_REQUEST_STALE');
     if (error.message.includes('CART_SESSION_NOT_OPEN')) throw new Error('CART_SESSION_NOT_OPEN');
     if (error.message.includes('INVALID_FEE')) throw new Error('INVALID_FEE');
     throw error;
@@ -1442,7 +1444,7 @@ export async function cancelDeliveryQuoteRequest(
 export type DeliveryHealthStatus = {
   supabase: 'ok' | 'error';
   circuits: Record<string, { state: 'open' | 'closed' | 'half-open'; failures: number; opensInMs: number | null }>;
-  pendingRequests: number;
+  pendingRequests: number | null;
   oldestPendingMs: number | null;
 };
 
@@ -1467,20 +1469,23 @@ export async function getDeliveryHealth(empresaId: string): Promise<DeliveryHeal
   }
 
   // Pending requests count and age
-  let pendingRequests = 0;
+  let pendingRequests: number | null = null;
   let oldestPendingMs: number | null = null;
   try {
-    const { data, error } = await getDb()
+    const { data, error, count } = await getDb()
       .from('zelomenu_delivery_quote_requests')
-      .select('created_at')
+      .select('created_at', { count: 'exact' })
       .eq('company_id', empresaId)
       .eq('status', 'pending')
-      .order('created_at', { ascending: true });
+      .gt('expires_at', new Date(now).toISOString())
+      .order('created_at', { ascending: true })
+      .limit(1);
     if (!error && data) {
-      pendingRequests = data.length;
+      pendingRequests = count;
       if (data.length > 0) oldestPendingMs = now - new Date(String(data[0].created_at)).getTime();
     }
-  } catch { /* use defaults */ }
+    if (error) supabase = 'error';
+  } catch { supabase = 'error'; }
 
   return { supabase, circuits, pendingRequests, oldestPendingMs };
 }
@@ -1488,20 +1493,37 @@ export async function getDeliveryHealth(empresaId: string): Promise<DeliveryHeal
 // ─── Cleanup de solicitações expiradas ──────────────────────────────────────
 
 export async function expireStaleQuoteRequests(empresaId: string): Promise<number> {
+  return expireQuoteRequests(empresaId);
+}
+
+async function expireQuoteRequests(empresaId?: string): Promise<number> {
   const now = new Date().toISOString();
-  const { data, error } = await getDb()
+  let query = getDb()
     .from('zelomenu_delivery_quote_requests')
     .update({
       status: 'expired',
       last_error: { code: 'expired', message: 'Solicitação expirada automaticamente.' },
       updated_at: now,
-    })
-    .eq('company_id', empresaId)
+    }, { count: 'exact' })
     .eq('status', 'pending')
-    .lt('expires_at', now)
-    .select('id');
+    .lt('expires_at', now);
+  if (empresaId) query = query.eq('company_id', empresaId);
+  const { error, count } = await query;
   if (error) throw error;
-  return (data as Array<Record<string, unknown>>)?.length ?? 0;
+  return count ?? 0;
+}
+
+let cleanupRunning = false;
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+export function startDeliveryQuoteCleanup(): void {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(() => {
+    if (cleanupRunning) return;
+    cleanupRunning = true;
+    void expireQuoteRequests().catch((error) => console.warn('[ZeloMenu] delivery cleanup failed:', error))
+      .finally(() => { cleanupRunning = false; });
+  }, 60_000);
+  cleanupTimer.unref();
 }
 
 export async function revalidateDeliveryForCart(input: {

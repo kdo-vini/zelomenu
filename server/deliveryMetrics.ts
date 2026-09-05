@@ -1,6 +1,6 @@
 // Simple in-memory metrics collector for delivery operations.
-// Exposes counters via GET /metrics endpoint for Prometheus scraping or manual
-// inspection. No external dependencies — data resets on process restart.
+// Exposes JSON via GET /internal/metrics/delivery, dedicated operator key.
+// These process-wide counters are not tenant-scoped and reset on restart.
 
 const counters = new Map<string, number>();
 const latencies: number[] = [];

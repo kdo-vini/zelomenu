@@ -1,5 +1,10 @@
 # Delivery por distância
 
+> Documento de projeto histórico (julho de 2026). As afirmações de implementação
+> abaixo descrevem aquele marco, não certificam produção. Para operação atual,
+> consulte [o runbook](docs/superpowers/delivery-runbook.md) e
+> [a auditoria de 2026-09-04](docs/audits/2026-09-04-zelomenu.md).
+
 ## Status
 
 ### Implementacao consolidada

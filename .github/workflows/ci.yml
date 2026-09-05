@@ -7,14 +7,41 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: isolated-ci-test
+          POSTGRES_DB: zelomenu_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
       - run: npm run typecheck:server
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e -- --workers=2 --retries=0
+      - run: npm run test:sql
+      - run: npm run test:sql:postgres
+        env:
+          PG_TEST_URL: postgres://postgres:isolated-ci-test@127.0.0.1:5432/zelomenu_test
       - run: npm run build
+      - run: node scripts/verifyBuild.mjs
+      - run: npm audit --audit-level=moderate
+      - run: docker build --build-arg PUBLIC_APP_VERSION=${{ github.sha }} -t zelomenu-ci .
+      - name: Verify production container
+        run: |
+          docker run -d --name zelomenu-ci -p 3101:3101 -e SUPABASE_URL=http://127.0.0.1:54329 -e SUPABASE_SERVICE_ROLE_KEY=isolated-ci-placeholder -e VITE_SUPABASE_URL=https://runtime-smoke.example -e VITE_SUPABASE_ANON_KEY=public-ci-placeholder zelomenu-ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:3101/api/health && break || sleep 1; done
+          BUILD_TEST_URL=http://127.0.0.1:3101 node scripts/verifyBuild.mjs
+      - if: always()
+        run: docker rm -f zelomenu-ci || true

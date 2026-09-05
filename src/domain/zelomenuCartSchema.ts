@@ -1,6 +1,7 @@
 import type { ZeloMenuSelectedModifierGroup } from './zelomenuModifiers';
 
 export type ZeloMenuCartItem = {
+  lineId?: string;
   productId: number | null;
   productName: string;
   baseUnitPrice: number;

@@ -69,7 +69,6 @@ export function ProductModal({
   modifierGroups,
   modifierOptionProducts,
   uploadImage,
-  deleteImage,
   onClose,
   onNavigate,
   onSubmit,
@@ -517,10 +516,8 @@ export function ProductModal({
                         setPublicationDirty(true);
                       }}
                       onRemove={async () => {
-                        const previous = currentPhotoUrl;
                         setFotoUrl('');
                         setPublicationDirty(true);
-                        if (previous) await enqueueSave(() => deleteImage(previous));
                       }}
                     />
                   ) : (

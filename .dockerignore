@@ -1,0 +1,17 @@
+node_modules
+dist
+server-build
+BUILD_INFO.json
+APP_VERSION
+.codex
+supabase/.temp
+.env
+.env.*
+!.env.example
+.tmp-test
+test-results
+playwright-report
+.claude
+.superpowers
+.verboo
+*.log

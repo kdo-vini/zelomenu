@@ -208,7 +208,7 @@ export function DeliveryQuoteQueue() {
             </span>
           ))}
           <span className="text-[var(--color-ink-faint)]">·</span>
-          <span>{health.pendingRequests} pendentes</span>
+          <span>{health.pendingRequests === null ? 'Contagem indisponível' : `${health.pendingRequests} pendentes`}</span>
           {health.oldestPendingMs != null && (
             <span className="text-[var(--color-ink-faint)]">· mais antigo há {Math.round(health.oldestPendingMs / 60000)}min</span>
           )}

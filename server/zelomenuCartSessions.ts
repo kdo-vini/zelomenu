@@ -1,6 +1,8 @@
+import { readAllRows } from '../src/utils/readAllRows.js';
+import { BoundedMap } from './boundedMap.js';
 import { randomUUID } from 'node:crypto';
 import { createHash, randomBytes } from 'node:crypto';
-import { getConfig, loadCatalogFromDb, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
+import { getConfig, loadCatalogFromDb, toConversationModifierGroups, type BusinessConfig, type CatalogCategoriaGroup, type CatalogProduct } from './configStore.js';
 import { getServiceSupabase, getEmpresaUserId } from './supabaseServer.js';
 import { notifyPushSubscribers } from './zelomenuPushSubscriptions.js';
 import { getMesaContext } from './zelomenuMesaHandler.js';
@@ -51,9 +53,19 @@ const FULL_DAY_LABELS: Record<string, string> = {
 
 import { buildCanonicalOrderSnapshots, usesDirectCanonicalOrderEngine } from '../src/domain/zeloCanonicalOrder.js';
 import { shouldAutoAcceptPublicOrder } from '../src/domain/zelomenuOrderAcceptance.js';
-import { findActiveCouponByCode, reserveCouponRedemption, attachOrderToRedemption, releaseCouponRedemption } from './zelomenuCoupons.js';
-import { normalizePhoneNumber } from '../src/domain/chat.js';
+import { findActiveCouponByCode } from './zelomenuCoupons.js';
+import { deriveConversationCustomerPhone } from './conversationOrderingIdentity.js';
 import { hasZeloMenuAccessForEmpresa } from './zelomenuAccess.js';
+import {
+  CUSTOMER_NAME_REQUIREMENT,
+  deriveModifierRequirements,
+  FULFILLMENT_TYPE_REQUIREMENT,
+  PAYMENT_METHOD_REQUIREMENT,
+  type DeliveryAddressRequirementField,
+  type ModifierOrderingRequirement,
+  type OrderingRequirement,
+  type ScheduleRequirementField,
+} from './conversationOrderRequirements.js';
 
 // ─── Token helpers (node:crypto, backend only) ─────────────────────────────────
 
@@ -170,6 +182,7 @@ export type ZeloMenuCartState =
 export type ZeloMenuCartContext = 'whatsapp_order' | 'public_order' | 'table_order';
 
 export type ZeloMenuCartItemInput = {
+  lineId?: string;
   productId?: number | null;
   productName: string;
   quantity: number;
@@ -214,6 +227,10 @@ export type ZeloMenuFulfillmentSnapshot = {
   deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
   deliveryPricingMode?: 'standard' | 'custom_time';
   deliveryPricingRuleLabel?: string | null;
+};
+
+export type ConversationFulfillmentSnapshot = Omit<ZeloMenuFulfillmentSnapshot, 'type'> & {
+  type: ZeloMenuFulfillmentSnapshot['type'] | null;
 };
 
 export type ZeloMenuDeliveryQuoteOverride = {
@@ -384,7 +401,7 @@ type PublicStoreResponse = {
   catalog: CatalogCategoriaGroup[];
 };
 
-const publicStoreCache = new Map<string, { expiresAt: number; response: PublicStoreResponse }>();
+const publicStoreCache = new BoundedMap<string, { expiresAt: number; response: PublicStoreResponse }>(200);
 const PUBLIC_STORE_CACHE_MS = 15_000;
 
 type ZeloMenuProfileRow = {
@@ -905,6 +922,7 @@ function stockExceededError(productName: string, availableQuantity: number, requ
 
 function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
   return cart.items.map((item) => ({
+    lineId: item.lineId,
     productId: item.productId,
     productName: item.productName,
     quantity: item.quantity,
@@ -921,45 +939,70 @@ function toCartItemInputs(cart: ZeloMenuCartSnapshot): ZeloMenuCartItemInput[] {
 
 // ─── Snapshot resolution ──────────────────────────────────────────────────────
 
-type ResolvedCart = {
+type ResolvedCart<TFulfillment extends ConversationFulfillmentSnapshot = ZeloMenuFulfillmentSnapshot> = {
   cart: ZeloMenuCartSnapshot;
-  fulfillment: ZeloMenuFulfillmentSnapshot;
+  fulfillment: TFulfillment;
   pricing: ZeloMenuPricingSnapshot;
   payment: ZeloMenuPaymentSnapshot;
 };
 
+type ResolveSnapshotsParams = {
+  items: ZeloMenuCartItemInput[];
+  fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
+  paymentMethod?: string | null;
+  observations?: string | null;
+  context: ZeloMenuCartContext;
+  couponCode?: string | null;
+  deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
+  allowIncompleteModifiers?: boolean;
+  allowMissingFulfillment?: boolean;
+  /**
+   * Injectable seam for the delivery-quote persistence boundary (real
+   * `revalidateDeliveryForCart` hits Supabase + external geocoding). Never
+   * set in production call sites — defaults to the real implementation.
+   * Exists so fixture/test callers can exercise the REAL pricing/readiness
+   * logic around it without a database. See `materializeWhatsAppOrderDraft`'s
+   * `deps.deliveryQuoter`.
+   */
+  deliveryQuoter?: typeof revalidateDeliveryForCart;
+};
+
 async function resolveSnapshots(
   empresaId: string,
-  params: {
-    items: ZeloMenuCartItemInput[];
-    fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
-    paymentMethod?: string | null;
-    observations?: string | null;
-    context: ZeloMenuCartContext;
-    couponCode?: string | null;
-    deliveryQuoteOverride?: ZeloMenuDeliveryQuoteOverride | null;
-  },
-): Promise<ResolvedCart> {
-  await loadCatalogFromDb(empresaId);
-  const config = getConfig(empresaId);
+  params: ResolveSnapshotsParams & { allowMissingFulfillment: true },
+  loadedConfig?: BusinessConfig,
+): Promise<ResolvedCart<ConversationFulfillmentSnapshot>>;
+async function resolveSnapshots(
+  empresaId: string,
+  params: ResolveSnapshotsParams & { allowMissingFulfillment?: false },
+  loadedConfig?: BusinessConfig,
+): Promise<ResolvedCart>;
+async function resolveSnapshots(
+  empresaId: string,
+  params: ResolveSnapshotsParams,
+  loadedConfig?: BusinessConfig,
+): Promise<ResolvedCart<ConversationFulfillmentSnapshot>> {
+  if (!loadedConfig) await loadCatalogFromDb(empresaId);
+  const config = loadedConfig ?? getConfig(empresaId);
   const resolvedItems: ZeloMenuCartItemSnapshot[] = [];
-
+  const productsById = new Map(config.products.map((product) => [product.id, product]));
   const aggregated = new Map<number, number>();
-  for (const item of params.items) {
-    if (item.productId != null) aggregated.set(item.productId, (aggregated.get(item.productId) ?? 0) + item.quantity);
-  }
-
   for (const item of params.items) {
     const product = findCatalogProduct(config.products, { productId: item.productId ?? null, productName: item.productName });
     if (!product) throw new Error('PRODUCT_NOT_FOUND');
-    if (product.stockControlled) {
-      const stockQuantity = Number(product.stockQuantity ?? 0);
-      const requestedQuantity = item.productId != null ? aggregated.get(item.productId) ?? item.quantity : item.quantity;
-      if (requestedQuantity > stockQuantity) throw stockExceededError(product.name, stockQuantity, requestedQuantity);
+    const unavailableOnlyBecauseOfStock = product.stockControlled
+      && Number(product.stockQuantity ?? 0) <= 0;
+    if (!product.available && !unavailableOnlyBecauseOfStock) throw new Error('PRODUCT_UNAVAILABLE');
+    const directAgg = (aggregated.get(product.id) ?? 0) + item.quantity;
+    if (!Number.isSafeInteger(item.quantity) || !Number.isSafeInteger(directAgg)) {
+      throw new Error('INVALID_QUANTITY');
     }
-    if (!product.available) throw new Error('PRODUCT_UNAVAILABLE');
+    aggregated.set(product.id, directAgg);
     const baseUnitPrice = Number(product.basePrice ?? product.price);
-    const modifierResolution = resolveModifierSelections(product.modifierGroups, item.selectedOptions ?? [], baseUnitPrice);
+    const modifierGroups = params.allowIncompleteModifiers
+      ? product.modifierGroups.map((group) => ({ ...group, minSelections: 0, minTotalQuantity: 0 }))
+      : product.modifierGroups;
+    const modifierResolution = resolveModifierSelections(modifierGroups, item.selectedOptions ?? [], baseUnitPrice);
     if (modifierResolution.ok === false) throw new Error(`MODIFIER_INVALID:${modifierResolution.message}`);
     const unitPrice = Number(modifierResolution.finalUnitPrice.toFixed(2));
 
@@ -974,17 +1017,19 @@ async function resolveSnapshots(
           const linkedProductId = modifierOption.linkedProduct.productId;
           const linkedProductInCatalog = linkedProductId == null
             ? null
-            : config.products.find((p) => p.id === linkedProductId);
-          if (linkedProductInCatalog?.stockControlled) {
-            const stockQuantity = Number(linkedProductInCatalog.stockQuantity ?? 0);
-            const linkedAgg = aggregated.get(linkedProductId!) ?? item.quantity;
-            if (linkedAgg > stockQuantity) throw stockExceededError(linkedProductInCatalog.name, stockQuantity, linkedAgg);
-          }
+            : productsById.get(linkedProductId);
           if (modifierOption.linkedProduct.available === false) throw new Error('MODIFIER_INVALID:Uma opção vinculada não está mais disponível.');
+          if (linkedProductId == null || linkedProductInCatalog == null) continue;
+          const linkedContribution = item.quantity * opt.quantity;
+          if (!Number.isSafeInteger(linkedContribution)) throw new Error('MODIFIER_QUANTITY_INVALID');
+          const linkedAgg = (aggregated.get(linkedProductId) ?? 0) + linkedContribution;
+          if (!Number.isSafeInteger(linkedAgg)) throw new Error('MODIFIER_QUANTITY_INVALID');
+          aggregated.set(linkedProductId, linkedAgg);
         }
       }
     }
     resolvedItems.push({
+      lineId: item.lineId,
       productId: product.id ?? null,
       productName: product.name,
       baseUnitPrice,
@@ -997,7 +1042,22 @@ async function resolveSnapshots(
     });
   }
 
-  const fulfillmentType = params.fulfillment?.type === 'delivery' ? 'delivery' : 'pickup';
+  for (const [productId, requestedQuantity] of aggregated) {
+    const product = productsById.get(productId);
+    if (!product?.stockControlled) continue;
+    const stockQuantity = Number(product.stockQuantity ?? 0);
+    if (requestedQuantity > stockQuantity) {
+      throw stockExceededError(product.name, stockQuantity, requestedQuantity);
+    }
+  }
+
+  const fulfillmentType = params.fulfillment?.type === 'delivery'
+    ? 'delivery'
+    : params.fulfillment?.type === 'pickup'
+      ? 'pickup'
+      : params.allowMissingFulfillment
+        ? null
+        : 'pickup';
   const deliveryNeighborhood = sanitizeText(params.fulfillment?.deliveryNeighborhood, 120);
 
   let deliveryFee = 0;
@@ -1037,7 +1097,8 @@ async function resolveSnapshots(
         quoteLocalTime = params.fulfillment.pickupTime;
       }
       try {
-        const result = await revalidateDeliveryForCart({
+        const quoteDeliveryForCart = params.deliveryQuoter ?? revalidateDeliveryForCart;
+        const result = await quoteDeliveryForCart({
           empresaId,
           postalCode,
           number,
@@ -1061,7 +1122,7 @@ async function resolveSnapshots(
           quoteRequestId: null,
         };
       }
-    } else {
+    } else if (!override) {
       deliveryFee = 0;
       deliveryFeeToConfirm = true;
       deliveryDetail = {
@@ -1076,7 +1137,7 @@ async function resolveSnapshots(
     }
   }
 
-  const fulfillment: ZeloMenuFulfillmentSnapshot = {
+  const fulfillment: ConversationFulfillmentSnapshot = {
     type: fulfillmentType,
     asap: params.fulfillment?.asap === true,
     pickupDate: normalizeDate(params.fulfillment?.pickupDate),
@@ -1094,7 +1155,11 @@ async function resolveSnapshots(
     deliveryLatitude: deliveryDetail?.coordinates?.latitude ?? null,
     deliveryLongitude: deliveryDetail?.coordinates?.longitude ?? null,
     deliveryDistanceM: deliveryDetail?.distanceM ?? null,
-    deliveryStatus: fulfillmentType === 'delivery' ? (deliveryDetail?.status ?? 'pending') : 'not_applicable',
+    deliveryStatus: fulfillmentType === 'delivery'
+      ? (deliveryDetail?.status ?? 'pending')
+      : fulfillmentType === 'pickup'
+        ? 'not_applicable'
+        : null,
     deliveryCacheLayer: deliveryDetail?.cacheLayer ?? null,
     deliveryQuoteRequestId: deliveryDetail?.quoteRequestId ?? null,
     deliveryPricingMode: deliveryDetail?.deliveryPricingMode,
@@ -1141,25 +1206,78 @@ async function resolveSnapshots(
  * aceita somente IDs, quantidades e observações; nomes, preços, disponibilidade,
  * complementos, frete e totais são sempre reconstruídos do catálogo público.
  */
+export type WhatsAppOrderDraftMaterialization = {
+  cart: Omit<ZeloMenuCartSnapshot, 'items'> & {
+    items: Array<ZeloMenuCartItemSnapshot & { lineId: string }>;
+  };
+  customer: ZeloMenuCustomerSnapshot;
+  fulfillment: ConversationFulfillmentSnapshot;
+  payment: ZeloMenuPaymentSnapshot;
+  pricing: ZeloMenuPricingSnapshot;
+  revalidation: ZeloMenuCartRevalidation;
+  requirements: OrderingRequirement[];
+  readyForConfirmation: boolean;
+};
+
+const CONVERSATION_LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+function throwConversationModifierError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith('PRODUCT_NOT_FOUND:')) throw new Error('PRODUCT_NOT_FOUND');
+  const codes: Array<[prefix: string, publicCode: string]> = [
+    ['MODIFIER_GROUP_OUTSIDE_PRODUCT:', 'GROUP_OUTSIDE_PRODUCT'],
+    ['MODIFIER_OPTION_OUTSIDE_PRODUCT:', 'OPTION_OUTSIDE_PRODUCT'],
+    ['MODIFIER_OPTION_OUTSIDE_GROUP:', 'OPTION_OUTSIDE_GROUP'],
+    ['MODIFIER_OPTION_UNAVAILABLE:', 'OPTION_UNAVAILABLE'],
+    ['MODIFIER_QUANTITY_INVALID:', 'QUANTITY_INVALID'],
+    ['MODIFIER_DISTINCT_SELECTIONS_EXCEEDED:', 'DISTINCT_SELECTIONS_EXCEEDED'],
+    ['MODIFIER_TOTAL_QUANTITY_EXCEEDED:', 'TOTAL_QUANTITY_EXCEEDED'],
+    ['MODIFIER_OPTION_QUANTITY_EXCEEDED:', 'OPTION_QUANTITY_EXCEEDED'],
+  ];
+  const match = codes.find(([prefix]) => message.startsWith(prefix));
+  if (match) throw new Error(`MODIFIER_INVALID:${match[1]}`);
+  throw error;
+}
+
+/**
+ * Injectable seams for `materializeWhatsAppOrderDraft`'s persistence
+ * boundary. All dependencies default to production behavior for every production
+ * call site (`SupabaseConversationOrderingAdapter.materializeDraft` never
+ * passes this parameter). Exists so a fixture/test caller can drive the REAL
+ * materialization — pricing, requirement derivation, readiness, phone
+ * derivation — without a database, instead of hand-rolling a parallel
+ * (and inevitably drifting) copy of this function's logic. See
+ * `resolveSnapshots`'s `deliveryQuoter` field for the matching seam on the
+ * delivery-quote persistence boundary.
+ */
+export type MaterializeWhatsAppOrderDraftDeps = {
+  loadedConfig?: BusinessConfig;
+  deliveryQuoter?: typeof revalidateDeliveryForCart;
+  now?: () => Date;
+};
+
 export async function materializeWhatsAppOrderDraft(input: {
   empresaId: string;
+  remoteJid: string;
   items: Array<{
+    lineId: string;
     productId: number;
     quantity: number;
     notes?: string | null;
     selectedOptions?: ZeloMenuModifierSelectionInput[];
   }>;
   observations?: string | null;
-  customer?: { name?: string | null; phone?: string | null };
+  customer?: { name?: string | null };
   fulfillment?: Partial<ZeloMenuFulfillmentSnapshot> | null;
   paymentMethod?: string | null;
-}): Promise<ResolvedCart & { customer: ZeloMenuCustomerSnapshot; revalidation: ZeloMenuCartRevalidation }> {
+}, deps: MaterializeWhatsAppOrderDraftDeps = {}): Promise<WhatsAppOrderDraftMaterialization> {
   if (!Array.isArray(input.items) || input.items.length < 1) throw new Error('EMPTY_CART');
   if (input.items.length > 50) throw new Error('CART_LINE_LIMIT_EXCEEDED');
-  const items = input.items.map((item): ZeloMenuCartItemInput => {
+  const items = input.items.map((item) => {
     if (!Number.isSafeInteger(item.productId) || item.productId <= 0) throw new Error('PRODUCT_NOT_FOUND');
     if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 999) throw new Error('INVALID_QUANTITY');
     return {
+      lineId: item.lineId,
       productId: item.productId,
       // Sentinela deliberadamente não pesquisável: esta camada jamais resolve
       // ambiguidade por nome se o ID canônico deixar de existir.
@@ -1169,25 +1287,107 @@ export async function materializeWhatsAppOrderDraft(input: {
       selectedOptions: item.selectedOptions ?? [],
     };
   });
-  const fulfillment: Partial<ZeloMenuFulfillmentSnapshot> = {
-    type: input.fulfillment?.type === 'delivery' ? 'delivery' : 'pickup',
-    ...input.fulfillment,
-    asap: input.fulfillment?.asap !== false,
-  };
+  if (!deps.loadedConfig) await loadCatalogFromDb(input.empresaId);
+  const config = deps.loadedConfig ?? getConfig(input.empresaId);
+  let modifierRequirements: ModifierOrderingRequirement[];
+  try {
+    modifierRequirements = deriveModifierRequirements(
+      input.items.map((item) => ({
+        lineId: item.lineId,
+        productId: item.productId,
+        selectedOptions: item.selectedOptions,
+      })),
+      config.products.map((product) => ({
+        id: product.id,
+        name: product.name,
+        basePrice: product.basePrice,
+        available: product.available,
+        modifierGroups: toConversationModifierGroups(product.modifierGroups),
+      })),
+    );
+  } catch (error) {
+    throwConversationModifierError(error);
+  }
+  const fulfillment = input.fulfillment?.type
+    ? { ...input.fulfillment, asap: input.fulfillment.asap !== false }
+    : input.fulfillment;
   const resolved = await resolveSnapshots(input.empresaId, {
     items,
     fulfillment,
     paymentMethod: input.paymentMethod,
     observations: input.observations,
     context: 'whatsapp_order',
+    allowIncompleteModifiers: true,
+    allowMissingFulfillment: true,
+    deliveryQuoter: deps.deliveryQuoter,
+  }, config);
+  const customer: ZeloMenuCustomerSnapshot = {
+    name: sanitizeText(input.customer?.name, 120),
+    phone: deriveConversationCustomerPhone(input.remoteJid),
+  };
+  const missingDeliveryAddressFields: DeliveryAddressRequirementField[] = [];
+  if (resolved.fulfillment.type === 'delivery') {
+    if (
+      sanitizeText(resolved.fulfillment.deliveryAddress, 250) === null
+      && sanitizeText(resolved.fulfillment.deliveryStreet, 250) === null
+    ) {
+      missingDeliveryAddressFields.push('address');
+    }
+    if (sanitizeText(resolved.fulfillment.deliveryNumber, 30) === null) {
+      missingDeliveryAddressFields.push('number');
+    }
+    if (sanitizeText(resolved.fulfillment.deliveryNeighborhood, 120) === null) {
+      missingDeliveryAddressFields.push('neighborhood');
+    }
+  }
+  const missingScheduleFields: ScheduleRequirementField[] = [];
+  if (resolved.fulfillment.asap === false) {
+    if (resolved.fulfillment.pickupDate === null) missingScheduleFields.push('date');
+    if (resolved.fulfillment.pickupTime === null) missingScheduleFields.push('time');
+  }
+  const requirements: WhatsAppOrderDraftMaterialization['requirements'] = [
+    ...modifierRequirements,
+    ...(resolved.fulfillment.type === null ? [FULFILLMENT_TYPE_REQUIREMENT] : []),
+    ...(customer.name === null ? [CUSTOMER_NAME_REQUIREMENT] : []),
+    ...(resolved.payment.declaredMethod === null ? [PAYMENT_METHOD_REQUIREMENT] : []),
+    ...(missingDeliveryAddressFields.length > 0 ? [{
+      id: 'delivery_address' as const,
+      type: 'delivery_address' as const,
+      name: 'Informe o endereço de entrega.',
+      blocking: true as const,
+      missingFields: missingDeliveryAddressFields,
+    }] : []),
+    ...(missingScheduleFields.length > 0 ? [{
+      id: 'schedule' as const,
+      type: 'schedule' as const,
+      name: 'Informe a data e o horário do pedido.',
+      blocking: true as const,
+      missingFields: missingScheduleFields,
+    }] : []),
+  ];
+  const revalidation = revalidationFromResolved(resolved, deps.now?.());
+  const materializedItems = resolved.cart.items.map((item) => {
+    if (typeof item.lineId !== 'string' || !CONVERSATION_LINE_ID.test(item.lineId)) {
+      throw new Error('MATERIALIZED_LINE_ID_MISSING');
+    }
+    return { ...item, lineId: item.lineId };
   });
+  if (new Set(materializedItems.map((item) => item.lineId)).size !== materializedItems.length) {
+    throw new Error('MATERIALIZED_LINE_ID_DUPLICATE');
+  }
   return {
     ...resolved,
-    customer: {
-      name: sanitizeText(input.customer?.name, 120),
-      phone: sanitizeText(input.customer?.phone, 40),
+    cart: {
+      ...resolved.cart,
+      items: materializedItems,
     },
-    revalidation: revalidationFromResolved(resolved),
+    customer,
+    revalidation,
+    requirements,
+    readyForConfirmation: resolved.fulfillment.type !== null
+      && !resolved.fulfillment.deliveryFeeToConfirm
+      && revalidation.ok
+      && !requirements.some((requirement) => requirement.blocking),
   };
 }
 
@@ -1283,7 +1483,7 @@ type InternalZeloMenuCartRevalidation = ZeloMenuCartRevalidation & {
   previewFulfillment: ZeloMenuFulfillmentSnapshot | null;
 };
 
-async function runRevalidation(session: PublicCartSession): Promise<InternalZeloMenuCartRevalidation> {
+async function runRevalidation(session: PublicCartSession, loadedConfig?: BusinessConfig): Promise<InternalZeloMenuCartRevalidation> {
   const currentInput = toCartItemInputs(session.cart);
   const issues: ZeloMenuCartRevalidationIssue[] = [];
   let previewCart: ZeloMenuCartSnapshot | null = null;
@@ -1300,7 +1500,7 @@ async function runRevalidation(session: PublicCartSession): Promise<InternalZelo
       context: session.context,
       couponCode: session.pricing.couponCode,
       deliveryQuoteOverride: session.fulfillment.deliveryQuoteOverride,
-    });
+    }, loadedConfig);
     previewCart = resolved.cart;
     previewPricing = resolved.pricing;
     previewPayment = resolved.payment;
@@ -1348,7 +1548,10 @@ async function runRevalidation(session: PublicCartSession): Promise<InternalZelo
   return { checkedAt: new Date().toISOString(), ok: issues.length === 0, issues, previewCart, previewPricing, previewPayment, previewFulfillment };
 }
 
-function revalidationFromResolved(resolved: ResolvedCart): ZeloMenuCartRevalidation {
+function revalidationFromResolved(
+  resolved: ResolvedCart<ConversationFulfillmentSnapshot>,
+  checkedAt = new Date(),
+): ZeloMenuCartRevalidation {
   const issues: ZeloMenuCartRevalidationIssue[] = [];
   if (resolved.fulfillment.type === 'delivery') {
     if (resolved.fulfillment.deliveryStatus === 'out_of_area') {
@@ -1367,7 +1570,7 @@ function revalidationFromResolved(resolved: ResolvedCart): ZeloMenuCartRevalidat
     }
   }
   return {
-    checkedAt: new Date().toISOString(),
+    checkedAt: checkedAt.toISOString(),
     ok: issues.length === 0,
     issues,
     previewCart: resolved.cart,
@@ -1392,17 +1595,19 @@ function canCarryDeliveryQuoteOverride(
     && currentComplement === incomingComplement;
 }
 
-async function persistRevalidation(sessionId: string, revalidation: ZeloMenuCartRevalidation): Promise<void> {
+async function persistRevalidation(sessionId: string, revision: number, revalidation: ZeloMenuCartRevalidation): Promise<void> {
   const now = new Date().toISOString();
   const { error } = await getServiceSupabase()
     .from('zelomenu_cart_sessions')
-    .update({ last_revalidated_at: now, last_revalidation: revalidation, updated_at: now })
-    .eq('id', sessionId);
+    .update({ last_revalidated_at: now, last_revalidation: revalidation })
+    .eq('id', sessionId)
+    .eq('revision', revision)
+    .eq('state', 'cart_open');
   if (error) throw error;
 }
 
 async function persistChangedDeliveryQuote(
-  sessionId: string,
+  session: SessionRow,
   revalidation: InternalZeloMenuCartRevalidation,
 ): Promise<void> {
   if (!revalidation.previewFulfillment || !revalidation.previewPricing) {
@@ -1410,18 +1615,24 @@ async function persistChangedDeliveryQuote(
   }
 
   const now = new Date().toISOString();
-  const { error } = await getServiceSupabase()
+  const { data, error } = await getServiceSupabase()
     .from('zelomenu_cart_sessions')
     .update({
       fulfillment_snapshot: revalidation.previewFulfillment,
       pricing_snapshot: revalidation.previewPricing,
       last_revalidated_at: revalidation.checkedAt,
       last_revalidation: revalidation,
+      revision: session.revision + 1,
       updated_at: now,
     })
-    .eq('id', sessionId)
-    .eq('state', 'cart_open');
+    .eq('id', session.id)
+    .eq('revision', session.revision)
+    .eq('current_token_hash', session.current_token_hash)
+    .eq('state', 'cart_open')
+    .select('id')
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('REVISION_CONFLICT');
 }
 
 async function buildPublicResponse(
@@ -1434,9 +1645,14 @@ async function buildPublicResponse(
 ): Promise<PublicCartResponse> {
   const session = mapSessionRow(sessionRow);
   const sessionForRevalidation = { ...session, metadata: { ...session.metadata, empresaId: sessionRow.empresa_id } };
-  const revalidation = revalidationOverride ?? await runRevalidation(sessionForRevalidation);
+  const isOpen = session.state === 'cart_open';
+  const revalidation = revalidationOverride ?? (isOpen ? await runRevalidation(sessionForRevalidation) : {
+    checkedAt: new Date().toISOString(), ok: true, issues: [],
+    previewCart: session.cart, previewPricing: session.pricing, previewPayment: session.payment,
+  });
+  if (!revalidationOverride && isOpen) catalogAlreadyLoaded = true;
   if (persistAccess) {
-    await persistRevalidation(session.id, revalidation);
+    if (isOpen) await persistRevalidation(session.id, session.revision, revalidation);
     // Sample access writes to avoid turning every public GET into two UPDATEs.
     if (!tokenRow.last_seen_at || Date.now() - Date.parse(tokenRow.last_seen_at) > 15 * 60 * 1000) await touchToken(tokenRow.id);
   }
@@ -1444,7 +1660,6 @@ async function buildPublicResponse(
   const config = getConfig(sessionRow.empresa_id);
   session.lastRevalidatedAt = revalidation.checkedAt;
   session.lastRevalidation = revalidation;
-  session.updatedAt = revalidation.checkedAt;
   const deliveryQuotePending = revalidation.issues.some((issue) => issue.code === 'delivery_quote_pending');
   session.payment = {
     ...session.payment,
@@ -1676,20 +1891,20 @@ export async function getZeloMenuOperationalMetrics(empresaId: string, periodDay
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const supabase = getServiceSupabase();
   const [sessionsResult, ordersResult] = await Promise.all([
-    supabase
+    readAllRows((from, to) => supabase
       .from('zelomenu_cart_sessions')
       .select('state')
       .eq('empresa_id', empresaId)
       .eq('context', 'public_order')
       .gte('created_at', since)
-      .limit(5000),
-    supabase
+      .order('id').range(from, to)),
+    readAllRows((from, to) => supabase
       .from('zelo_orders')
       .select('status, total')
       .eq('empresa_id', empresaId)
       .eq('source', 'zelomenu')
       .gte('created_at', since)
-      .limit(5000),
+      .order('id').range(from, to)),
   ]);
   if (sessionsResult.error) throw sessionsResult.error;
   if (ordersResult.error) throw ordersResult.error;
@@ -1819,6 +2034,9 @@ export async function openPublicOrderCartSession(input: {
   mesa_id?: string;
   comanda_id?: string;
 }): Promise<{ sessionId: string; orderingId: string; revision: number; token: string; path: string } | null> {
+  if (input.context != null && input.context !== 'public_order' && input.context !== 'table_order') {
+    throw new Error('INVALID_CART_CONTEXT');
+  }
   const empresaId = await resolveEmpresaIdBySlug(input.slug);
   if (!empresaId) return null;
 
@@ -2082,7 +2300,7 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
   const sessionRow = await findSessionById(tokenRow.session_id);
   if (!sessionRow || sessionRow.archived_at) return null;
   if (sessionRow.current_token_hash !== tokenRow.token_hash || tokenRow.revoked_at) throw new Error('STALE_CART_TOKEN');
-  if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== sessionRow.revision) throw new Error('REVISION_CONFLICT');
+  if (!Number.isSafeInteger(expectedRevision)) throw new Error('REVISION_CONFLICT');
   if (!/^[A-Za-z0-9_-]{16,120}$/.test(idempotencyKey)) throw new Error('IDEMPOTENCY_KEY_REQUIRED');
 
   if (sessionRow.state !== 'cart_open') {
@@ -2105,6 +2323,7 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     return { ...payload, confirmation: { confirmed: true, alreadyConfirmed: true, state, customerMessage: null } };
   }
 
+  if (expectedRevision !== sessionRow.revision) throw new Error('REVISION_CONFLICT');
   const current = mapSessionRow(sessionRow);
   if (current.context === 'public_order') {
     const detailError = firstZeloMenuCheckoutError(validateZeloMenuCheckoutDetails({
@@ -2120,18 +2339,18 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
 
   await assertZeloMenuFulfillmentAvailable(sessionRow.empresa_id, current.fulfillment);
 
-  const revalidation = await runRevalidation({ ...current, metadata: { ...current.metadata, empresaId: sessionRow.empresa_id } });
+  const revalidation = await runRevalidation({ ...current, metadata: { ...current.metadata, empresaId: sessionRow.empresa_id } }, getConfig(sessionRow.empresa_id));
 
   // ── DELIVERY_FEE_CHANGED protection ──────────────────────────────────────
   // If the delivery fee was previously confirmed and the revalidation
   // returned a different finite value (including a change to/from zero),
   // reject the confirmation so the customer sees the updated fee and can
   // re-confirm.
-  if (current.fulfillment.type === 'delivery' && !current.fulfillment.deliveryFeeToConfirm) {
+  if (current.fulfillment.type === 'delivery' && !current.fulfillment.deliveryFeeToConfirm && !revalidation.previewFulfillment?.deliveryFeeToConfirm) {
     const oldFee = current.fulfillment.deliveryFee;
     const newFee = revalidation.previewPricing?.deliveryFee;
     if (oldFee != null && Number.isFinite(oldFee) && newFee != null && Number.isFinite(newFee) && Math.abs(oldFee - newFee) > 0.001) {
-      await persistChangedDeliveryQuote(current.id, revalidation);
+      await persistChangedDeliveryQuote(sessionRow, revalidation);
       throw new Error('DELIVERY_FEE_CHANGED');
     }
   }
@@ -2159,18 +2378,19 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     const pendingPricing = { ...revalidation.previewPricing, deliveryFee: 0, total: revalidation.previewPricing.subtotal - revalidation.previewPricing.discount };
     const { data: pendingRow, error: pendingError } = await getServiceSupabase()
       .from('zelomenu_cart_sessions')
-      .update({ fulfillment_snapshot: pendingFulfillment, pricing_snapshot: pendingPricing, updated_at: new Date().toISOString() })
+      .update({ fulfillment_snapshot: pendingFulfillment, pricing_snapshot: pendingPricing, revision: sessionRow.revision + 1, updated_at: new Date().toISOString() })
       .eq('id', sessionRow.id)
+      .eq('revision', sessionRow.revision)
+      .eq('current_token_hash', tokenRow.token_hash)
       .eq('state', 'cart_open')
       .select(CART_SESSION_COLUMNS)
-      .single();
-    if (pendingError || !pendingRow) throw pendingError ?? new Error('DELIVERY_QUOTE_REQUEST_SAVE_FAILED');
+      .maybeSingle();
+    if (pendingError || !pendingRow) throw pendingError ?? new Error('REVISION_CONFLICT');
     const pendingRevalidation: ZeloMenuCartRevalidation = {
       ...revalidation,
       previewPricing: pendingPricing,
       ok: false,
     };
-    await persistRevalidation(sessionRow.id, pendingRevalidation);
     const payload = await buildPublicResponse(normalized, pendingRow as SessionRow, tokenRow, true, pendingRevalidation);
     return {
       ...payload,
@@ -2185,61 +2405,24 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
   }
 
   if (!revalidation.ok || !revalidation.previewCart || !revalidation.previewPricing || !revalidation.previewPayment) {
-    await persistRevalidation(current.id, revalidation);
+    await persistRevalidation(current.id, current.revision, revalidation);
     const payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
     return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: null } };
-  }
-
-  // ── Coupon redemption: reserve antes de materializar (só public_order) ──
-  let couponRedemptionId: string | undefined;
-  if (sessionRow.context === 'public_order' && current.pricing.couponCode) {
-    const ownerUserId = await getEmpresaUserId(sessionRow.empresa_id);
-    if (!ownerUserId) throw new Error('EMPRESA_NOT_FOUND');
-    const couponRow = await findActiveCouponByCode(ownerUserId, current.pricing.couponCode);
-    if (!couponRow) {
-      // cupom sumiu desde a última revalidação — injeta um coupon_invalid
-      const staleRevalidation: ZeloMenuCartRevalidation = {
-        checkedAt: new Date().toISOString(), ok: false, issues: [
-          { code: 'coupon_invalid', message: 'Este cupom não é mais válido.' },
-        ], previewCart: revalidation.previewCart, previewPricing: revalidation.previewPricing, previewPayment: revalidation.previewPayment,
-      };
-      await persistRevalidation(current.id, staleRevalidation);
-      const payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
-      return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: null } };
-    }
-    const customerPhone = normalizePhoneNumber(current.customer.phone ?? '');
-    const reservation = await reserveCouponRedemption({
-      couponId: couponRow.id,
-      ownerUserId,
-      customerPhone,
-    });
-    if (reservation.ok) {
-      couponRedemptionId = reservation.redemptionId;
-    } else {
-      // Já usado por este telefone — coupon_already_used
-      const alreadyUsedRevalidation: ZeloMenuCartRevalidation = {
-        checkedAt: new Date().toISOString(), ok: false, issues: [
-          { code: 'coupon_already_used', message: 'Este cupom já foi usado por este telefone.' },
-        ], previewCart: revalidation.previewCart, previewPricing: revalidation.previewPricing, previewPayment: revalidation.previewPayment,
-      };
-      await persistRevalidation(current.id, alreadyUsedRevalidation);
-      const payload = await buildPublicResponse(normalized, sessionRow, tokenRow);
-      return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: null } };
-    }
   }
 
   // ── Direct canonical creation for public_order; table_order stays on the
   // compatibility RPC until the PDV migration patches it to the same engine.
   const confirmationRpc = usesDirectCanonicalOrderEngine(sessionRow.context)
-    ? getServiceSupabase().rpc('create_zelo_order', {
+    ? getServiceSupabase().rpc('confirm_public_zelo_order_atomic', {
       p_session_id: sessionRow.id,
+      p_token_hash: tokenRow.token_hash,
       p_expected_revision: expectedRevision,
       p_idempotency_key: idempotencyKey,
       p_snapshots: buildCanonicalOrderSnapshots({
         empresaId: sessionRow.empresa_id,
         customer: current.customer,
         cart: revalidation.previewCart,
-        fulfillment: current.fulfillment,
+        fulfillment: revalidation.previewFulfillment ?? current.fulfillment,
         pricing: revalidation.previewPricing,
         payment: revalidation.previewPayment,
       }),
@@ -2252,15 +2435,23 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
     });
   const { data: confirmation, error: confirmationError } = await confirmationRpc;
   if (confirmationError) {
-    // Rollback da reserva do cupom se houve
-    if (couponRedemptionId) void releaseCouponRedemption(couponRedemptionId).catch(() => {});
+    const couponIssue = confirmationError.message.includes('COUPON_ALREADY_USED')
+      ? { code: 'coupon_already_used' as const, message: 'Este cupom já foi usado por este telefone.' }
+      : confirmationError.message.includes('COUPON_CHANGED')
+        ? { code: 'coupon_invalid' as const, message: 'O cupom foi alterado. Revise o desconto antes de confirmar.' }
+        : cartIssueFromError(confirmationError.message);
+    if (couponIssue?.code.startsWith('coupon_')) {
+      const rejected = { ...revalidation, ok: false, issues: [couponIssue] };
+      await persistRevalidation(current.id, current.revision, rejected);
+      const payload = await buildPublicResponse(normalized, sessionRow, tokenRow, false, rejected, true);
+      return { ...payload, confirmation: { confirmed: false, alreadyConfirmed: false, state: payload.session.state, customerMessage: couponIssue.message } };
+    }
     const codes = ['CART_NOT_FOUND', 'STALE_CART_TOKEN', 'REVISION_CONFLICT', 'CART_ALREADY_CLOSED', 'IDEMPOTENCY_KEY_REQUIRED', 'TABLE_SESSION_EXPIRED', 'PRODUCT_STOCK_EXCEEDED', 'COMANDA_CLOSED'];
     throw new Error(codes.find((code) => confirmationError.message.includes(code)) || 'ORDER_MATERIALIZATION_FAILED');
   }
   const atomic = confirmation as { sessionState?: ZeloMenuCartState; state?: ZeloMenuCartState; alreadyConfirmed?: boolean };
   const atomicRow = await findSessionById(sessionRow.id);
   if (!atomicRow) {
-    if (couponRedemptionId) void releaseCouponRedemption(couponRedemptionId).catch(() => {});
     throw new Error('ORDER_MATERIALIZATION_FAILED');
   }
 
@@ -2273,11 +2464,6 @@ export async function confirmPublicCartSession(token: string, expectedRevision: 
       revision: atomicPayload.order.revision,
     })
     : { status: atomicPayload.order?.status ?? '', revision: atomicPayload.order?.revision ?? Number.NaN, accepted: false };
-
-  // Se a confirmação foi bem-sucedida e temos reserva, attach order_id
-  if (couponRedemptionId && atomicRow.ordering_id) {
-    void attachOrderToRedemption(couponRedemptionId, atomicRow.ordering_id).catch(() => {});
-  }
 
   const finalState: ZeloMenuCartState = autoAccepted.status === 'accepted'
     ? 'accepted'

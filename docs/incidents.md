@@ -2,6 +2,75 @@
 
 Runbook curto para diagnosticar rapidamente problemas de preço, deploy e roteamento do cardápio público.
 
+## 2026-09-04 — prevenção das falhas de confirmação, cotação e publicação
+
+O fechamento da auditoria reproduziu em fixtures isoladas janelas de falha que podiam consumir cupom sem pedido, sobrescrever endereço com cotação antiga e rejeitar retry já confirmado. Não houve reprodução mediante escrita em dados de clientes. As correções são descritas em `docs/audits/2026-09-04-zelomenu.md`, seção de fechamento.
+
+`confirm_public_zelo_order_atomic` grava snapshot/pedido/resgate junto; cotação usa CAS e resolver manual exige o pointer atual. Cupom histórico sem vínculo e upload de publicação sem referência com idade >7 dias tiveram contagem zero no probe read-only; não foi feita reconciliação destrutiva. Fotos agora usam CAS e limpeza posterior à persistência. Push usa lease entre processos e lotes limitados, permanecendo pelo menos uma vez.
+
+Para evitar repetir os incidentes de frontend/servidor fora de sincronia, a imagem é construída do Git limpo, com Node24 e um manifesto SHA comum. `dist` local não entra no contexto. Não configurar um valor de versão que finja identificar outro artefato; confira health, header e asset antes do rollout. Migrações novas só entram pelo PDV; a pasta histórica Menu não é um segundo ledger executável.
+
+## 2026-09-02 — confirmação conversacional ignorava componentes canônicos (P1)
+
+### Sintoma
+
+A prévia Node aceitava uma opção vinculada a componente, mas a confirmação
+transacional podia rejeitar o mesmo pedido ou deixar de perceber que o
+componente tinha sido pausado.
+
+### Impacto
+
+Pedidos por conversa podiam divergir entre resumo e confirmação na fronteira
+crítica de preço/disponibilidade. O risco foi contido antes do rollout deste
+novo fluxo; não há aplicação de migration ou deploy registrada nesta entrega.
+
+### Causa raiz
+
+O materializador SQL efetivo resolvia apenas
+`zelomenu_modifier_option_products.id_produto`; `id_componente` não entrava na
+resolução de nome/preço/pausa nem na viabilidade dos grupos obrigatórios.
+
+### Correção
+
+O materializador agora trava e resolve componentes canônicos, respeita pausa e
+`price_override`, conta componentes ativos na viabilidade e exclui componentes
+da reserva de estoque de produto. O wrapper cercado por epoch delega para essa
+mesma confirmação atômica, sem manter uma segunda materialização —
+`supabase/history/conversation-ordering/20260902120000_whatsapp_materializer_component_parity.sql:3`,
+`supabase/history/conversation-ordering/20260902130000_fence_conversation_ordering_with_ai_epoch.sql:370`.
+
+### Validação e prevenção
+
+- Vitest congela o contrato da migration e a paridade de componentes/estoque.
+- O fixture pgTAP versionado cobre componente ativo, pausa antes da confirmação
+  e fence revogado; sua execução local continua sendo gate pré-deploy.
+- Antes do deploy, executar todas as migrations/testes/lint em Supabase local;
+  banco linked não é substituto autorizado para esse gate.
+
+### Correção de autoridade da confirmação conversacional (Fix 1)
+
+O fluxo mantém o `lineId` opaco de cada linha, rejeita IDs ausentes, inválidos ou
+duplicados e só permite emitir token ou confirmar uma revisão semanticamente pronta.
+O guard Node é de UX; a mesma validação ocorre na RPC server-only sob lock. A
+migration 140000 e os testes SQL são versionados, mas a execução local do banco
+permanece gate pré-deploy.
+
+### Correções F2–F5 e rollout coordenado (não implantado)
+
+O lote seguinte fechou replay determinístico de `requires_review`, separando
+`issues` de `snapshot_changed` e invalidando todos os tokens antigos; alinhou a
+pausa manual de produtos vinculados entre Node/SQL sob um único lock ordenado;
+preservou patches por presença (inclusive detalhes sem itens) e derivou o
+telefone exclusivamente do JID; e passou a exigir o tuple completo
+`{ orderingId, empresaId, remoteJid }` em cada leitura do pedido.
+
+Essas correções ainda dependem de rollout coordenado com o consumidor ZeloChat,
+que precisa enviar `remoteJid` no GET, além da validação em schema descartável
+local (G1) e do exercício concorrente de duas sessões (G2). Não há aplicação de
+migration, push ou deploy registrado neste worktree; o estado é
+**IMPLEMENTAÇÃO CORRIGIDA / ROLLOUT BLOQUEADO** até esses gates e a entrega
+companheira serem aprovados.
+
 ## 0. Visibilidade do PDV não é publicação online
 
 `produtos.ocultar_no_pdv` é somente o controle interno de venda manual do
@@ -10,7 +79,7 @@ ZeloPDV. Para o cliente, a fonte de verdade é o overlay
 `pausado_manualmente` pausa. Se um produto estiver oculto no PDV, isso não deve
 alterar a publicação no storefront. Não corrigir esse caso com backfill de
 dados sem instrução explícita do produto; a correção de 2026-08-24 foi somente
-de contrato/código e preservou o catálogo da Bem Servido.
+de contrato/código e preservou o catálogo da loja validada.
 
 ## 1. Preço `R$0,00` em produto com grupo `substituir`
 
@@ -45,7 +114,8 @@ Não corrigir esse caso mudando o preço do produto para `18`. Isso quebra M/G e
 ### Verificação da API pública
 
 ```powershell
-$api = Invoke-RestMethod 'https://menu.zelopdv.com.br/api/public/zelomenu/store/bemservido'
+if (-not $env:ZELOMENU_SMOKE_SLUG) { throw 'Defina ZELOMENU_SMOKE_SLUG com um slug autorizado para o smoke test.' }
+$api = Invoke-RestMethod "https://menu.zelopdv.com.br/api/public/zelomenu/store/$env:ZELOMENU_SMOKE_SLUG"
 $p = @($api.catalog | ForEach-Object {
   $_.produtosDireto
   $_.subcategorias | ForEach-Object { $_.produtos }
@@ -138,8 +208,9 @@ Para um arquivo legado sem rotas, usar `{}`. `http: {}` foi rejeitado pelo Traef
 ### Smoke test do domínio
 
 ```powershell
+if (-not $env:ZELOMENU_SMOKE_SLUG) { throw 'Defina ZELOMENU_SMOKE_SLUG com um slug autorizado para o smoke test.' }
 curl.exe -sS -i --max-time 20 `
-  https://menu.zelopdv.com.br/api/public/zelomenu/store/bemservido
+  "https://menu.zelopdv.com.br/api/public/zelomenu/store/$env:ZELOMENU_SMOKE_SLUG"
 ```
 
 Esperado: `HTTP/1.1 200 OK`, `Cache-Control` do endpoint público e `pricingMode: "substituir"` no JSON.

@@ -30,38 +30,6 @@ export async function findActiveCouponByCode(ownerUserId: string, normalizedCode
   return data ? mapCouponRow(data) : null;
 }
 
-// Reserva o resgate (insert com unique(coupon_id, customer_phone)).
-export async function reserveCouponRedemption(params: {
-  couponId: string;
-  ownerUserId: string;
-  customerPhone: string;
-}): Promise<{ ok: true; redemptionId: string } | { ok: false }> {
-  const { data, error } = await getServiceSupabase()
-    .from('zelomenu_coupon_redemptions')
-    .insert({ coupon_id: params.couponId, id_usuario: params.ownerUserId, customer_phone: params.customerPhone })
-    .select('id')
-    .single();
-  if (error) {
-    if (error.code === '23505') return { ok: false }; // unique_violation — já usado por este telefone
-    throw error;
-  }
-  return { ok: true, redemptionId: (data as { id: string }).id };
-}
-
-export async function attachOrderToRedemption(redemptionId: string, orderId: string): Promise<void> {
-  const { error } = await getServiceSupabase()
-    .from('zelomenu_coupon_redemptions')
-    .update({ order_id: orderId })
-    .eq('id', redemptionId);
-  if (error) throw error;
-}
-
-// Rollback manual — usado quando a reserva foi feita mas a criação do
-// pedido falhou depois.
-export async function releaseCouponRedemption(redemptionId: string): Promise<void> {
-  await getServiceSupabase().from('zelomenu_coupon_redemptions').delete().eq('id', redemptionId);
-}
-
 // ─── Admin CRUD (empresaId já convertido para ownerUserId pelo chamador) ──
 
 export async function listZeloMenuCoupons(ownerUserId: string): Promise<ZeloMenuCouponRow[]> {

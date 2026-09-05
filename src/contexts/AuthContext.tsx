@@ -5,13 +5,8 @@ import { supabase } from '../services/supabaseClient';
 // Minimal auth provider for the ZeloMenu config app. There is exactly one
 // supabase.auth subscription in the app, and it lives here.
 //
-// Per the product decision, this app has NO login screen — the session is
-// expected to already exist (set by the PDV/Chat apps). This provider only
-// observes the current Supabase session.
-//
-// TODO: cookie-SSO handshake + redirect from PDV/Chat. Until cross-subdomain
-// cookie storage is wired up (see services/supabaseClient.ts), getSession()
-// only sees a localStorage session local to this origin.
+// AdminPage renders LoginForm when no session exists. The browser client uses
+// shared parent-domain cookies on Zelo subdomains and host-only cookies locally.
 
 interface AuthContextValue {
   session: Session | null;

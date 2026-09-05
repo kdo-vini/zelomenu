@@ -1,3 +1,4 @@
+import { readAllRows } from '../src/utils/readAllRows.js';
 import type { Request } from 'express';
 import {
   getEmpresaUserId,
@@ -43,11 +44,11 @@ export async function getEligibleZeloMenuUserIds(userIds: readonly string[]): Pr
   const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
   if (uniqueUserIds.length === 0) return new Set();
 
-  const { data, error } = await getServiceSupabase()
+  const { data, error } = await readAllRows((from, to) => getServiceSupabase()
     .from('subscriptions')
     .select(SUBSCRIPTION_COLUMNS)
     .in('user_id', uniqueUserIds)
-    .order('updated_at', { ascending: false });
+    .order('updated_at', { ascending: false }).order('id').range(from, to));
 
   if (error) throw error;
 

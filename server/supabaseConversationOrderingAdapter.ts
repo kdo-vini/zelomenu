@@ -4,17 +4,27 @@ import {
   createConversationOrdering,
   type CanonicalOrderReference,
   type AtomicConfirmationResult,
-  type ConversationOrderDraft,
+  type ConversationAiPermit,
+  type ConversationScope,
+  type ConversationOrderLookup,
+  type ConversationOrderCreateDraft,
   type ConversationOrderingAdapter,
   type ConversationOrderingRecord,
   type DraftMaterialization,
   type DraftMutationResult,
+  type OrderingRequirement,
 } from './conversationOrdering.js';
 import { getServiceSupabase } from './supabaseServer.js';
-import { applyZeloMenuAutoAccept, materializeWhatsAppOrderDraft, type ZeloMenuCartState } from './zelomenuCartSessions.js';
+import {
+  applyZeloMenuAutoAccept,
+  materializeWhatsAppOrderDraft,
+  type MaterializeWhatsAppOrderDraftDeps,
+  type ZeloMenuCartState,
+} from './zelomenuCartSessions.js';
 import { deriveConversationConfirmationToken, hashConversationConfirmationToken } from './conversationConfirmationToken.js';
 
-const SESSION_COLUMNS = 'id, empresa_id, ordering_id, context, state, source_ref, customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation, archived_at, updated_at';
+const SESSION_COLUMNS = 'id, empresa_id, ordering_id, context, state, source_ref, customer_snapshot, cart_snapshot, fulfillment_snapshot, pricing_snapshot, payment_snapshot, metadata, revision, last_revalidated_at, last_revalidation, requirements_snapshot, ready_for_confirmation, archived_at, updated_at';
+const CONVERSATION_LINE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 type SessionRow = {
   id: string;
@@ -32,6 +42,8 @@ type SessionRow = {
   revision: number;
   last_revalidated_at: string | null;
   last_revalidation: ConversationOrderingRecord['revalidation'] | null;
+  requirements_snapshot: unknown;
+  ready_for_confirmation: unknown;
   archived_at: string | null;
   updated_at: string;
 };
@@ -50,22 +62,176 @@ function nextMetadata(current: ConversationOrderingRecord, messageId: string, ex
   };
 }
 
+function validReviewMarker(value: unknown, revision: number): boolean {
+  if (!isObject(value) || value.required !== true || !Number.isSafeInteger(value.revision) || !Number.isSafeInteger(revision) || value.revision !== revision
+    || !isNonEmptyString(value.messageId)
+    || (value.cause !== 'issues' && value.cause !== 'snapshot_changed')) return false;
+  return true;
+}
+
 function safeState(state: ZeloMenuCartState): ConversationOrderingRecord['state'] {
   return state;
 }
 
-export class SupabaseConversationOrderingAdapter implements ConversationOrderingAdapter {
-  constructor(private readonly supabase: SupabaseClient = getServiceSupabase()) {}
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
-  async materializeDraft(empresaId: string, draft: ConversationOrderDraft): Promise<DraftMaterialization> {
-    return materializeWhatsAppOrderDraft({
-      empresaId,
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function isNullableBound(value: unknown, minimum: number): value is number | null {
+  return value === null || (Number.isSafeInteger(value) && Number(value) >= minimum);
+}
+
+function hasValidRequirementBase(
+  value: Record<string, unknown>,
+  type: OrderingRequirement['type'],
+  id: OrderingRequirement['id'],
+): boolean {
+  return value.type === type
+    && value.id === id
+    && isNonEmptyString(value.name)
+    && value.blocking === true;
+}
+
+function isValidModifierOption(value: unknown): boolean {
+  return isObject(value)
+    && isNonEmptyString(value.id)
+    && isNonEmptyString(value.name)
+    && typeof value.currentPrice === 'number'
+    && Number.isFinite(value.currentPrice)
+    && typeof value.priceDelta === 'number'
+    && Number.isFinite(value.priceDelta)
+    && typeof value.available === 'boolean'
+    && Number.isSafeInteger(value.order);
+}
+
+function isValidModifierRequirement(value: Record<string, unknown>): boolean {
+  if (value.type !== 'modifier_group'
+    || !isNonEmptyString(value.id)
+    || !isNonEmptyString(value.lineId)
+    || !Number.isSafeInteger(value.productId)
+    || Number(value.productId) < 1
+    || !isNonEmptyString(value.groupId)
+    || !isNonEmptyString(value.name)
+    || typeof value.blocking !== 'boolean'
+    || (value.kind !== 'adicional' && value.kind !== 'variacao')
+    || (value.pricingMode !== 'somar' && value.pricingMode !== 'substituir')
+    || !isNonNegativeInteger(value.minSelections)
+    || !isNullableBound(value.maxSelections, Number(value.minSelections))
+    || !isNonNegativeInteger(value.minTotalQuantity)
+    || !isNullableBound(value.maxTotalQuantity, Number(value.minTotalQuantity))
+    || typeof value.allowsQuantity !== 'boolean'
+    || !isNullableBound(value.maxPerOption, 1)
+    || !isNonNegativeInteger(value.selectedDistinctCount)
+    || !isNonNegativeInteger(value.selectedTotalQuantity)
+    || (value.maxSelections !== null && Number(value.selectedDistinctCount) > Number(value.maxSelections))
+    || (value.maxTotalQuantity !== null && Number(value.selectedTotalQuantity) > Number(value.maxTotalQuantity))
+    || (value.autoSelectableOptionId !== undefined && !isNonEmptyString(value.autoSelectableOptionId))
+    || !Array.isArray(value.options)
+    || !value.options.every(isValidModifierOption)) {
+    return false;
+  }
+  const blocking = Number(value.selectedDistinctCount) < Number(value.minSelections)
+    || Number(value.selectedTotalQuantity) < Number(value.minTotalQuantity);
+  if (value.blocking !== blocking) return false;
+  if (typeof value.autoSelectableOptionId === 'string'
+    && !value.options.some((option) => isObject(option)
+      && option.id === value.autoSelectableOptionId
+      && option.available === true)) {
+    return false;
+  }
+  return value.id === `${value.lineId}:${value.groupId}`;
+}
+
+function hasValidMissingFields(value: unknown, allowed: ReadonlySet<string>): boolean {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((field) => typeof field === 'string' && allowed.has(field))
+    && new Set(value).size === value.length;
+}
+
+const DELIVERY_REQUIREMENT_FIELDS = new Set(['address', 'number', 'neighborhood']);
+const SCHEDULE_REQUIREMENT_FIELDS = new Set(['date', 'time']);
+
+function isValidOrderingRequirement(value: unknown): value is OrderingRequirement {
+  if (!isObject(value) || typeof value.type !== 'string') return false;
+  switch (value.type) {
+    case 'modifier_group':
+      return isValidModifierRequirement(value);
+    case 'fulfillment_type':
+    case 'customer_name':
+    case 'payment_method':
+      return hasValidRequirementBase(value, value.type, value.type);
+    case 'delivery_address':
+      return hasValidRequirementBase(value, value.type, value.type)
+        && hasValidMissingFields(value.missingFields, DELIVERY_REQUIREMENT_FIELDS);
+    case 'schedule':
+      return hasValidRequirementBase(value, value.type, value.type)
+        && hasValidMissingFields(value.missingFields, SCHEDULE_REQUIREMENT_FIELDS);
+    default:
+      return false;
+  }
+}
+
+function validatedRequirementsSnapshot(value: unknown): OrderingRequirement[] | null {
+  return Array.isArray(value) && value.every(isValidOrderingRequirement) ? value : null;
+}
+
+export class SupabaseConversationOrderingAdapter implements ConversationOrderingAdapter {
+  constructor(
+    private readonly supabase: SupabaseClient = getServiceSupabase(),
+    // Injectable seams for the materialization + auto-accept persistence
+    // boundary. Both default to the real implementation for the production
+    // singleton below (`new SupabaseConversationOrderingAdapter()`, zero
+    // args). Exist so a fixture/test caller can drive this REAL adapter —
+    // including its row-mapping in `mapRow` — against a fake Supabase
+    // client instead of a hand-rolled double of the whole class. See
+    // `server/conversationOrderingWireFixtures.ts`.
+    private readonly materializeDeps: MaterializeWhatsAppOrderDraftDeps = {},
+    private readonly autoAcceptFn: typeof applyZeloMenuAutoAccept = applyZeloMenuAutoAccept,
+  ) {}
+
+  async materializeDraft(scope: ConversationScope, draft: ConversationOrderCreateDraft): Promise<DraftMaterialization> {
+    const materialized = await materializeWhatsAppOrderDraft({
+      empresaId: scope.empresaId,
+      remoteJid: scope.remoteJid,
       items: draft.items,
       observations: draft.observations,
       customer: draft.customer,
       fulfillment: draft.fulfillment,
       paymentMethod: draft.paymentMethod,
-    });
+    }, this.materializeDeps);
+    if (materialized.cart.items.length !== draft.items.length) {
+      throw new Error('MATERIALIZED_LINE_COUNT_MISMATCH');
+    }
+    if (!materialized.cart.items.every((item) => typeof item.lineId === 'string' && CONVERSATION_LINE_ID.test(item.lineId))) {
+      throw new Error('MATERIALIZED_LINE_ID_MISSING');
+    }
+    if (new Set(materialized.cart.items.map((item) => item.lineId)).size !== materialized.cart.items.length) {
+      throw new Error('MATERIALIZED_LINE_ID_DUPLICATE');
+    }
+    const upstream = materialized as typeof materialized & Partial<Pick<
+      DraftMaterialization,
+      'requirements' | 'readyForConfirmation'
+    >>;
+    const revalidationReady = Boolean(upstream.revalidation)
+      && upstream.revalidation.ok === true
+      && Array.isArray(upstream.revalidation.issues)
+      && upstream.revalidation.issues.length === 0;
+    return {
+      ...upstream,
+      requirements: upstream.requirements ?? [],
+      readyForConfirmation: upstream.readyForConfirmation === true
+        && revalidationReady
+        && upstream.fulfillment.deliveryFeeToConfirm === false,
+    };
   }
 
   private async loadOrder(sessionId: string): Promise<CanonicalOrderReference | null> {
@@ -80,6 +246,15 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   private async mapRow(row: SessionRow): Promise<ConversationOrderingRecord> {
     const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
     const state = safeState(row.state);
+    const requirements = validatedRequirementsSnapshot(row.requirements_snapshot);
+    const hasTrustworthyReadiness = requirements !== null
+      && typeof row.ready_for_confirmation === 'boolean'
+      && (!row.ready_for_confirmation || (
+        row.context === 'whatsapp_order'
+        && state === 'cart_open'
+        && !requirements.some((requirement) => requirement.blocking)
+      ));
+    const trustedRequirements = hasTrustworthyReadiness ? requirements : [];
     return {
       sessionId: row.id,
       orderingId: row.ordering_id,
@@ -96,6 +271,10 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
       pessoaId: typeof metadata.pessoaId === 'string' ? metadata.pessoaId : null,
       processedMessageIds: processedMessageIds(metadata),
       revalidation: row.last_revalidation ?? { checkedAt: row.last_revalidated_at ?? new Date(0).toISOString(), ok: true, issues: [] },
+      requirements: trustedRequirements,
+      readyForConfirmation: hasTrustworthyReadiness && row.ready_for_confirmation === true,
+      reviewRequired: row.context === 'whatsapp_order' && state === 'cart_open'
+        && validReviewMarker(metadata.conversationReview, Number(row.revision)),
       order: state === 'cart_open' || state === 'cancelled' || state === 'archived' ? null : await this.loadOrder(row.id),
     };
   }
@@ -126,37 +305,43 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     return data ? this.mapRow(data as SessionRow) : null;
   }
 
-  async findByOrderingId(orderingId: string): Promise<ConversationOrderingRecord | null> {
+  async findByOrderingId(lookup: ConversationOrderLookup): Promise<ConversationOrderingRecord | null> {
     const { data, error } = await this.supabase.from('zelomenu_cart_sessions')
       .select(SESSION_COLUMNS)
-      .eq('ordering_id', orderingId)
+      .eq('ordering_id', lookup.orderingId)
+      .eq('empresa_id', lookup.empresaId)
+      .eq('source_ref', lookup.remoteJid)
       .eq('context', 'whatsapp_order')
       .maybeSingle();
     if (error) throw error;
     return data ? this.mapRow(data as SessionRow) : null;
   }
 
-  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order'>): Promise<ConversationOrderingRecord> {
-    const now = new Date().toISOString();
-    const { data, error } = await this.supabase.from('zelomenu_cart_sessions').insert({
-      empresa_id: input.empresaId,
-      context: 'whatsapp_order',
-      state: 'cart_open',
-      source_ref: input.remoteJid,
-      customer_snapshot: input.customer,
-      cart_snapshot: input.cart,
-      fulfillment_snapshot: input.fulfillment,
-      pricing_snapshot: input.pricing,
-      payment_snapshot: input.payment,
-      metadata: { pessoaId: input.pessoaId, processedMessageIds: input.processedMessageIds },
-      revision: 1,
-      last_revalidated_at: input.revalidation.checkedAt,
-      last_revalidation: input.revalidation,
-      created_at: now,
-      updated_at: now,
-    }).select(SESSION_COLUMNS).maybeSingle();
-    if (!error && data) return this.mapRow(data as SessionRow);
-    if (error?.code !== '23505') throw error ?? new Error('ORDERING_CREATE_FAILED');
+  async createOpen(input: Omit<ConversationOrderingRecord, 'sessionId' | 'orderingId' | 'revision' | 'state' | 'updatedAt' | 'order' | 'reviewRequired'> & ConversationAiPermit): Promise<ConversationOrderingRecord> {
+    const { data, error } = await this.supabase.rpc('zelomenu_open_whatsapp_order_with_ai_epoch_v1', {
+      p_empresa_id: input.empresaId,
+      p_source_ref: input.remoteJid,
+      p_conversation_control_id: input.conversationControlId,
+      p_conversation_epoch: input.conversationEpoch,
+      p_customer_snapshot: input.customer,
+      p_cart_snapshot: input.cart,
+      p_fulfillment_snapshot: input.fulfillment,
+      p_pricing_snapshot: input.pricing,
+      p_payment_snapshot: input.payment,
+      p_metadata: { pessoaId: input.pessoaId, processedMessageIds: input.processedMessageIds },
+      p_last_revalidated_at: input.revalidation.checkedAt,
+      p_last_revalidation: input.revalidation,
+      p_requirements_snapshot: input.requirements,
+      p_ready_for_confirmation: input.readyForConfirmation,
+    });
+    if (!error) {
+      const result = data as { outcome?: unknown; orderingId?: unknown } | null;
+      if (result?.outcome === 'applied' && typeof result.orderingId === 'string') {
+        return this.findRequired({ orderingId: result.orderingId, empresaId: input.empresaId, remoteJid: input.remoteJid });
+      }
+      throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível iniciar o pedido agora. Tente novamente.');
+    }
+    if (error.code !== '23505') throw this.rpcError(error.message);
     const existing = await this.findOpen(input.empresaId, input.remoteJid);
     if (existing?.processedMessageIds.some((id) => input.processedMessageIds.includes(id))) return existing;
     throw new ConversationOrderingError('PEDIDO_EM_ANDAMENTO', 'Já existe um pedido em andamento nesta conversa.');
@@ -165,49 +350,56 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   async updateOpen(input: {
     current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
     materialization: DraftMaterialization; pessoaId: string | null;
-  }): Promise<DraftMutationResult> {
-    return this.mutateOpen(input.current, input.expectedRevision, input.messageId, {
-      customer_snapshot: input.materialization.customer,
-      cart_snapshot: input.materialization.cart,
-      fulfillment_snapshot: input.materialization.fulfillment,
-      pricing_snapshot: input.materialization.pricing,
-      payment_snapshot: input.materialization.payment,
-      last_revalidated_at: input.materialization.revalidation.checkedAt,
-      last_revalidation: input.materialization.revalidation,
-      metadata: nextMetadata({ ...input.current, pessoaId: input.pessoaId }, input.messageId),
+  } & ConversationAiPermit): Promise<DraftMutationResult> {
+    const { data, error } = await this.supabase.rpc('zelomenu_update_whatsapp_order_with_ai_epoch_v1', {
+      p_empresa_id: input.current.empresaId,
+      p_source_ref: input.current.remoteJid,
+      p_conversation_control_id: input.conversationControlId,
+      p_conversation_epoch: input.conversationEpoch,
+      p_session_id: input.current.sessionId,
+      p_expected_revision: input.expectedRevision,
+      p_message_id: input.messageId,
+      p_customer_snapshot: input.materialization.customer,
+      p_cart_snapshot: input.materialization.cart,
+      p_fulfillment_snapshot: input.materialization.fulfillment,
+      p_pricing_snapshot: input.materialization.pricing,
+      p_payment_snapshot: input.materialization.payment,
+      p_last_revalidated_at: input.materialization.revalidation.checkedAt,
+      p_last_revalidation: input.materialization.revalidation,
+      p_requirements_snapshot: input.materialization.requirements,
+      p_ready_for_confirmation: input.materialization.readyForConfirmation,
+      p_metadata: nextMetadata({ ...input.current, pessoaId: input.pessoaId }, input.messageId),
     });
+    if (error) throw this.rpcError(error.message);
+    return this.resolveDraftMutation(data, input.current, input.messageId);
   }
 
-  async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string }): Promise<DraftMutationResult> {
-    return this.mutateOpen(input.current, input.expectedRevision, input.messageId, {
-      state: 'cancelled',
-      archived_at: new Date().toISOString(),
-      metadata: nextMetadata(input.current, input.messageId, { cancellationReason: 'explicit_command' }),
+  async cancelOpen(input: { current: ConversationOrderingRecord; expectedRevision: number; messageId: string } & ConversationAiPermit): Promise<DraftMutationResult> {
+    const { data, error } = await this.supabase.rpc('zelomenu_cancel_whatsapp_order_with_ai_epoch_v1', {
+      p_empresa_id: input.current.empresaId,
+      p_source_ref: input.current.remoteJid,
+      p_conversation_control_id: input.conversationControlId,
+      p_conversation_epoch: input.conversationEpoch,
+      p_session_id: input.current.sessionId,
+      p_expected_revision: input.expectedRevision,
+      p_message_id: input.messageId,
+      p_metadata: nextMetadata(input.current, input.messageId, { cancellationReason: 'explicit_command' }),
     });
+    if (error) throw this.rpcError(error.message);
+    return this.resolveDraftMutation(data, input.current, input.messageId);
   }
 
-  private async mutateOpen(
+  private async resolveDraftMutation(
+    data: unknown,
     current: ConversationOrderingRecord,
-    expectedRevision: number,
     messageId: string,
-    patch: Record<string, unknown>,
   ): Promise<DraftMutationResult> {
-    const { data, error } = await this.supabase.from('zelomenu_cart_sessions').update({
-      ...patch,
-      revision: expectedRevision + 1,
-      updated_at: new Date().toISOString(),
-    }).eq('id', current.sessionId)
-      .eq('empresa_id', current.empresaId)
-      .eq('source_ref', current.remoteJid)
-      .eq('context', 'whatsapp_order')
-      .eq('state', 'cart_open')
-      .eq('revision', expectedRevision)
-      .select(SESSION_COLUMNS)
-      .maybeSingle();
-    if (error) throw error;
-    if (data) return { kind: 'applied', record: await this.mapRow(data as SessionRow) };
-    const latest = await this.findByOrderingId(current.orderingId);
-    if (!latest) throw new ConversationOrderingError('PEDIDO_NAO_ENCONTRADO', 'Não encontrei este pedido.');
+    const result = data as { outcome?: unknown } | null;
+    if (result?.outcome !== 'applied' && result?.outcome !== 'conflict') {
+      throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível atualizar o pedido agora. Tente novamente.');
+    }
+    const latest = await this.findRequired({ orderingId: current.orderingId, empresaId: current.empresaId, remoteJid: current.remoteJid });
+    if (result.outcome === 'applied') return { kind: 'applied', record: latest };
     return latest.processedMessageIds.includes(messageId)
       ? { kind: 'duplicate', record: latest }
       : { kind: 'conflict', record: latest };
@@ -215,21 +407,23 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
 
   async issueConfirmationToken(input: {
     current: ConversationOrderingRecord; tokenHash: string; expiresAt: string;
-  }) {
+  } & ConversationAiPermit) {
     // Retries e réplicas derivam o mesmo hash/binding/expiry. Esta chamada
     // depende do contrato idempotente da RPC: se o mesmo token ainda estiver
     // vivo, ela deve devolvê-lo sem invalidar/reinserir a linha UNIQUE.
-    const { error } = await this.supabase.rpc('issue_whatsapp_zelo_confirmation_token', {
+    const { error } = await this.supabase.rpc('issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1', {
       p_token_hash: input.tokenHash,
       p_empresa_id: input.current.empresaId,
       p_source_ref: input.current.remoteJid,
+      p_conversation_control_id: input.conversationControlId,
+      p_conversation_epoch: input.conversationEpoch,
       p_session_id: input.current.sessionId,
       p_expected_revision: input.current.revision,
       p_expires_at: input.expiresAt,
     });
     if (error) {
       if (/REVISION|REVISAO/.test(error.message)) {
-        return { kind: 'conflict' as const, record: await this.findRequired(input.current.orderingId) };
+        return { kind: 'conflict' as const, record: await this.findRequired({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid }) };
       }
       throw this.rpcError(error.message);
     }
@@ -239,15 +433,17 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
   async confirmAtomically(input: {
     current: ConversationOrderingRecord; expectedRevision: number; messageId: string;
     tokenHash: string | null; idempotencyKey: string; pessoaId: string | null;
-  }): Promise<AtomicConfirmationResult> {
+  } & ConversationAiPermit): Promise<AtomicConfirmationResult> {
     // Mandatory companion RPC contract (ZeloPDV migration): one transaction
     // locks this whatsapp_order/cart_open session, verifies binding/revision and
     // optional token, rematerializes every catalog/modifier/stock/delivery/store
     // rule, then either persists a bumped review snapshot or creates exactly one
     // canonical order. There is deliberately no app-side revalidate/create path.
-    const { data, error } = await this.supabase.rpc('confirm_whatsapp_zelo_order_atomic_v1', {
+    const { data, error } = await this.supabase.rpc('confirm_whatsapp_zelo_order_with_ai_epoch_v1', {
       p_empresa_id: input.current.empresaId,
       p_source_ref: input.current.remoteJid,
+      p_conversation_control_id: input.conversationControlId,
+      p_conversation_epoch: input.conversationEpoch,
       p_session_id: input.current.sessionId,
       p_expected_revision: input.expectedRevision,
       p_message_id: input.messageId,
@@ -260,7 +456,7 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     if (result?.outcome !== 'confirmed' && result?.outcome !== 'requires_review' && result?.outcome !== 'conflict') {
       throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível concluir o pedido agora. Tente novamente.');
     }
-    const record = await this.findRequired(input.current.orderingId);
+    const record = await this.findRequired({ orderingId: input.current.orderingId, empresaId: input.current.empresaId, remoteJid: input.current.remoteJid });
     if (result.outcome === 'confirmed') {
       if (!record.order || typeof result.alreadyConfirmed !== 'boolean') {
         throw new ConversationOrderingError('PEDIDO_INDISPONIVEL', 'Não foi possível concluir o pedido agora. Tente novamente.');
@@ -272,13 +468,13 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
 
   async applyAutoAccept(record: ConversationOrderingRecord): Promise<ConversationOrderingRecord> {
     if (!record.order) return record;
-    const result = await applyZeloMenuAutoAccept({
+    const result = await this.autoAcceptFn({
       empresaId: record.empresaId,
       orderId: record.order.id,
       status: record.order.status,
       revision: record.order.revision,
     });
-    const refreshed = await this.findRequired(record.orderingId);
+    const refreshed = await this.findRequired({ orderingId: record.orderingId, empresaId: record.empresaId, remoteJid: record.remoteJid });
     const alreadyConfirmed = record.order.alreadyConfirmed;
     if (result.accepted) {
       refreshed.state = 'accepted';
@@ -291,14 +487,20 @@ export class SupabaseConversationOrderingAdapter implements ConversationOrdering
     return refreshed;
   }
 
-  private async findRequired(orderingId: string): Promise<ConversationOrderingRecord> {
-    const record = await this.findByOrderingId(orderingId);
+  private async findRequired(lookup: ConversationOrderLookup): Promise<ConversationOrderingRecord> {
+    const record = await this.findByOrderingId(lookup);
     if (!record) throw new ConversationOrderingError('PEDIDO_NAO_ENCONTRADO', 'Não encontrei este pedido.');
     return record;
   }
 
   private rpcError(message: string): ConversationOrderingError {
-    if (/confirm_whatsapp_zelo_order_atomic_v1|function .* does not exist|42883/i.test(message)) {
+    if (/AI_TURN_REVOKED/.test(message)) {
+      return new ConversationOrderingError('AI_TURN_REVOKED', 'Esta conversa mudou de atendimento. Vou deixar a equipe continuar por aqui.');
+    }
+    if (/ORDER_NOT_READY/.test(message)) {
+      return new ConversationOrderingError('PEDIDO_INVALIDO', 'Revise os dados pendentes antes de confirmar.');
+    }
+    if (/CONFIRMATION_TOKEN_RPC_UNAVAILABLE|issue_whatsapp_zelo_confirmation_token_with_ai_epoch_v1|confirm_whatsapp_zelo_order_(?:with_ai_epoch|atomic)_v1|function .* does not exist|42883/i.test(message)) {
       return new ConversationOrderingError('CONFIRMACAO_INDISPONIVEL', 'A confirmação de pedidos não está disponível agora.');
     }
     if (/REVISION|REVISAO/.test(message)) return new ConversationOrderingError('REVISAO_DESATUALIZADA', 'O pedido foi atualizado. Use a revisão mais recente.');

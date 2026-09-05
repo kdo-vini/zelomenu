@@ -25,7 +25,7 @@ export async function uploadOwnedZeloMenuPublicationImage(
   userId: string,
   productId: number,
   file: File,
-  previousUrl?: string | null,
+  _previousUrl?: string | null,
 ): Promise<string> {
   if (!file.type.startsWith('image/')) {
     throw new Error('Envie uma imagem em PNG, JPG, WEBP ou formato compatível.');
@@ -49,15 +49,6 @@ export async function uploadOwnedZeloMenuPublicationImage(
     .from(ZELOMENU_PUBLICATION_IMAGE_BUCKET)
     .getPublicUrl(objectPath);
 
-  const previousPath = getOwnedZeloMenuPublicationImagePath(previousUrl);
-  if (previousPath && previousPath !== objectPath) {
-    const { error: removeError } = await supabase.storage
-      .from(ZELOMENU_PUBLICATION_IMAGE_BUCKET)
-      .remove([previousPath]);
-    if (removeError) {
-      console.warn('[ZeloMenu] Failed to remove previous owned publication image:', removeError);
-    }
-  }
-
+  // Upload is only a draft. The publication writer owns cleanup after its DB acknowledgement.
   return data.publicUrl;
 }

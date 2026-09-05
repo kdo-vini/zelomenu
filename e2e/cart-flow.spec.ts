@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { mockPublicApi } from './fixtures/publicApi';
 
 const SLUG = process.env.TEST_SLUG || 'casadossalgados';
 
 test.describe('Fluxo de carrinho público', () => {
+  test.beforeEach(async ({ page }) => { if (process.env.E2E_LIVE_API !== 'true') await mockPublicApi(page); });
   test('adiciona produtos e cria sessão de carrinho', async ({ page }) => {
     await page.goto(`/${SLUG}`);
 
@@ -13,14 +15,10 @@ test.describe('Fluxo de carrinho público', () => {
     await expect(addButton).toBeVisible({ timeout: 5_000 });
     await addButton.click();
 
-    // Se modal de modificadores aparecer, confirma
-    const modalConfirm = page.getByRole('button', { name: /confirmar|adicionar ao pedido|ok/i });
-    if (await modalConfirm.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await modalConfirm.click();
-    }
+    await page.getByRole('dialog').getByRole('button', { name: 'Adicionar', exact: true }).click();
 
     // Clica em "Continuar pedido"
-    const continueBtn = page.getByRole('button', { name: /continuar pedido/i });
+    const continueBtn = page.getByRole('button', { name: /ver sacola/i });
     await expect(continueBtn).toBeVisible({ timeout: 10_000 });
     await continueBtn.click();
 
@@ -28,12 +26,8 @@ test.describe('Fluxo de carrinho público', () => {
     await page.waitForURL('**/menu/carrinho/**', { timeout: 15_000 });
 
     // Verifica que a página do carrinho carregou
-    await expect(page.getByText(/sua sacola|itens do pedido|pedido|carregando/i)).toBeVisible({ timeout: 10_000 });
-
-    // Se carregou, verifica que há itens ou mensagem de carrinho vazio
-    const itemCount = await page.getByText(/R\$/).count();
-    if (itemCount > 0) {
-      await expect(page.getByText(/R\$/).first()).toBeVisible();
-    }
+    await expect(page.getByText('Sua sacola', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Coxinha', { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /escolher retirada|agendar retirada/i })).toBeEnabled();
   });
 });

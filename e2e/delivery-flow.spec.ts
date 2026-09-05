@@ -14,93 +14,7 @@ const MOCK_CEP_RESPONSE = {
   },
 };
 
-type DeliveryQuoteMock = {
-  deliveryStatus: string;
-  deliveryFee: number;
-  deliveryFeeToConfirm: boolean;
-};
-
-type PublicApiMockState = {
-  revision: number;
-  quote: DeliveryQuoteMock;
-  fulfillment: Record<string, unknown>;
-  patchDelayMs: number;
-};
-
-const publicApiMockStates = new WeakMap<Page, PublicApiMockState>();
-
-function buildMockCartResponse(state: PublicApiMockState) {
-  const deliveryFee = state.quote.deliveryFee;
-  const fulfillment = {
-    ...state.fulfillment,
-    deliveryStatus: state.quote.deliveryStatus,
-    deliveryFee,
-    deliveryFeeToConfirm: state.quote.deliveryFeeToConfirm,
-  };
-  const issues = state.quote.deliveryStatus === 'out_of_area'
-    ? [{ code: 'delivery_out_of_area', message: 'Fora da area de entrega.' }]
-    : [];
-  return {
-    session: {
-      id: 'e2e-session', orderingId: 'e2e-ordering', context: 'public_order', state: 'cart_open', revision: state.revision,
-      customer: { name: null, phone: null },
-      cart: { items: [{ productId: 1, productName: 'Coxinha', baseUnitPrice: 12, selectedModifiers: [], modifierDeltaTotal: 0, quantity: 1, unitPrice: 12, lineTotal: 12, notes: null }], observations: null },
-      fulfillment,
-      pricing: { subtotal: 12, deliveryFee, discount: 0, couponCode: null, couponDiscountType: null, couponDiscountValue: null, total: 12 + deliveryFee },
-      payment: { declaredMethod: null, pixReceiptRequired: false, pixReceiptApproved: false, pixCopyPaste: null },
-      metadata: {}, lastRevalidatedAt: null, lastRevalidation: { checkedAt: new Date().toISOString(), ok: issues.length === 0, issues, previewCart: null, previewPricing: null, previewPayment: null },
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), confirmedAt: null, archivedAt: null,
-    },
-    business: { name: 'Casa dos Salgados', address: 'Rua de teste, 100', pixEnabled: false, deliveryEnabled: true, deliveryNeighborhoods: [], businessHours: { configured: false, openNow: true, label: null } },
-    catalog: [{ nome: 'Salgados', subcategorias: [], produtosDireto: [{ id: 1, name: 'Coxinha', price: 12, basePrice: 12, available: true, description: 'Coxinha de teste', modifierGroups: [] }] }],
-    link: { path: '/menu/carrinho/e2e-cart-token', tokenStatus: 'current' },
-    revalidation: { checkedAt: new Date().toISOString(), ok: issues.length === 0, issues, previewCart: null, previewPricing: null, previewPayment: null },
-    order: null,
-  };
-}
-
-async function mockPublicApi(page: Page) {
-  const state: PublicApiMockState = {
-    revision: 1,
-    quote: { deliveryStatus: 'pending', deliveryFee: 0, deliveryFeeToConfirm: true },
-    patchDelayMs: 0,
-    fulfillment: { type: 'pickup', asap: true, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryPostalCode: null, deliveryNumber: null, deliveryComplement: null, deliveryStreet: null, deliveryCity: null, deliveryState: null, deliveryFee: 0, deliveryFeeToConfirm: false },
-  };
-  publicApiMockStates.set(page, state);
-
-  await page.route('**/api/public/zelomenu/store/**', async (route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({ json: buildMockCartResponse(state) });
-      return;
-    }
-    if (route.request().method() === 'POST') {
-      await route.fulfill({ json: { token: 'e2e-cart-token', path: '/menu/carrinho/e2e-cart-token', orderingId: 'e2e-ordering' } });
-      return;
-    }
-    await route.continue();
-  });
-
-  await page.route('**/api/public/zelomenu/cart/**', async (route) => {
-    const method = route.request().method();
-    if (method === 'GET') {
-      await route.fulfill({ json: buildMockCartResponse(state) });
-      return;
-    }
-    if (method === 'PATCH') {
-      const body = route.request().postDataJSON() as { expectedRevision?: number; fulfillment?: Record<string, unknown> };
-      if (state.patchDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, state.patchDelayMs));
-      state.revision = Number(body.expectedRevision ?? state.revision) + 1;
-      if (body.fulfillment) state.fulfillment = { ...state.fulfillment, ...body.fulfillment };
-      await route.fulfill({ json: buildMockCartResponse(state) });
-      return;
-    }
-    if (method === 'POST') {
-      await route.fulfill({ json: { ...buildMockCartResponse(state), confirmation: { confirmed: true, alreadyConfirmed: false, state: 'confirmed_waiting_review', customerMessage: null } } });
-      return;
-    }
-    await route.continue();
-  });
-}
+import { mockPublicApi, publicApiMockStates } from './fixtures/publicApi';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -112,10 +26,7 @@ async function addProductAndGoToCart(page: Page) {
   await expect(addButton).toBeVisible({ timeout: 5_000 });
   await addButton.click();
 
-  const modalConfirm = page.getByRole('button', { name: /confirmar|adicionar ao pedido|ok/i });
-  if (await modalConfirm.isVisible({ timeout: 2_000 }).catch(() => false)) {
-    await modalConfirm.click();
-  }
+  await page.getByRole('dialog', { name: 'Coxinha' }).getByRole('button', { name: 'Adicionar', exact: true }).click();
 
   const continueBtn = page.getByRole('button', { name: /ver sacola/i });
   await expect(continueBtn).toBeVisible({ timeout: 10_000 });
@@ -176,39 +87,7 @@ async function mockCartDeliveryQuote(
   const state = publicApiMockStates.get(page);
   if (!state) throw new Error('Public API mocks were not installed for this page');
   state.quote = overrides;
-  return;
-  if (false) {
-  await page.route('**/api/public/zelomenu/cart/**', async (route) => {
-    const method = route.request().method();
-    // Only intercept PATCH and GET (not POST/confirm, etc.)
-    if (method === 'PATCH' || method === 'GET') {
-      const response = await route.fetch();
-      const body = await response.json();
-      if (body?.session?.fulfillment) {
-        body.session.fulfillment.deliveryStatus = overrides.deliveryStatus;
-        body.session.fulfillment.deliveryFee = overrides.deliveryFee;
-        body.session.fulfillment.deliveryFeeToConfirm = overrides.deliveryFeeToConfirm;
-        // Add revalidation issue for out_of_area
-        if (overrides.deliveryStatus === 'out_of_area') {
-          body.revalidation = body.revalidation ?? { checkedAt: new Date().toISOString(), ok: false, issues: [], previewCart: null, previewPricing: null, previewPayment: null };
-          body.revalidation.ok = false;
-          const exists = (body.revalidation.issues ?? []).some(
-            (i: { code: string }) => i.code === 'delivery_out_of_area',
-          );
-          if (!exists) {
-            body.revalidation.issues = [
-              ...(body.revalidation.issues ?? []),
-              { code: 'delivery_out_of_area', message: 'Fora da área de entrega.' },
-            ];
-          }
-        }
-      }
-      await route.fulfill({ response, body: JSON.stringify(body) });
-    } else {
-      await route.continue();
-    }
-  });
-  }
+
 }
 
 async function mockCepLookup(page: Page) {
