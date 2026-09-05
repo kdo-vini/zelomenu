@@ -88,7 +88,7 @@ function MiniStepper({
         type="button"
         onClick={() => onChange(value - 1)}
         disabled={atMin}
-        className="flex h-7 w-7 items-center justify-center rounded-l-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-l-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
         aria-label={label ? `Diminuir quantidade de ${label}${max != null ? ` (limite ${max})` : ''}` : 'Diminuir quantidade'}
       >
         <Minus className="h-3 w-3" strokeWidth={2.5} />
@@ -104,7 +104,7 @@ function MiniStepper({
         type="button"
         onClick={() => onChange(value + 1)}
         disabled={atMax}
-        className="flex h-7 w-7 items-center justify-center rounded-r-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-r-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
         aria-label={label ? `Aumentar quantidade de ${label}${max != null ? ` (limite ${max})` : ''}` : 'Aumentar quantidade'}
       >
         <Plus className="h-3 w-3" strokeWidth={2.5} />
@@ -334,7 +334,7 @@ export function ProductAddModal({
             type="button"
             onClick={onClose}
             ref={closeButtonRef}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-canvas)]"
+            className="flex h-8 w-8 min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-canvas)]"
             aria-label="Fechar"
           >
             <X className="h-4 w-4 text-[var(--color-ink-soft)]" strokeWidth={2} />
@@ -587,7 +587,7 @@ export function ProductAddModal({
                                 <button
                                   type="button"
                                   onClick={() => onQuickAdd(p)}
-                                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-brand)] text-white transition-transform active:scale-90"
+                                  className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-lg bg-[var(--color-brand)] text-white transition-transform active:scale-90"
                                   aria-label={`Adicionar ${p.name}`}
                                 >
                                   <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
@@ -633,7 +633,7 @@ export function ProductAddModal({
             <button
               type="button"
               onClick={() => setQtyDraft((v) => String(Math.max(1, (parseInt(v, 10) || 0) - 1)))}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-line)]"
+              className="flex h-10 w-10 min-h-11 min-w-11 items-center justify-center rounded-full border border-[var(--color-line)]"
               aria-label="Diminuir quantidade"
             >
               <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
@@ -651,7 +651,7 @@ export function ProductAddModal({
             <button
               type="button"
               onClick={() => setQtyDraft((v) => String((parseInt(v, 10) || 0) + 1))}
-              className="flex h-10 w-10 items-center justify-center rounded-full text-white"
+              className="flex h-10 w-10 min-h-11 min-w-11 items-center justify-center rounded-full text-white"
               style={{ background: 'var(--color-brand)' }}
               aria-label="Aumentar quantidade"
             >
