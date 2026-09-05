@@ -45,3 +45,16 @@ jobs:
           BUILD_TEST_URL=http://127.0.0.1:3101 node scripts/verifyBuild.mjs
       - if: always()
         run: docker rm -f zelomenu-ci || true
+
+  production:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify published Git SHA and frontend assets
+        run: node scripts/verify-deployment.mjs
