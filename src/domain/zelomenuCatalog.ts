@@ -104,6 +104,43 @@ export function normalizeCatalogSearchText(value: string): string {
   return normalizeText(value).replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+type PublicCatalogSearchProduct = {
+  available: boolean;
+  name: string;
+  description?: string | null;
+  productType?: 'simple' | 'pizza';
+  pizza?: { flavors?: Array<{ name: string; active?: boolean; prices?: Record<string, number> }> } | null;
+};
+
+export function filterPublicCatalogByQuery<T extends PublicCatalogSearchProduct>(
+  groups: Array<CatalogVisibilityGroup<T>>,
+  query: string,
+): Array<CatalogVisibilityGroup<T>> {
+  const normalized = normalizeCatalogSearchText(query);
+  if (!normalized) return groups;
+
+  const matches = (product: T) => {
+    if (normalizeCatalogSearchText(product.name).includes(normalized)) return true;
+    if (normalizeCatalogSearchText(product.description ?? '').includes(normalized)) return true;
+    if (product.productType !== 'pizza') return false;
+    return (product.pizza?.flavors ?? []).some((flavor) => (
+      flavor.active !== false
+      && Object.values(flavor.prices ?? {}).some((price) => Number(price) > 0)
+      && normalizeCatalogSearchText(flavor.name).includes(normalized)
+    ));
+  };
+
+  return groups
+    .map((group) => ({
+      nome: group.nome,
+      produtosDireto: group.produtosDireto.filter(matches),
+      subcategorias: group.subcategorias
+        .map((subcategory) => ({ nome: subcategory.nome, produtos: subcategory.produtos.filter(matches) }))
+        .filter((subcategory) => subcategory.produtos.length > 0),
+    }))
+    .filter((group) => group.produtosDireto.length > 0 || group.subcategorias.length > 0);
+}
+
 export function searchCatalogModifierOptions<T extends { id: number; nome: string }>(
   products: T[],
   productModifierGroups: Record<number, CatalogSearchModifierGroup[]>,

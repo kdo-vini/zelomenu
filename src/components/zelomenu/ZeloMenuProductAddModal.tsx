@@ -1,8 +1,9 @@
 import { resolvePizza } from '../../domain/pizza.js';
 import type { PizzaSelection } from '../../domain/pizzaTypes';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, Check, ImageIcon, Minus, Plus, X } from 'lucide-react';
+import { ArrowDown, Check, ImageIcon, Minus, Plus, Search, X } from 'lucide-react';
 import { previewModifierPrice, resolveModifierSelections, sortModifierGroups } from '../../domain/zelomenuModifiers';
+import { normalizeCatalogSearchText } from '../../domain/zelomenuCatalog';
 import { resolveCategorySuggestions } from '../../domain/zelomenuCategorySuggestions';
 import type { ZeloMenuCatalogGroup, ZeloMenuCatalogProduct } from '../../services/zelomenuApi';
 
@@ -161,8 +162,18 @@ export function ProductAddModal({
   const isEditing = initialQuantity > 0;
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const pizzaSectionRef = useRef<HTMLElement>(null);
   const groupRefs = useRef<Record<string, HTMLElement | null>>({});
   const onCloseRef = useRef(onClose);
+  const activePizzaSizes = product.pizza?.sizes.filter((size) => size.active !== false) ?? [];
+  const selectedPizzaSize = activePizzaSizes.find((size) => size.id === pizzaSize);
+  const availablePizzaFlavors = product.pizza?.flavors.filter((flavor) => (
+    flavor.active !== false && flavor.prices[pizzaSize] != null
+  )) ?? [];
+  const normalizedFlavorSearch = normalizeCatalogSearchText(flavorSearch);
+  const visiblePizzaFlavors = availablePizzaFlavors.filter((flavor) => (
+    normalizeCatalogSearchText(`${flavor.name} ${flavor.description ?? ''}`).includes(normalizedFlavorSearch)
+  ));
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -198,6 +209,38 @@ export function ProductAddModal({
       previousActiveElement?.focus();
     };
   }, []);
+
+  function selectPizzaSize(sizeId: string) {
+    const size = activePizzaSizes.find((candidate) => candidate.id === sizeId);
+    if (!size) return;
+    const compatibleFlavorIds = flavorIds
+      .filter((flavorId) => product.pizza?.flavors.some((flavor) => (
+        flavor.id === flavorId && flavor.active !== false && flavor.prices[sizeId] != null
+      )))
+      .slice(0, size.maxFlavors);
+    const nextFlavorCount = Math.min(flavorCount, size.maxFlavors);
+    setPizzaSize(sizeId);
+    setFlavorIds(compatibleFlavorIds.slice(0, nextFlavorCount));
+    setFlavorCount(nextFlavorCount);
+    setPizzaNotice(compatibleFlavorIds.length !== flavorIds.length
+      ? 'Ajustamos os sabores porque nem todos estão disponíveis neste tamanho.'
+      : '');
+  }
+
+  function selectFlavorCount(count: number) {
+    setFlavorCount(count);
+    setFlavorIds([]);
+    setPizzaNotice('');
+  }
+
+  function togglePizzaFlavor(flavorId: string) {
+    setFlavorIds((current) => {
+      if (current.includes(flavorId)) return current.filter((id) => id !== flavorId);
+      if (current.length >= flavorCount) return current;
+      return [...current, flavorId];
+    });
+    setPizzaNotice('');
+  }
 
   function setOptionQuantity(groupId: string, optionId: string, quantity: number) {
     setSelections((prev) => {
@@ -265,21 +308,31 @@ export function ProductAddModal({
   ));
   const pricePreview = previewModifierPrice(product.modifierGroups, selectedOptions, pizzaBase);
   const displayedUnitPrice = resolution.ok ? resolution.finalUnitPrice : pricePreview.unitPrice;
-  const displayedPriceLabel = !resolution.ok && pricePreview.hasRequiredGroup && !pricePreview.hasSelectedRequiredOption
-    ? `A partir de ${toBRL(displayedUnitPrice)}`
-    : toBRL(displayedUnitPrice);
+  const awaitingPizzaSelection = product.productType === 'pizza' && (!pizzaSize || flavorIds.length !== flavorCount);
+  const displayedPriceLabel = awaitingPizzaSelection
+    ? `A partir de ${toBRL(product.basePrice)}`
+    : !resolution.ok && pricePreview.hasRequiredGroup && !pricePreview.hasSelectedRequiredOption
+      ? `A partir de ${toBRL(displayedUnitPrice)}`
+      : toBRL(displayedUnitPrice);
   const hasActiveModifiers = activeGroups.length > 0;
   const quantity = parseInt(qtyDraft, 10);
   const validQuantity = !isNaN(quantity) && quantity > 0;
   const canConfirm = resolution.ok && validQuantity && (!pizzaResult || (pizzaResult.ok && flavorIds.length === flavorCount));
-  const canScrollToRequiredGroup = Boolean(nextRequiredGroup && validQuantity);
-  const primaryActionLabel = nextRequiredGroup
+  const pizzaActionLabel = product.productType !== 'pizza' || (pizzaResult?.ok && flavorIds.length === flavorCount)
+    ? null
+    : !pizzaSize
+      ? 'Escolha o tamanho'
+      : flavorIds.length < flavorCount
+        ? `Escolha mais ${flavorCount - flavorIds.length} ${flavorCount - flavorIds.length === 1 ? 'sabor' : 'sabores'}`
+        : 'Revise a montagem';
+  const canGuideToSelection = Boolean((pizzaActionLabel || nextRequiredGroup) && validQuantity);
+  const primaryActionLabel = pizzaActionLabel ?? (nextRequiredGroup
     ? nextRequiredGroup.allowsQuantity && nextRequiredGroup.minTotalQuantity > quantityTotal(selections[nextRequiredGroup.id] ?? {})
       ? `Escolha mais ${nextRequiredGroup.minTotalQuantity - quantityTotal(selections[nextRequiredGroup.id] ?? {})} ${nextRequiredGroup.minTotalQuantity - quantityTotal(selections[nextRequiredGroup.id] ?? {}) === 1 ? 'item' : 'itens'}`
       : requiredActionLabel(nextRequiredGroup.name)
     : canConfirm
       ? (isEditing ? 'Atualizar' : 'Adicionar')
-      : 'Corrija a seleção';
+      : 'Corrija a seleção');
 
   function confirm() {
     if (!canConfirm) return;
@@ -298,8 +351,12 @@ export function ProductAddModal({
       confirm();
       return;
     }
-    if (!nextRequiredGroup) return;
-    const groupElement = groupRefs.current[nextRequiredGroup.id];
+    const groupElement = pizzaActionLabel
+      ? pizzaSectionRef.current
+      : nextRequiredGroup
+        ? groupRefs.current[nextRequiredGroup.id]
+        : null;
+    if (!groupElement) return;
     groupElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     window.setTimeout(() => {
       groupElement?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true });
@@ -364,36 +421,170 @@ export function ProductAddModal({
               </p>
               {existingLineCount > 0 && product.modifierGroups.some((group) => group.active) ? (
                 <p className="mt-2 rounded-lg bg-[var(--color-brand-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--color-brand-deep)]">
-                  Você já adicionou {existingLineCount === 1 ? 'uma montagem' : `${existingLineCount} montagens`} deste produto. Escolha outra combinação para adicionar uma marmita diferente.
+                  Você já adicionou {existingLineCount === 1 ? 'uma montagem' : `${existingLineCount} montagens`} deste produto. Escolha outra combinação para adicionar {product.productType === 'pizza' ? 'outra pizza' : 'um produto diferente'}.
                 </p>
               ) : null}
             </div>
 
-            {product.productType === 'pizza' && <section className="space-y-4 p-4" aria-label="Monte sua pizza">
-            <h3 className="font-bold">Monte sua pizza</h3>
-            <label className="block">Tamanho
-              <select className="block w-full rounded border p-3" value={pizzaSize} onChange={e => {const id=e.target.value; const max=product.pizza?.sizes.find(s=>s.id===id)?.maxFlavors??1; const kept=flavorIds.filter(fid=>product.pizza?.flavors.some(f=>f.id===fid&&f.active!==false&&f.prices[id]!=null)).slice(0,max); setPizzaSize(id); setFlavorIds(kept); setFlavorCount(Math.min(flavorCount,max));setPizzaNotice(kept.length!==flavorIds.length?'Alguns sabores não estão disponíveis neste tamanho ou excedem seu limite. Revise a montagem.':'');}}>
-                <option value="">Escolha o tamanho</option>
-                {product.pizza?.sizes.filter(s=>s.active!==false).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </label>
-            {pizzaNotice && <p role="status">{pizzaNotice}</p>}
-            {pizzaSize && <>
-              <label className="block">Quantidade de sabores
-                <select className="block w-full rounded border p-3" value={flavorCount} onChange={e=>{setFlavorCount(Number(e.target.value));setFlavorIds([]);}}>
-                  {Array.from({length:product.pizza?.sizes.find(s=>s.id===pizzaSize)?.maxFlavors ?? 1},(_,i)=><option key={i} value={i+1}>{i+1} {i===0?'sabor inteiro':'sabores em partes iguais'}</option>)}
-                </select>
-              </label>
-              <p>Escolha {flavorCount} sabores · {flavorIds.length} de {flavorCount}</p>
-              <input className="w-full rounded border p-3" aria-label="Buscar sabor" placeholder="Buscar sabor" value={flavorSearch} onChange={e=>setFlavorSearch(e.target.value)} />
-              {product.pizza?.flavors.filter(f=>f.active!==false && f.prices[pizzaSize]!=null && f.name.toLocaleLowerCase('pt-BR').includes(flavorSearch.toLocaleLowerCase('pt-BR'))).map(f=><label key={f.id} className="flex items-center gap-3 rounded border p-3">
-                <input type="checkbox" checked={flavorIds.includes(f.id)} disabled={!flavorIds.includes(f.id)&&flavorIds.length>=flavorCount} onChange={()=>setFlavorIds(ids=>ids.includes(f.id)?ids.filter(id=>id!==f.id):[...ids,f.id])}/>
-                {f.photoUrl && <img src={f.photoUrl} alt="" className="h-12 w-12 rounded object-cover" loading="lazy" />}
-                <span className="flex-1">{flavorCount===1?'Inteira':flavorCount===2?'½':flavorCount===3?'⅓':'¼'} {f.name}{f.description && <small className="block">{f.description}</small>}</span><span>{toBRL(f.prices[pizzaSize])}</span>
-              </label>)}
-              <p className="text-sm">{product.pizza?.pricingMode==='average'?'Preço proporcional aos sabores escolhidos.':'Cobrança pelo sabor de maior preço.'} Os valores dos sabores são da pizza inteira. Borda, massa e extras são somados.</p>
-            </>}
-          </section>}
+            {product.productType === 'pizza' && (
+              <section
+                ref={pizzaSectionRef}
+                className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-canvas)]"
+                aria-label="Monte sua pizza"
+                tabIndex={-1}
+              >
+                <div className="border-b border-[var(--color-line)] bg-[var(--color-brand-soft)] px-4 py-3.5">
+                  <h3 className="text-base font-bold text-[var(--color-ink)]">Monte sua pizza</h3>
+                  <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-ink-muted)]">Escolha o tamanho, quantos sabores e depois as suas opções.</p>
+                </div>
+
+                <div className="space-y-5 p-4">
+                  <div>
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-brand)] text-xs font-bold text-white">1</span>
+                      <p className="text-sm font-bold text-[var(--color-ink)]">Escolha o tamanho</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {activePizzaSizes.map((size) => {
+                        const selected = pizzaSize === size.id;
+                        return (
+                          <button
+                            key={size.id}
+                            type="button"
+                            onClick={() => selectPizzaSize(size.id)}
+                            aria-pressed={selected}
+                            aria-label={`${size.name} · até ${size.maxFlavors} ${size.maxFlavors === 1 ? 'sabor' : 'sabores'}`}
+                            className="min-h-14 rounded-xl border px-3 py-2.5 text-left transition-colors"
+                            style={{
+                              borderColor: selected ? 'var(--color-brand)' : 'var(--color-line)',
+                              background: selected ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                            }}
+                          >
+                            <span className="flex items-center justify-between gap-2 text-sm font-bold text-[var(--color-ink)]">
+                              {size.name}
+                              {selected ? <Check className="h-4 w-4 text-[var(--color-brand-deep)]" aria-hidden="true" /> : null}
+                            </span>
+                            <span className="mt-0.5 block text-xs text-[var(--color-ink-muted)]">Até {size.maxFlavors} {size.maxFlavors === 1 ? 'sabor' : 'sabores'}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {pizzaNotice ? <p className="rounded-lg bg-[var(--color-alert-soft)] px-3 py-2 text-xs text-[var(--color-alert)]" role="status">{pizzaNotice}</p> : null}
+
+                  {selectedPizzaSize ? (
+                    <>
+                      <div>
+                        <div className="mb-2.5 flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-brand)] text-xs font-bold text-white">2</span>
+                          <p className="text-sm font-bold text-[var(--color-ink)]">Quantos sabores?</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {Array.from({ length: selectedPizzaSize.maxFlavors }, (_, index) => index + 1).map((count) => {
+                            const selected = flavorCount === count;
+                            const label = count === 1 ? 'Um sabor inteiro' : `${count} sabores · partes iguais`;
+                            return (
+                              <button
+                                key={count}
+                                type="button"
+                                onClick={() => selectFlavorCount(count)}
+                                aria-pressed={selected}
+                                aria-label={label}
+                                className="min-h-12 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
+                                style={{
+                                  borderColor: selected ? 'var(--color-brand)' : 'var(--color-line)',
+                                  background: selected ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                                  color: selected ? 'var(--color-brand-deep)' : 'var(--color-ink)',
+                                }}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="mb-2.5 flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-brand)] text-xs font-bold text-white">3</span>
+                            <div>
+                              <p className="text-sm font-bold text-[var(--color-ink)]">Escolha os sabores</p>
+                              <p className="text-xs text-[var(--color-ink-muted)]">{flavorIds.length} de {flavorCount} selecionado{flavorIds.length === 1 ? '' : 's'}</p>
+                            </div>
+                          </div>
+                          {flavorIds.length === flavorCount ? (
+                            <span className="rounded-full bg-[var(--color-brand-soft)] px-2 py-1 text-xs font-bold text-[var(--color-brand-deep)]">Pronto</span>
+                          ) : null}
+                        </div>
+
+                        {availablePizzaFlavors.length > 5 ? (
+                          <label className="relative mb-2.5 block">
+                            <span className="sr-only">Buscar sabor</span>
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-ink-muted)]" aria-hidden="true" />
+                            <input
+                              className="h-11 w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] pl-9 pr-3 text-base text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-brand)]"
+                              aria-label="Buscar sabor"
+                              placeholder="Buscar sabor"
+                              value={flavorSearch}
+                              onChange={(event) => setFlavorSearch(event.target.value)}
+                            />
+                          </label>
+                        ) : null}
+
+                        <div className="space-y-2">
+                          {visiblePizzaFlavors.map((flavor) => {
+                            const selected = flavorIds.includes(flavor.id);
+                            const unavailableAtLimit = !selected && flavorIds.length >= flavorCount;
+                            const fraction = flavorCount === 1 ? 'Inteira' : flavorCount === 2 ? '½' : flavorCount === 3 ? '⅓' : '¼';
+                            return (
+                              <button
+                                key={flavor.id}
+                                type="button"
+                                onClick={() => togglePizzaFlavor(flavor.id)}
+                                disabled={unavailableAtLimit}
+                                aria-pressed={selected}
+                                aria-label={`${flavor.name} · ${fraction} · ${toBRL(flavor.prices[pizzaSize])}`}
+                                className="flex min-h-14 w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                                style={{
+                                  borderColor: selected ? 'var(--color-brand)' : 'var(--color-line)',
+                                  background: selected ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                                }}
+                              >
+                                {flavor.photoUrl ? (
+                                  <img src={flavor.photoUrl} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" loading="lazy" />
+                                ) : (
+                                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-muted)] text-xs font-bold text-[var(--color-ink-muted)]">{fraction}</span>
+                                )}
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-sm font-semibold text-[var(--color-ink)]">{flavor.name}</span>
+                                  {flavor.description ? <span className="mt-0.5 line-clamp-2 block text-xs text-[var(--color-ink-muted)]">{flavor.description}</span> : null}
+                                </span>
+                                <span className="shrink-0 text-right">
+                                  <span className="block text-xs text-[var(--color-ink-muted)]">{fraction}</span>
+                                  <span className="block text-xs font-bold text-[var(--color-ink)]">{toBRL(flavor.prices[pizzaSize])}</span>
+                                </span>
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border" style={{ borderColor: selected ? 'var(--color-brand)' : 'var(--color-line-strong)', background: selected ? 'var(--color-brand)' : 'transparent' }}>
+                                  {selected ? <Check className="h-3 w-3 text-white" strokeWidth={3} aria-hidden="true" /> : null}
+                                </span>
+                              </button>
+                            );
+                          })}
+                          {visiblePizzaFlavors.length === 0 ? (
+                            <p className="rounded-xl border border-dashed border-[var(--color-line)] px-3 py-5 text-center text-xs text-[var(--color-ink-muted)]">Nenhum sabor encontrado.</p>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <p className="rounded-xl bg-[var(--color-surface-muted)] px-3 py-2.5 text-xs leading-relaxed text-[var(--color-ink-muted)]">
+                        {product.pizza?.pricingMode === 'average' ? 'O preço é proporcional aos sabores escolhidos.' : 'O preço da pizza será o do sabor de maior valor.'} Bordas, massas e adicionais entram depois.
+                      </p>
+                    </>
+                  ) : null}
+                </div>
+              </section>
+            )}
           {activeGroups.map((group) => (
               <section
                 key={group.id}
@@ -661,19 +852,19 @@ export function ProductAddModal({
           <button
             type="button"
             onClick={handlePrimaryAction}
-            disabled={!canConfirm && !canScrollToRequiredGroup}
+            disabled={!canConfirm && !canGuideToSelection}
             aria-label={primaryActionLabel}
             className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 sm:px-4"
             style={{ background: 'var(--color-brand)' }}
           >
-            {nextRequiredGroup ? (
+            {pizzaActionLabel || nextRequiredGroup ? (
               <ArrowDown className="h-4 w-4" strokeWidth={2.5} />
             ) : (
               <Plus className="h-4 w-4" strokeWidth={2.5} />
             )}
             <span className="min-w-0 truncate whitespace-nowrap">
               {primaryActionLabel}
-              {validQuantity && resolution.ok ? ` · ${toBRL(resolution.finalUnitPrice * quantity)}` : ''}
+              {canConfirm ? ` · ${toBRL(resolution.finalUnitPrice * quantity)}` : ''}
             </span>
           </button>
         </div>

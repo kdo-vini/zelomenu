@@ -8,9 +8,33 @@ import {
   isExactCatalogProductNameDuplicate,
   isSimilarCatalogProductName,
   searchCatalogModifierOptions,
+  filterPublicCatalogByQuery,
 } from './zelomenuCatalog';
 
 describe('catalog canonical product rules', () => {
+  it('finds a pizza pelo nome de um sabor disponível', () => {
+    const pizza = {
+      id: 10,
+      available: true,
+      name: 'Pizzas tradicionais',
+      description: 'Escolha o tamanho',
+      productType: 'pizza' as const,
+      pizza: {
+        version: 1,
+        revision: 'r1',
+        pricingMode: 'highest' as const,
+        sizes: [{ id: 'g', name: 'Grande', maxFlavors: 2 }],
+        flavors: [
+          { id: 'cal', name: 'Calabresa', active: true, prices: { g: 40 } },
+          { id: 'fra', name: 'Frango com catupiry', active: false, prices: { g: 45 } },
+        ],
+      },
+    };
+    const catalog = [{ nome: 'Pizzas', produtosDireto: [pizza], subcategorias: [] }];
+
+    expect(filterPublicCatalogByQuery(catalog, 'calabresa')[0].produtosDireto).toEqual([pizza]);
+    expect(filterPublicCatalogByQuery(catalog, 'frango')).toEqual([]);
+  });
   it('normalizes accents and punctuation for search and duplicate checks', () => {
     expect(normalizeCatalogSearchText(' Bife à rolê ')).toBe('bife a role');
     expect(isExactCatalogProductNameDuplicate('bife a role', [{ id: 1, nome: 'Bife à rolê' }])?.id).toBe(1);

@@ -17,6 +17,7 @@ import { ToastProvider } from '../contexts/ToastContext';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { ProductAddModal } from '../components/zelomenu/ZeloMenuProductAddModal';
 import { ZeloMenuNotFoundPage } from './ZeloMenuNotFoundPage';
+import { filterPublicCatalogByQuery } from '../domain/zelomenuCatalog';
 
 type SelectedItem = ZeloMenuStoreCartItem;
 
@@ -219,26 +220,7 @@ function ZeloMenuStorePageContent({
 
   const filteredCatalog = useMemo(() => {
     if (!store) return [];
-    if (!searchQuery.trim()) return store.catalog;
-    const q = searchQuery
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '');
-    const filterProds = (prods: ZeloMenuCatalogProduct[]) =>
-      prods.filter((p) => {
-        const n = p.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-        const d = (p.description ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-        return n.includes(q) || d.includes(q);
-      });
-    return store.catalog
-      .map((group) => ({
-        ...group,
-        produtosDireto: filterProds(group.produtosDireto),
-        subcategorias: group.subcategorias
-          .map((sub) => ({ ...sub, produtos: filterProds(sub.produtos) }))
-          .filter((sub) => sub.produtos.length > 0),
-      }))
-      .filter((g) => g.produtosDireto.length > 0 || g.subcategorias.length > 0);
+    return filterPublicCatalogByQuery(store.catalog, searchQuery);
   }, [store, searchQuery]);
 
   // ── Loading / error states ──────────────────────────────────────────────────
