@@ -199,6 +199,7 @@ export type ZeloMenuPublicStoreResponse = {
     deliveryEnabled: boolean;
     deliveryEstimatedMinutes: number | null;
     deliveryNeighborhoods: Array<{ name: string; fee: number }>;
+    whatsapp?: string | null;
     logoUrl?: string | null;
     coverUrl?: string | null;
     description?: string | null;

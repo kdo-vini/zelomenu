@@ -12,11 +12,20 @@ type PublicApiMockState = {
   quote: DeliveryQuoteMock;
   fulfillment: Record<string, unknown>;
   patchDelayMs: number;
+  business?: Record<string, unknown>;
 };
 
 export const publicApiMockStates = new WeakMap<Page, PublicApiMockState>();
 
 export function buildMockCartResponse(state: PublicApiMockState) {
+  const business = state.business ?? {
+    name: 'Casa dos Salgados',
+    address: 'Rua de teste, 100',
+    pixEnabled: false,
+    deliveryEnabled: true,
+    deliveryNeighborhoods: [],
+    businessHours: { configured: false, openNow: true, label: null },
+  };
   const deliveryFee = state.quote.deliveryFee;
   const fulfillment = {
     ...state.fulfillment,
@@ -38,8 +47,11 @@ export function buildMockCartResponse(state: PublicApiMockState) {
       metadata: {}, lastRevalidatedAt: null, lastRevalidation: { checkedAt: new Date().toISOString(), ok: issues.length === 0, issues, previewCart: null, previewPricing: null, previewPayment: null },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), confirmedAt: null, archivedAt: null,
     },
-    business: { name: 'Casa dos Salgados', address: 'Rua de teste, 100', pixEnabled: false, deliveryEnabled: true, deliveryNeighborhoods: [], businessHours: { configured: false, openNow: true, label: null } },
-    catalog: [{ nome: 'Salgados', subcategorias: [], produtosDireto: [{ id: 1, name: 'Coxinha', price: 12, basePrice: 12, available: true, description: 'Coxinha de teste', modifierGroups: [] }] }],
+    business,
+    catalog: [
+      { nome: 'Salgados', subcategorias: [], produtosDireto: [{ id: 1, name: 'Coxinha', price: 12, basePrice: 12, available: true, description: 'Coxinha de teste', modifierGroups: [] }] },
+      { nome: 'Bebidas', subcategorias: [], produtosDireto: [{ id: 2, name: 'Suco de laranja', price: 8, basePrice: 8, available: true, description: 'Suco natural', modifierGroups: [] }] },
+    ],
     link: { path: '/menu/carrinho/e2e-cart-token', tokenStatus: 'current' },
     revalidation: { checkedAt: new Date().toISOString(), ok: issues.length === 0, issues, previewCart: null, previewPricing: null, previewPayment: null },
     order: null,
@@ -51,6 +63,29 @@ export async function mockPublicApi(page: Page) {
     revision: 1,
     quote: { deliveryStatus: 'pending', deliveryFee: 0, deliveryFeeToConfirm: true },
     patchDelayMs: 0,
+    business: {
+      name: 'Casa dos Salgados',
+      address: 'Rua de teste, 100',
+      pixEnabled: false,
+      deliveryEnabled: true,
+      deliveryEstimatedMinutes: 40,
+      deliveryNeighborhoods: [{ name: 'Centro', fee: 8 }, { name: 'Jardim', fee: 12 }],
+      whatsapp: '5514999999999',
+      coverUrl: 'https://cdn.test/casa-cover.jpg',
+      logoUrl: 'https://cdn.test/casa-logo.jpg',
+      description: 'Salgados artesanais',
+      welcomeText: 'Peça seus salgados favoritos.',
+      businessHours: {
+        configured: true,
+        openNow: true,
+        label: 'Fecha às 23:00',
+        timezone: 'America/Sao_Paulo',
+        nextOpen: null,
+        weeklySchedule: { sun: [{ start: '17:00', end: '23:00' }], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [] },
+        schedulingEnabled: false,
+        schedulingLeadTimeMinutes: 0,
+      },
+    },
     fulfillment: { type: 'pickup', asap: true, pickupDate: null, pickupTime: null, deliveryAddress: null, deliveryNeighborhood: null, deliveryPostalCode: null, deliveryNumber: null, deliveryComplement: null, deliveryStreet: null, deliveryCity: null, deliveryState: null, deliveryFee: 0, deliveryFeeToConfirm: false },
   };
   publicApiMockStates.set(page, state);
@@ -91,4 +126,10 @@ export async function mockPublicApi(page: Page) {
     }
     await route.continue();
   });
+}
+
+export function updateMockStoreBusiness(page: Page, patch: Record<string, unknown>) {
+  const state = publicApiMockStates.get(page);
+  if (!state) throw new Error('mockPublicApi must be called before updateMockStoreBusiness');
+  state.business = { ...state.business, ...patch };
 }

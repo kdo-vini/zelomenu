@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, Check, ChevronDown, CircleAlert, Loader2 } from 'lucide-react';
-import { buildZeloMenuPublicUrl, getZeloMenuSettings, getZeloMenuSlug, type ZeloMenuStoreSettings } from '../../services/zelomenuAdminApi';
+import { buildZeloMenuPublicUrl, getDeliverySettings, getZeloMenuSettings, getZeloMenuSlug, type ZeloMenuStoreSettings } from '../../services/zelomenuAdminApi';
+import { isValidDeliveryEstimatedMinutes, type DeliverySettings } from '../../domain/deliverySettings';
 
 const READINESS_STORAGE_KEY = 'zelomenu:publication-readiness:expanded';
 
@@ -17,8 +18,36 @@ function hasConfiguredHours(settings: ZeloMenuStoreSettings): boolean {
   return Object.values(settings.weeklyHours).some((windows) => windows.length > 0);
 }
 
-export function buildReadinessItems(settings: ZeloMenuStoreSettings, slug: string | null): ReadinessItem[] {
+function hasConfiguredDelivery(delivery: DeliverySettings | null): boolean {
+  if (!delivery) return false;
+  if (!delivery.enabled) return true;
+  const hasDistancePricing = delivery.ranges.some((range) => range.maxDistanceM > 0 && range.price >= 0);
+  const hasTimePricing = (delivery.pricingRules ?? []).some((rule) => rule.enabled && rule.pricesByDistance.length > 0);
+  return Boolean(
+    delivery.address
+    && delivery.geocodingStatus === 'ready'
+    && isValidDeliveryEstimatedMinutes(delivery.estimatedDeliveryMinutes)
+    && (hasDistancePricing || hasTimePricing),
+  );
+}
+
+function deliveryDescription(delivery: DeliverySettings | null): string {
+  if (!delivery) return 'Não foi possível verificar a configuração de entrega agora. Tente novamente.';
+  if (!delivery.enabled) return 'Retirada no local está configurada como modo de atendimento.';
+  if (!delivery.address) return 'Informe o endereço da loja para calcular a área de entrega.';
+  if (delivery.geocodingStatus !== 'ready') return 'Confirme a localização da loja antes de oferecer entrega.';
+  if (!isValidDeliveryEstimatedMinutes(delivery.estimatedDeliveryMinutes)) return 'Informe um prazo estimado de entrega válido.';
+  return 'Adicione pelo menos uma faixa ou regra de preço ativa para publicar a entrega.';
+}
+
+export function buildReadinessItems(
+  settings: ZeloMenuStoreSettings,
+  slug: string | null,
+  delivery: DeliverySettings | null = null,
+): ReadinessItem[] {
   const summary = settings.publicationSummary;
+  const photoCount = settings.availableProducts.filter((product) => Boolean(product.photoUrl)).length;
+  const photosReady = settings.availableProducts.length > 0 && photoCount >= Math.min(3, settings.availableProducts.length);
   return [
     {
       id: 'link',
@@ -45,12 +74,20 @@ export function buildReadinessItems(settings: ZeloMenuStoreSettings, slug: strin
       action: 'Revisar itens',
     },
     {
-      id: 'visual',
-      title: 'Identidade da loja preenchida',
-      description: settings.logoUrl || settings.coverUrl || settings.description ? 'Logo, capa ou descrição já aparecem na vitrine.' : 'Adicione uma imagem ou uma descrição para a vitrine transmitir confiança.',
-      ready: Boolean(settings.logoUrl || settings.coverUrl || settings.description),
+      id: 'logo',
+      title: 'Logo da loja configurada',
+      description: settings.logoUrl ? 'A marca aparece junto ao nome da loja.' : 'Adicione a logo para o cliente reconhecer a loja no primeiro olhar.',
+      ready: Boolean(settings.logoUrl),
       href: '#publication',
-      action: 'Editar visual',
+      action: 'Editar logo',
+    },
+    {
+      id: 'cover',
+      title: 'Capa da loja configurada',
+      description: settings.coverUrl ? 'A capa compacta dá contexto visual ao cardápio.' : 'Adicione uma capa para a vitrine transmitir mais confiança.',
+      ready: Boolean(settings.coverUrl),
+      href: '#publication',
+      action: 'Editar capa',
     },
     {
       id: 'hours',
@@ -59,6 +96,22 @@ export function buildReadinessItems(settings: ZeloMenuStoreSettings, slug: strin
       ready: hasConfiguredHours(settings),
       href: '#settings/horarios',
       action: 'Editar horários',
+    },
+    {
+      id: 'photos',
+      title: 'Fotos nos produtos principais',
+      description: photosReady ? `${photoCount} produto${photoCount === 1 ? '' : 's'} com foto no catálogo.` : 'Adicione fotos a pelo menos três produtos (ou a todos, se houver menos de três).',
+      ready: photosReady,
+      href: '#catalog',
+      action: 'Adicionar fotos',
+    },
+    {
+      id: 'delivery',
+      title: 'Modo de atendimento configurado',
+      description: deliveryDescription(delivery),
+      ready: hasConfiguredDelivery(delivery),
+      href: '#settings/entrega',
+      action: delivery?.enabled === false ? 'Gerenciar' : 'Configurar entrega',
     },
   ];
 }
@@ -69,6 +122,8 @@ export function ZeloMenuReadinessCard() {
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [delivery, setDelivery] = useState<DeliverySettings | null>(null);
+  const [deliveryError, setDeliveryError] = useState(false);
 
   const storageKey = `${READINESS_STORAGE_KEY}:${slug || 'sem-link'}`;
 
@@ -84,10 +139,18 @@ export function ZeloMenuReadinessCard() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(false);
+    setDeliveryError(false);
     try {
       const [nextSettings, nextSlug] = await Promise.all([getZeloMenuSettings(), getZeloMenuSlug()]);
       setSettings(nextSettings);
       setSlug(nextSlug.slug);
+      try {
+        setDelivery(await getDeliverySettings());
+      } catch {
+        // Delivery is advisory: a temporary failure must not hide the rest of the checklist.
+        setDelivery(null);
+        setDeliveryError(true);
+      }
     } catch {
       setError(true);
     } finally {
@@ -125,7 +188,7 @@ export function ZeloMenuReadinessCard() {
     );
   }
 
-  const items = buildReadinessItems(settings, slug);
+  const items = buildReadinessItems(settings, slug, delivery);
   const readyCount = items.filter((item) => item.ready).length;
   const allReady = readyCount === items.length;
 
@@ -143,6 +206,14 @@ export function ZeloMenuReadinessCard() {
 
   return (
     <section className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)]">
+      {deliveryError ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-line)] bg-[var(--color-warn-soft)] px-5 py-3 text-[13px] text-[var(--color-warn)] sm:px-6">
+          <span>Não consegui verificar a entrega agora; os outros itens continuam disponíveis.</span>
+          <button type="button" onClick={() => void load()} className="min-h-11 rounded-xl border border-[var(--color-warn)]/40 px-3 font-bold hover:bg-[var(--color-warn-soft)]">
+            Tentar novamente
+          </button>
+        </div>
+      ) : null}
       <button
         type="button"
         onClick={toggleExpanded}

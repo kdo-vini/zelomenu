@@ -12,10 +12,13 @@ import {
 
 import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
 import { formatNextOpenDay } from '../domain/businessHours';
+import { buildStorefrontOperations, type StorefrontOperationKey } from '../domain/storefrontOperations';
 import { useStoreCart } from '../hooks/useStoreCart';
 import { ToastProvider } from '../contexts/ToastContext';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { ProductAddModal } from '../components/zelomenu/ZeloMenuProductAddModal';
+import { StorefrontHeader } from '../components/zelomenu/StorefrontHeader';
+import { StorefrontOperationSheet } from '../components/zelomenu/StorefrontOperationSheet';
 import { ZeloMenuNotFoundPage } from './ZeloMenuNotFoundPage';
 import { filterPublicCatalogByQuery } from '../domain/zelomenuCatalog';
 
@@ -71,15 +74,6 @@ function findCategoryName(catalog: ZeloMenuCatalogGroup[], productId: number): s
   return '';
 }
 
-function storeInitials(name: string): string {
-  return name
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0] ?? '')
-    .join('')
-    .toUpperCase();
-}
-
 function getProductQty(productId: number, items: Record<string, SelectedItem>): number {
   return Object.values(items)
     .filter((it) => it.productId === productId)
@@ -108,6 +102,7 @@ function ZeloMenuStorePageContent({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('');
+  const [openOperation, setOpenOperation] = useState<StorefrontOperationKey | null>(null);
 
   const cart = useStoreCart(slug, tableOrderContext, store?.business.deliveryEnabled === true);
 
@@ -283,105 +278,18 @@ function ZeloMenuStorePageContent({
         </div>
       ) : null}
 
-      {/* ── Sticky header ──────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-20 border-b border-[var(--zm-line)] bg-[var(--zm-surface)]">
-        <div className="mx-auto max-w-5xl">
-
-          {/* Store identity row */}
-          <div className="flex items-center gap-3 px-4 pt-4 pb-3">
-            {store.business.logoUrl ? (
-              <img
-                src={store.business.logoUrl}
-                alt={store.business.name || 'Logo'}
-                className="h-12 w-12 shrink-0 rounded-xl object-cover"
-              />
-            ) : (
-              <div
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-[16px] font-bold text-white"
-                style={{ background: 'linear-gradient(135deg, var(--zm-brand), var(--zm-brand-deep))' }}
-                aria-hidden="true"
-              >
-                {store.business.name ? storeInitials(store.business.name) : '🍴'}
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-[17px] font-bold leading-tight text-[var(--zm-ink)]">
-                {store.business.name || 'Cardápio'}
-              </h1>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {store.business.address ? (
-                  <p className="truncate text-[11px] text-[var(--zm-ink-soft)]">{store.business.address}</p>
-                ) : null}
-                {store.business.deliveryEnabled ? (
-                  <span className="shrink-0 rounded-full bg-[var(--zm-brand-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--zm-brand-deep)]">
-                    Entrega
-                  </span>
-                ) : null}
-                {store.business.pixEnabled ? (
-                  <span className="shrink-0 rounded-full bg-[var(--zm-canvas)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--zm-ink-soft)/50]">
-                    Pix
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-          {store.business.description ? (
-            <p className="px-4 pb-3 text-[13px] leading-relaxed text-[var(--zm-ink-soft)]">
-              {store.business.description}
-            </p>
-          ) : null}
-
-          {/* Search bar */}
-          <div className="px-4 pb-2.5">
-            <div className="flex h-10 items-center gap-2 rounded-xl border border-[var(--zm-line)] bg-[var(--zm-canvas)] px-3 focus-within:border-[var(--zm-brand)]" style={{ transition: 'border-color 0.15s' }}>
-              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--zm-ink-soft)]" strokeWidth={2} />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar no cardápio…"
-                className="flex-1 bg-transparent text-[13px] text-[var(--zm-ink)] placeholder:text-[var(--zm-ink-soft)] outline-none"
-              />
-              {searchQuery ? (
-                <button type="button" onClick={() => setSearchQuery('')} className="shrink-0 rounded p-0.5" aria-label="Limpar busca">
-                  <X className="h-3.5 w-3.5 text-[var(--zm-ink-soft)]" strokeWidth={2} />
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Category pill tabs */}
-          {!searchQuery && visibleCategories.length > 1 ? (
-            <div className="relative">
-              <div
-                ref={tabsRef}
-                className="flex gap-1.5 overflow-x-auto px-4 pb-3"
-                style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } as CSSProperties}
-              >
-                {visibleCategories.map((group) => (
-                  <button
-                    key={group.nome}
-                    type="button"
-                    data-tab={group.nome}
-                    onClick={() => scrollToCategory(group.nome)}
-                    className="shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                    style={{
-                      background: activeCategory === group.nome ? 'var(--zm-brand)' : 'var(--zm-canvas)',
-                      color: activeCategory === group.nome ? '#fff' : 'var(--zm-ink-soft)',
-                      transition: 'background 0.2s, color 0.2s',
-                    }}
-                  >
-                    {group.nome}
-                  </button>
-                ))}
-              </div>
-              {/* Gradient fade on right edge to hint at more options */}
-              <div className="pointer-events-none absolute inset-y-0 right-0 w-10"
-                   style={{ background: 'linear-gradient(to left, var(--zm-surface), transparent)' }} />
-            </div>
-          ) : null}
-        </div>
-      </header>
+      <StorefrontHeader
+        business={store.business}
+        operations={buildStorefrontOperations(store.business)}
+        visibleCategories={visibleCategories}
+        activeCategory={activeCategory}
+        searchQuery={searchQuery}
+        tabsRef={tabsRef}
+        hasMesaBanner={Boolean(mesaBanner)}
+        onSearchChange={setSearchQuery}
+        onCategoryClick={scrollToCategory}
+        onOpenOperation={setOpenOperation}
+      />
 
       {/* ── Catalog body ──────────────────────────────────────────────────── */}
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-28 pt-5">
@@ -494,6 +402,12 @@ function ZeloMenuStorePageContent({
       </main>
 
       <PublicFooter />
+
+      <StorefrontOperationSheet
+        operation={openOperation}
+        business={store.business}
+        onClose={() => setOpenOperation(null)}
+      />
 
       {/* ── Floating cart bar ────────────────────────────────────────────── */}
       {cart.lines.length > 0 ? (
@@ -639,9 +553,9 @@ function QtyControl({
   size?: 'sm' | 'md';
 }) {
   const plainKey = `${product.id}::plain`;
-  const stepBtn = size === 'sm' ? 'h-7 w-7' : 'h-8 w-8';
+  const stepBtn = size === 'sm' ? 'h-7 w-7 min-h-11 min-w-11' : 'h-8 w-8 min-h-11 min-w-11';
   const stepIcon = size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5';
-  const addBtn = size === 'sm' ? 'h-8 w-8' : 'h-9 w-9';
+  const addBtn = size === 'sm' ? 'h-8 w-8 min-h-11 min-w-11' : 'h-9 w-9 min-h-11 min-w-11';
   const addIcon = size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4';
 
   if (qty > 0 && !hasModifiers) {
@@ -696,7 +610,7 @@ function QtyControl({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onAdd(); }}
-      className={`flex ${hasModifiers && qty > 0 && size === 'md' ? 'h-8 min-w-fit gap-1 rounded-full px-2.5' : addBtn} items-center justify-center rounded-full text-white`}
+      className={`flex ${hasModifiers && qty > 0 && size === 'md' ? 'h-8 min-h-11 min-w-11 gap-1 rounded-full px-2.5' : addBtn} items-center justify-center rounded-full text-white`}
       style={{ background: 'var(--zm-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
       onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
       onMouseUp={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
