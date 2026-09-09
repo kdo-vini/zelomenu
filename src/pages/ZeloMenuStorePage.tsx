@@ -18,6 +18,7 @@ import { ToastProvider } from '../contexts/ToastContext';
 import { PublicFooter } from '../components/zelomenu/PublicFooter';
 import { ProductAddModal } from '../components/zelomenu/ZeloMenuProductAddModal';
 import { StorefrontHeader } from '../components/zelomenu/StorefrontHeader';
+import { CatalogSkeleton } from '../components/zelomenu/StorefrontSkeletons';
 import { StorefrontOperationSheet } from '../components/zelomenu/StorefrontOperationSheet';
 import { ZeloMenuNotFoundPage } from './ZeloMenuNotFoundPage';
 import { filterPublicCatalogByQuery } from '../domain/zelomenuCatalog';
@@ -196,9 +197,10 @@ function ZeloMenuStorePageContent({
   useEffect(() => {
     const tabs = tabsRef.current;
     if (!tabs || !activeCategory) return;
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
     for (const btn of tabs.querySelectorAll('[data-tab]')) {
       if ((btn as HTMLElement).dataset.tab === activeCategory) {
-        btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        btn.scrollIntoView({ behavior, block: 'nearest', inline: 'center' });
         break;
       }
     }
@@ -208,7 +210,8 @@ function ZeloMenuStorePageContent({
     const el = sectionRefs.current[name];
     if (el) {
       const top = el.getBoundingClientRect().top + window.scrollY - 148;
-      window.scrollTo({ top, behavior: 'smooth' });
+      const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+      window.scrollTo({ top, behavior });
     }
     setActiveCategory(name);
   }
@@ -220,12 +223,7 @@ function ZeloMenuStorePageContent({
 
   // ── Loading / error states ──────────────────────────────────────────────────
   if (loading) {
-    return (
-      <div className="zelomenu-theme flex min-h-screen flex-col items-center justify-center gap-3 bg-[var(--zm-canvas)]">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--zm-brand)]" strokeWidth={1.8} />
-        <p className="text-[13px] text-[var(--zm-ink-soft)]">Carregando cardápio…</p>
-      </div>
-    );
+    return <CatalogSkeleton />;
   }
 
   if (notFound) {
@@ -573,8 +571,8 @@ function QtyControl({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onAdd(); }}
-            className={`flex ${stepBtn} min-w-fit items-center justify-center rounded-full px-2.5 text-[13px] font-bold text-white`}
-            style={{ background: 'var(--zm-brand)' }}
+            className={`flex ${stepBtn} min-w-fit items-center justify-center rounded-full px-2.5 text-[13px] font-bold text-[var(--zm-brand)]`}
+            style={{ background: 'var(--zm-brand-soft)' }}
             aria-label={`Editar quantidade de ${product.name}`}
           >
             {qty}
@@ -596,8 +594,8 @@ function QtyControl({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onChangeQty(plainKey, 1); }}
-          className={`flex ${stepBtn} items-center justify-center rounded-full text-white`}
-          style={{ background: 'var(--zm-brand)' }}
+          className={`flex ${stepBtn} items-center justify-center rounded-full text-[var(--zm-brand)]`}
+          style={{ background: 'var(--zm-brand-soft)' }}
           aria-label="Aumentar"
         >
           <Plus className={stepIcon} strokeWidth={2.5} />
@@ -610,8 +608,8 @@ function QtyControl({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onAdd(); }}
-      className={`flex ${hasModifiers && qty > 0 && size === 'md' ? 'h-8 min-h-11 min-w-11 gap-1 rounded-full px-2.5' : addBtn} items-center justify-center rounded-full text-white`}
-      style={{ background: 'var(--zm-brand)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
+      className={`flex ${hasModifiers && qty > 0 && size === 'md' ? 'h-8 min-h-11 min-w-11 gap-1 rounded-full px-2.5' : addBtn} items-center justify-center rounded-full text-[var(--zm-brand)]`}
+      style={{ background: 'var(--zm-brand-soft)', transition: 'transform 0.1s', WebkitTapHighlightColor: 'transparent' } as CSSProperties}
       onMouseDown={(e) => { (e.currentTarget as HTMLElement).style.transform = 'scale(0.92)'; }}
       onMouseUp={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}

@@ -76,6 +76,7 @@ import {
 } from '../domain/zelomenuCustomerCache';
 import { buildWhatsAppOrderMessage, buildWhatsAppOrderLink } from '../domain/whatsappOrder';
 import { ModifierModal } from '../components/zelomenu/ZeloMenuModifierModal';
+import { CartSkeleton } from '../components/zelomenu/StorefrontSkeletons';
 import { ZeloMenuScheduleCalendar } from '../components/zelomenu/ZeloMenuScheduleCalendar';
 import { PushNotificationButton } from '../components/home/PushNotificationButton';
 import { resolveCheckoutSuggestions } from '../domain/zelomenuRecommendations';
@@ -1189,14 +1190,7 @@ function ZeloMenuCartPageContent() {
   };
 
   if (loading) {
-    return (
-      <div className="zelomenu-theme min-h-screen bg-[var(--zm-canvas)] text-[var(--zm-ink)]">
-        <div className="mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-6">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--zm-brand)]" strokeWidth={1.8} />
-          <p className="mt-4 text-[14px] text-[var(--zm-ink-soft)]">Carregando seu carrinho…</p>
-        </div>
-      </div>
-    );
+    return <CartSkeleton />;
   }
 
   if (error && !payload) {
@@ -1285,7 +1279,7 @@ function ZeloMenuCartPageContent() {
     : [prettyDate || null, effectivePickupTime || null].filter(Boolean).join(' às ') || 'a combinar';
   const summaryMeta = `${isDelivery ? 'Entrega' : 'Retirada'} · ${whenLabel}${isDelivery && draft.deliveryNeighborhood ? ` · ${draft.deliveryNeighborhood}` : ''}`;
 
-  const inputCls = 'h-11 w-full rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 text-[14px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)]';
+  const inputCls = 'h-11 w-full rounded-lg border border-[var(--zm-line)] bg-[var(--zm-surface)] px-3 text-[16px] text-[var(--zm-ink)] outline-none transition-colors focus:border-[var(--zm-brand)]';
   const invalidInputCls = 'border-[var(--color-alert)] focus:border-[var(--color-alert)]';
   const labelCls = 'text-[11.5px] font-semibold text-[var(--zm-ink-soft)]';
   const requiredMark = <span className="text-[var(--color-alert)]" aria-hidden="true">*</span>;
@@ -1762,7 +1756,7 @@ function ZeloMenuCartPageContent() {
                                     if (event.key === 'Enter') event.currentTarget.blur();
                                   }}
                                   readOnly={!isCartOpen}
-                                  className="h-9 w-9 border-x border-[var(--zm-line)] bg-transparent px-0 text-center text-[13px] font-semibold tabular-nums text-[var(--zm-ink)] outline-none focus:bg-[var(--zm-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--zm-brand)]"
+                                  className="h-9 w-9 border-x border-[var(--zm-line)] bg-transparent px-0 text-center text-[16px] font-semibold tabular-nums text-[var(--zm-ink)] outline-none focus:bg-[var(--zm-surface-muted)] focus:ring-2 focus:ring-inset focus:ring-[var(--zm-brand)]"
                                 />
                                 <button
                                   type="button"
@@ -1842,7 +1836,7 @@ function ZeloMenuCartPageContent() {
                                       toast.success('Adicionado ao pedido');
                                     }
                                   }}
-                                  className="mt-auto flex h-8 w-full items-center justify-center gap-1 rounded-lg bg-[var(--zm-brand)] text-[12px] font-bold text-white transition-transform active:scale-95 disabled:opacity-40"
+                                  className="mt-auto flex h-8 w-full items-center justify-center gap-1 rounded-lg bg-[var(--zm-brand-soft)] text-[12px] font-bold text-[var(--zm-brand)] transition-transform active:scale-95 disabled:opacity-40"
                                 >
                                   <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
                                   Adicionar

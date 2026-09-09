@@ -22,6 +22,7 @@ import { DeliveryQuoteQueue } from '../components/zelomenu/DeliveryQuoteQueue';
 import { ZeloMenuDeliverySettingsCard } from '../components/zelomenu/ZeloMenuDeliverySettingsCard';
 import { ZeloMenuDeliveryNeighborhoodSettingsCard } from '../components/zelomenu/ZeloMenuDeliveryNeighborhoodSettingsCard';
 import { DeliveryCustomScheduleDisclosure } from '../components/zelomenu/DeliveryCustomScheduleDisclosure';
+import { ConfirmModal } from '../components/ConfirmModal';
 
 type ZeloMenuDeliverySettingsPageProps = {
   onBack: () => void;
@@ -37,6 +38,7 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
   const [saved, setSaved] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   const validation = useMemo(() => validateDeliveryDraft({ ...draft, enabled: true }), [draft]);
   const deliverySettings = useMemo(() => deliveryDraftToSettings(draft), [draft]);
@@ -74,7 +76,10 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
   }, [dirty]);
 
   function requestBack() {
-    if (dirty && !window.confirm('Existem alterações não salvas. Sair mesmo assim?')) return;
+    if (dirty) {
+      setShowLeaveConfirm(true);
+      return;
+    }
     onBack();
   }
 
@@ -408,6 +413,19 @@ export function ZeloMenuDeliverySettingsPage({ onBack }: ZeloMenuDeliverySetting
       </div>
 
       {draft.mode === 'distance' ? <div className="mt-8"><DeliveryQuoteQueue /></div> : null}
+
+      <ConfirmModal
+        open={showLeaveConfirm}
+        title="Sair sem salvar?"
+        message="Existem alterações não salvas nesta configuração de entrega. Se sair agora, elas serão perdidas."
+        confirmLabel="Sair sem salvar"
+        destructive={false}
+        onClose={() => setShowLeaveConfirm(false)}
+        onConfirm={async () => {
+          setShowLeaveConfirm(false);
+          onBack();
+        }}
+      />
     </div>
   );
 }

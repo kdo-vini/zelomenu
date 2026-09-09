@@ -139,7 +139,7 @@ export function StorefrontHeader({
                 value={searchQuery}
                 onChange={(event) => onSearchChange(event.target.value)}
                 placeholder="Buscar no cardápio…"
-                className="min-h-11 flex-1 bg-transparent text-[13px] text-[var(--zm-ink)] placeholder:text-[var(--zm-ink-soft)] outline-none"
+                className="min-h-11 flex-1 bg-transparent text-[16px] text-[var(--zm-ink)] placeholder:text-[var(--zm-ink-soft)] outline-none"
               />
               {searchQuery ? (
                 <button type="button" onClick={() => onSearchChange('')} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg" aria-label="Limpar busca">
@@ -164,8 +164,8 @@ export function StorefrontHeader({
                     onClick={() => onCategoryClick(group.nome)}
                     className="min-h-11 shrink-0 whitespace-nowrap rounded-full px-3.5 text-[12px] font-semibold"
                     style={{
-                      background: activeCategory === group.nome ? 'var(--zm-brand)' : 'var(--zm-canvas)',
-                      color: activeCategory === group.nome ? '#fff' : 'var(--zm-ink-soft)',
+                      background: activeCategory === group.nome ? 'var(--zm-brand-soft)' : 'var(--zm-canvas)',
+                      color: activeCategory === group.nome ? 'var(--zm-brand)' : 'var(--zm-ink-soft)',
                     }}
                   >
                     {group.nome}

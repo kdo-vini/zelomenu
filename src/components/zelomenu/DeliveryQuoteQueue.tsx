@@ -10,6 +10,7 @@ import {
   resolveDeliveryQuoteRequest,
   retryDeliveryQuoteRequest,
 } from '../../services/zelomenuAdminApi';
+import { ConfirmModal } from '../ConfirmModal';
 
 function formatDate(iso: string): string {
   try {
@@ -44,6 +45,7 @@ export function DeliveryQuoteQueue() {
   const [resolveFee, setResolveFee] = useState('');
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
@@ -98,7 +100,6 @@ export function DeliveryQuoteQueue() {
   }
 
   async function handleCancel(id: string) {
-    if (!window.confirm('Tem certeza que deseja cancelar esta solicitação?')) return;
     setActionLoading(id);
     setError(null);
     try {
@@ -306,7 +307,7 @@ export function DeliveryQuoteQueue() {
                 )}
                 <button
                   type="button"
-                  onClick={() => void handleCancel(req.id)}
+                  onClick={() => setCancelConfirmId(req.id)}
                   disabled={actionLoading === req.id}
                   className="inline-flex min-h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-semibold text-[var(--color-alert)] transition-colors hover:bg-[var(--color-alert-soft)] disabled:opacity-60"
                 >
@@ -377,6 +378,19 @@ export function DeliveryQuoteQueue() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={cancelConfirmId != null}
+        title="Cancelar solicitação?"
+        message="A solicitação de cotação de entrega será cancelada e não poderá ser retomada."
+        confirmLabel="Cancelar solicitação"
+        onClose={() => setCancelConfirmId(null)}
+        onConfirm={async () => {
+          const id = cancelConfirmId;
+          setCancelConfirmId(null);
+          if (id) await handleCancel(id);
+        }}
+      />
     </div>
   );
 }

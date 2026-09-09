@@ -9,6 +9,7 @@ import {
   type ZeloMenuCouponInput,
 } from '../../services/zelomenuAdminApi';
 import { useToast } from '../../contexts/ToastContext';
+import { ConfirmModal } from '../ConfirmModal';
 
 type DiscountType = 'valor' | 'percentual' | 'frete_gratis';
 
@@ -19,6 +20,7 @@ export function ZeloMenuCouponsCard() {
   const [coupons, setCoupons] = useState<ZeloMenuCoupon[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; code: string } | null>(null);
 
   // Form draft
   const [formCode, setFormCode] = useState('');
@@ -101,8 +103,7 @@ export function ZeloMenuCouponsCard() {
     }
   }
 
-  async function handleDelete(id: string, code: string) {
-    if (!window.confirm(`Excluir o cupom "${code}"?`)) return;
+  async function handleDelete(id: string) {
     try {
       await deleteZeloMenuCouponAdmin(id);
       setCoupons((prev) => prev.map((c) => (c.id === id ? { ...c, active: false } : c)));
@@ -273,7 +274,7 @@ export function ZeloMenuCouponsCard() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDelete(c.id, c.code)}
+                      onClick={() => setDeleteConfirm({ id: c.id, code: c.code })}
                       className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -285,6 +286,19 @@ export function ZeloMenuCouponsCard() {
           ))}
         </ul>
       )}
+
+      <ConfirmModal
+        open={deleteConfirm != null}
+        title="Excluir cupom?"
+        message={deleteConfirm ? `Excluir o cupom "${deleteConfirm.code}"? Ele deixará de funcionar imediatamente.` : ''}
+        confirmLabel="Excluir"
+        onClose={() => setDeleteConfirm(null)}
+        onConfirm={async () => {
+          const target = deleteConfirm;
+          setDeleteConfirm(null);
+          if (target) await handleDelete(target.id);
+        }}
+      />
     </div>
   );
 }

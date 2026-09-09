@@ -84,18 +84,18 @@ function MiniStepper({
   const atMin = value <= min;
   const atMax = max != null && value >= max;
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-lg border border-[var(--color-line)]">
+    <div className="inline-flex items-center gap-0.5 rounded-lg border border-[var(--zm-line)]">
       <button
         type="button"
         onClick={() => onChange(value - 1)}
         disabled={atMin}
-        className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-l-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-l-lg text-[var(--zm-ink-soft)] transition-colors hover:bg-[var(--zm-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
         aria-label={label ? `Diminuir quantidade de ${label}${max != null ? ` (limite ${max})` : ''}` : 'Diminuir quantidade'}
       >
         <Minus className="h-3 w-3" strokeWidth={2.5} />
       </button>
       <span
-        className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--color-ink)]"
+        className="flex h-7 min-w-[1.5rem] items-center justify-center text-[13px] font-semibold tabular-nums text-[var(--zm-ink)]"
         aria-live="polite"
         aria-label={label ? `${label}: ${value}${max != null ? ` de ${max}` : ''}` : `Quantidade: ${value}`}
       >
@@ -105,7 +105,7 @@ function MiniStepper({
         type="button"
         onClick={() => onChange(value + 1)}
         disabled={atMax}
-        className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-r-lg text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-r-lg text-[var(--zm-ink-soft)] transition-colors hover:bg-[var(--zm-surface-muted)] disabled:cursor-not-allowed disabled:opacity-30"
         aria-label={label ? `Aumentar quantidade de ${label}${max != null ? ` (limite ${max})` : ''}` : 'Aumentar quantidade'}
       >
         <Plus className="h-3 w-3" strokeWidth={2.5} />
@@ -372,7 +372,7 @@ export function ProductAddModal({
       }}
     >
       <div
-        className="flex w-full max-w-md flex-col rounded-t-3xl bg-[var(--color-surface)] shadow-2xl"
+        className="flex w-full max-w-md flex-col rounded-t-3xl bg-[var(--zm-surface)] shadow-2xl"
         style={{ maxHeight: '92vh' }}
         ref={dialogRef}
         role="dialog"
@@ -383,18 +383,18 @@ export function ProductAddModal({
         onMouseDown={(event) => event.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--color-line)] px-5 py-4">
-          <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--zm-line)] px-5 py-4">
+          <p className="text-[12px] font-semibold uppercase tracking-wide text-[var(--zm-ink-soft)]">
             Detalhes do produto
           </p>
           <button
             type="button"
             onClick={onClose}
             ref={closeButtonRef}
-            className="flex h-8 w-8 min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-canvas)]"
+            className="flex h-8 w-8 min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full bg-[var(--zm-canvas)]"
             aria-label="Fechar"
           >
-            <X className="h-4 w-4 text-[var(--color-ink-soft)]" strokeWidth={2} />
+            <X className="h-4 w-4 text-[var(--zm-ink-soft)]" strokeWidth={2} />
           </button>
         </div>
 
@@ -410,17 +410,17 @@ export function ProductAddModal({
 
           <div className="space-y-5 px-5 py-4">
             <div>
-              <h3 id="product-add-title" className="text-[17px] font-bold leading-snug text-[var(--color-ink)]">{product.name}</h3>
+              <h3 id="product-add-title" className="text-[17px] font-bold leading-snug text-[var(--zm-ink)]">{product.name}</h3>
               {product.description ? (
-                <p id="product-add-description" className="mt-1 text-[13px] leading-relaxed text-[var(--color-ink-muted)]">
+                <p id="product-add-description" className="mt-1 text-[13px] leading-relaxed text-[var(--zm-ink-soft)]">
                   {product.description}
                 </p>
               ) : <span id="product-add-description" className="sr-only">Escolha os complementos e a quantidade do produto.</span>}
-              <p className="mt-2 text-[15px] font-bold" style={{ color: 'var(--color-brand-deep)' }}>
+              <p className="mt-2 text-[15px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
                 {displayedPriceLabel}
               </p>
               {existingLineCount > 0 && product.modifierGroups.some((group) => group.active) ? (
-                <p className="mt-2 rounded-lg bg-[var(--color-brand-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--color-brand-deep)]">
+                <p className="mt-2 rounded-lg bg-[var(--zm-brand-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--zm-brand-deep)]">
                   Você já adicionou {existingLineCount === 1 ? 'uma montagem' : `${existingLineCount} montagens`} deste produto. Escolha outra combinação para adicionar {product.productType === 'pizza' ? 'outra pizza' : 'um produto diferente'}.
                 </p>
               ) : null}
@@ -429,20 +429,20 @@ export function ProductAddModal({
             {product.productType === 'pizza' && (
               <section
                 ref={pizzaSectionRef}
-                className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-canvas)]"
+                className="overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-canvas)]"
                 aria-label="Monte sua pizza"
                 tabIndex={-1}
               >
-                <div className="border-b border-[var(--color-line)] bg-[var(--color-brand-soft)] px-4 py-3.5">
-                  <h3 className="text-base font-bold text-[var(--color-ink)]">Monte sua pizza</h3>
-                  <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-ink-muted)]">Escolha o tamanho, quantos sabores e depois as suas opções.</p>
+                <div className="border-b border-[var(--zm-line)] bg-[var(--zm-brand-soft)] px-4 py-3.5">
+                  <h3 className="text-base font-bold text-[var(--zm-ink)]">Monte sua pizza</h3>
+                  <p className="mt-0.5 text-xs leading-relaxed text-[var(--zm-ink-soft)]">Escolha o tamanho, quantos sabores e depois as suas opções.</p>
                 </div>
 
                 <div className="space-y-5 p-4">
                   <div>
                     <div className="mb-2.5 flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-brand)] text-xs font-bold text-white">1</span>
-                      <p className="text-sm font-bold text-[var(--color-ink)]">Escolha o tamanho</p>
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--zm-brand)] text-xs font-bold text-white">1</span>
+                      <p className="text-sm font-bold text-[var(--zm-ink)]">Escolha o tamanho</p>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {activePizzaSizes.map((size) => {
@@ -456,15 +456,15 @@ export function ProductAddModal({
                             aria-label={`${size.name} · até ${size.maxFlavors} ${size.maxFlavors === 1 ? 'sabor' : 'sabores'}`}
                             className="min-h-14 rounded-xl border px-3 py-2.5 text-left transition-colors"
                             style={{
-                              borderColor: selected ? 'var(--color-brand)' : 'var(--color-line)',
-                              background: selected ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                              borderColor: selected ? 'var(--zm-brand)' : 'var(--zm-line)',
+                              background: selected ? 'var(--zm-brand-soft)' : 'var(--zm-surface)',
                             }}
                           >
-                            <span className="flex items-center justify-between gap-2 text-sm font-bold text-[var(--color-ink)]">
+                            <span className="flex items-center justify-between gap-2 text-sm font-bold text-[var(--zm-ink)]">
                               {size.name}
-                              {selected ? <Check className="h-4 w-4 text-[var(--color-brand-deep)]" aria-hidden="true" /> : null}
+                              {selected ? <Check className="h-4 w-4 text-[var(--zm-brand-deep)]" aria-hidden="true" /> : null}
                             </span>
-                            <span className="mt-0.5 block text-xs text-[var(--color-ink-muted)]">Até {size.maxFlavors} {size.maxFlavors === 1 ? 'sabor' : 'sabores'}</span>
+                            <span className="mt-0.5 block text-xs text-[var(--zm-ink-soft)]">Até {size.maxFlavors} {size.maxFlavors === 1 ? 'sabor' : 'sabores'}</span>
                           </button>
                         );
                       })}
@@ -477,8 +477,8 @@ export function ProductAddModal({
                     <>
                       <div>
                         <div className="mb-2.5 flex items-center gap-2">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-brand)] text-xs font-bold text-white">2</span>
-                          <p className="text-sm font-bold text-[var(--color-ink)]">Quantos sabores?</p>
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--zm-brand)] text-xs font-bold text-white">2</span>
+                          <p className="text-sm font-bold text-[var(--zm-ink)]">Quantos sabores?</p>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           {Array.from({ length: selectedPizzaSize.maxFlavors }, (_, index) => index + 1).map((count) => {
@@ -493,9 +493,9 @@ export function ProductAddModal({
                                 aria-label={label}
                                 className="min-h-12 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
                                 style={{
-                                  borderColor: selected ? 'var(--color-brand)' : 'var(--color-line)',
-                                  background: selected ? 'var(--color-brand-soft)' : 'var(--color-surface)',
-                                  color: selected ? 'var(--color-brand-deep)' : 'var(--color-ink)',
+                                  borderColor: selected ? 'var(--zm-brand)' : 'var(--zm-line)',
+                                  background: selected ? 'var(--zm-brand-soft)' : 'var(--zm-surface)',
+                                  color: selected ? 'var(--zm-brand-deep)' : 'var(--zm-ink)',
                                 }}
                               >
                                 {label}
@@ -508,23 +508,23 @@ export function ProductAddModal({
                       <div>
                         <div className="mb-2.5 flex items-start justify-between gap-3">
                           <div className="flex items-center gap-2">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-brand)] text-xs font-bold text-white">3</span>
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--zm-brand)] text-xs font-bold text-white">3</span>
                             <div>
-                              <p className="text-sm font-bold text-[var(--color-ink)]">Escolha os sabores</p>
-                              <p className="text-xs text-[var(--color-ink-muted)]">{flavorIds.length} de {flavorCount} selecionado{flavorIds.length === 1 ? '' : 's'}</p>
+                              <p className="text-sm font-bold text-[var(--zm-ink)]">Escolha os sabores</p>
+                              <p className="text-xs text-[var(--zm-ink-soft)]">{flavorIds.length} de {flavorCount} selecionado{flavorIds.length === 1 ? '' : 's'}</p>
                             </div>
                           </div>
                           {flavorIds.length === flavorCount ? (
-                            <span className="rounded-full bg-[var(--color-brand-soft)] px-2 py-1 text-xs font-bold text-[var(--color-brand-deep)]">Pronto</span>
+                            <span className="rounded-full bg-[var(--zm-brand-soft)] px-2 py-1 text-xs font-bold text-[var(--zm-brand-deep)]">Pronto</span>
                           ) : null}
                         </div>
 
                         {availablePizzaFlavors.length > 5 ? (
                           <label className="relative mb-2.5 block">
                             <span className="sr-only">Buscar sabor</span>
-                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-ink-muted)]" aria-hidden="true" />
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--zm-ink-soft)]" aria-hidden="true" />
                             <input
-                              className="h-11 w-full rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] pl-9 pr-3 text-base text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-brand)]"
+                              className="h-11 w-full rounded-xl border border-[var(--zm-line)] bg-[var(--zm-surface)] pl-9 pr-3 text-base text-[var(--zm-ink)] outline-none placeholder:text-[var(--zm-ink-soft)] focus:border-[var(--zm-brand)]"
                               aria-label="Buscar sabor"
                               placeholder="Buscar sabor"
                               value={flavorSearch}
@@ -548,36 +548,36 @@ export function ProductAddModal({
                                 aria-label={`${flavor.name} · ${fraction} · ${toBRL(flavor.prices[pizzaSize])}`}
                                 className="flex min-h-14 w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45"
                                 style={{
-                                  borderColor: selected ? 'var(--color-brand)' : 'var(--color-line)',
-                                  background: selected ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                                  borderColor: selected ? 'var(--zm-brand)' : 'var(--zm-line)',
+                                  background: selected ? 'var(--zm-brand-soft)' : 'var(--zm-surface)',
                                 }}
                               >
                                 {flavor.photoUrl ? (
                                   <img src={flavor.photoUrl} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" loading="lazy" />
                                 ) : (
-                                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-muted)] text-xs font-bold text-[var(--color-ink-muted)]">{fraction}</span>
+                                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--zm-surface-muted)] text-xs font-bold text-[var(--zm-ink-soft)]">{fraction}</span>
                                 )}
                                 <span className="min-w-0 flex-1">
-                                  <span className="block text-sm font-semibold text-[var(--color-ink)]">{flavor.name}</span>
-                                  {flavor.description ? <span className="mt-0.5 line-clamp-2 block text-xs text-[var(--color-ink-muted)]">{flavor.description}</span> : null}
+                                  <span className="block text-sm font-semibold text-[var(--zm-ink)]">{flavor.name}</span>
+                                  {flavor.description ? <span className="mt-0.5 line-clamp-2 block text-xs text-[var(--zm-ink-soft)]">{flavor.description}</span> : null}
                                 </span>
                                 <span className="shrink-0 text-right">
-                                  <span className="block text-xs text-[var(--color-ink-muted)]">{fraction}</span>
-                                  <span className="block text-xs font-bold text-[var(--color-ink)]">{toBRL(flavor.prices[pizzaSize])}</span>
+                                  <span className="block text-xs text-[var(--zm-ink-soft)]">{fraction}</span>
+                                  <span className="block text-xs font-bold text-[var(--zm-ink)]">{toBRL(flavor.prices[pizzaSize])}</span>
                                 </span>
-                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border" style={{ borderColor: selected ? 'var(--color-brand)' : 'var(--color-line-strong)', background: selected ? 'var(--color-brand)' : 'transparent' }}>
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border" style={{ borderColor: selected ? 'var(--zm-brand)' : 'var(--zm-line-strong)', background: selected ? 'var(--zm-brand)' : 'transparent' }}>
                                   {selected ? <Check className="h-3 w-3 text-white" strokeWidth={3} aria-hidden="true" /> : null}
                                 </span>
                               </button>
                             );
                           })}
                           {visiblePizzaFlavors.length === 0 ? (
-                            <p className="rounded-xl border border-dashed border-[var(--color-line)] px-3 py-5 text-center text-xs text-[var(--color-ink-muted)]">Nenhum sabor encontrado.</p>
+                            <p className="rounded-xl border border-dashed border-[var(--zm-line)] px-3 py-5 text-center text-xs text-[var(--zm-ink-soft)]">Nenhum sabor encontrado.</p>
                           ) : null}
                         </div>
                       </div>
 
-                      <p className="rounded-xl bg-[var(--color-surface-muted)] px-3 py-2.5 text-xs leading-relaxed text-[var(--color-ink-muted)]">
+                      <p className="rounded-xl bg-[var(--zm-surface-muted)] px-3 py-2.5 text-xs leading-relaxed text-[var(--zm-ink-soft)]">
                         {product.pizza?.pricingMode === 'average' ? 'O preço é proporcional aos sabores escolhidos.' : 'O preço da pizza será o do sabor de maior valor.'} Bordas, massas e adicionais entram depois.
                       </p>
                     </>
@@ -593,8 +593,8 @@ export function ProductAddModal({
                 }}
               >
                 <div className="mb-2.5">
-                  <p className="text-[14px] font-bold text-[var(--color-ink)]">{group.name}</p>
-                  <p className="text-[12px] text-[var(--color-ink-muted)]">
+                  <p className="text-[14px] font-bold text-[var(--zm-ink)]">{group.name}</p>
+                  <p className="text-[12px] text-[var(--zm-ink-soft)]">
                     {groupCounterLabel(group, groupSelectedCount(group, selections[group.id] ?? {}))}
                   </p>
                   {nextRequiredGroup?.id === group.id && group.allowsQuantity && group.minTotalQuantity > quantityTotal(selections[group.id] ?? {}) ? (
@@ -624,8 +624,8 @@ export function ProductAddModal({
                           key={option.id}
                           className="flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5"
                           style={{
-                            borderColor: checked ? 'var(--color-brand)' : 'var(--color-line)',
-                            background: checked ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                            borderColor: checked ? 'var(--zm-brand)' : 'var(--zm-line)',
+                            background: checked ? 'var(--zm-brand-soft)' : 'var(--zm-surface)',
                             transition: 'border-color 0.15s, background 0.15s',
                           }}
                         >
@@ -637,12 +637,12 @@ export function ProductAddModal({
                                 className="h-8 w-8 shrink-0 rounded-lg object-cover"
                               />
                             ) : null}
-                            <span className="text-[14px] text-[var(--color-ink)]">
+                            <span className="text-[14px] text-[var(--zm-ink)]">
                               {option.linkedProduct ? option.linkedProduct.name : option.name}
                             </span>
                           </div>
                           <div className="flex items-center gap-2.5">
-                            <span className="text-[12px] font-semibold text-[var(--color-ink-soft)]">
+                            <span className="text-[12px] font-semibold text-[var(--zm-ink-soft)]">
                               {unitPrice > 0
                                 ? checked
                                   ? `+ ${toBRL(unitPrice * currentQty)}`
@@ -674,8 +674,8 @@ export function ProductAddModal({
                         key={option.id}
                         className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${atMax ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
                         style={{
-                          borderColor: checked ? 'var(--color-brand)' : 'var(--color-line)',
-                          background: checked ? 'var(--color-brand-soft)' : 'var(--color-surface)',
+                          borderColor: checked ? 'var(--zm-brand)' : 'var(--zm-line)',
+                          background: checked ? 'var(--zm-brand-soft)' : 'var(--zm-surface)',
                           transition: 'border-color 0.15s, background 0.15s',
                         }}
                       >
@@ -692,16 +692,16 @@ export function ProductAddModal({
                             {group.maxSelections === 1 ? (
                               <span
                                 className="flex h-4 w-4 items-center justify-center rounded-full border-2"
-                                style={{ borderColor: checked ? 'var(--color-brand)' : 'var(--color-line-strong)' }}
+                                style={{ borderColor: checked ? 'var(--zm-brand)' : 'var(--zm-line-strong)' }}
                               >
-                                {checked ? <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--color-brand)' }} /> : null}
+                                {checked ? <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--zm-brand)' }} /> : null}
                               </span>
                             ) : (
                               <span
                                 className="flex h-4 w-4 items-center justify-center rounded"
                                 style={{
-                                  border: checked ? 'none' : '2px solid var(--color-line-strong)',
-                                  background: checked ? 'var(--color-brand)' : 'transparent',
+                                  border: checked ? 'none' : '2px solid var(--zm-line-strong)',
+                                  background: checked ? 'var(--zm-brand)' : 'transparent',
                                 }}
                               >
                                 {checked ? <Check className="h-3 w-3 text-white" strokeWidth={3} /> : null}
@@ -717,15 +717,15 @@ export function ProductAddModal({
                                   className="h-8 w-8 shrink-0 rounded-lg object-cover"
                                 />
                               ) : null}
-                              <span className="text-[14px] text-[var(--color-ink)]">
+                              <span className="text-[14px] text-[var(--zm-ink)]">
                                 {option.linkedProduct.name}
                               </span>
                             </div>
                           ) : (
-                            <span className="text-[14px] text-[var(--color-ink)]">{option.name}</span>
+                            <span className="text-[14px] text-[var(--zm-ink)]">{option.name}</span>
                           )}
                         </div>
-                        <span className="text-[13px] font-semibold text-[var(--color-ink-soft)]">
+                        <span className="text-[13px] font-semibold text-[var(--zm-ink-soft)]">
                           {option.linkedProduct
                             ? isSubstituir
                               ? toBRL(option.linkedProduct.price)
@@ -756,29 +756,29 @@ export function ProductAddModal({
                   if (catSuggestions.length === 0) return null;
                   return (
                     <div>
-                      <p className="mb-2 text-[13px] font-semibold text-[var(--color-ink)]">Adicional pra sua {categoryName.toLowerCase()}</p>
+                      <p className="mb-2 text-[13px] font-semibold text-[var(--zm-ink)]">Adicional pra sua {categoryName.toLowerCase()}</p>
                       <div className="-mx-5 flex gap-2.5 overflow-x-auto px-5 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
                         {catSuggestions.map((p) => (
                           <div
                             key={p.id}
-                            className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)]"
+                            className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--zm-line)] bg-[var(--zm-canvas)]"
                             style={{ scrollSnapAlign: 'start' }}
                           >
-                            <div className="flex h-[80px] items-center justify-center overflow-hidden rounded-t-xl bg-[var(--color-surface)]">
+                            <div className="flex h-[80px] items-center justify-center overflow-hidden rounded-t-xl bg-[var(--zm-surface)]">
                               {p.photoUrl ? (
                                 <img src={p.photoUrl} alt={p.name} className="h-full w-full object-cover" loading="lazy" />
                               ) : (
-                                <ImageIcon className="h-6 w-6 text-[var(--color-ink-soft)]" strokeWidth={1.4} />
+                                <ImageIcon className="h-6 w-6 text-[var(--zm-ink-soft)]" strokeWidth={1.4} />
                               )}
                             </div>
                             <div className="flex flex-1 flex-col justify-between gap-1 p-2">
-                              <p className="text-[11px] font-medium leading-tight text-[var(--color-ink)] line-clamp-2">{p.name}</p>
+                              <p className="text-[11px] font-medium leading-tight text-[var(--zm-ink)] line-clamp-2">{p.name}</p>
                               <div className="flex items-center justify-between gap-1">
-                                <span className="text-[12px] font-semibold text-[var(--color-ink)]">{toBRL(p.basePrice)}</span>
+                                <span className="text-[12px] font-semibold text-[var(--zm-ink)]">{toBRL(p.basePrice)}</span>
                                 <button
                                   type="button"
                                   onClick={() => onQuickAdd(p)}
-                                  className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-lg bg-[var(--color-brand)] text-white transition-transform active:scale-90"
+                                  className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-lg bg-[var(--zm-brand)] text-white transition-transform active:scale-90"
                                   aria-label={`Adicionar ${p.name}`}
                                 >
                                   <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
@@ -795,10 +795,10 @@ export function ProductAddModal({
 
             <div>
               <div className="mb-1.5 flex items-baseline justify-between">
-                <label htmlFor="product-add-notes" className="text-[13px] font-semibold text-[var(--color-ink)]">
+                <label htmlFor="product-add-notes" className="text-[13px] font-semibold text-[var(--zm-ink)]">
                   Alguma observação?
                 </label>
-                <span className="text-[11px] text-[var(--color-ink-faint)]">
+                <span className="text-[11px] text-[var(--zm-ink-soft)]">
                   {notes.length}/{NOTES_MAX_LENGTH}
                 </span>
               </div>
@@ -808,7 +808,7 @@ export function ProductAddModal({
                 onChange={(e) => setNotes(e.target.value.slice(0, NOTES_MAX_LENGTH))}
                 placeholder="Ex.: sem cebola, ponto da carne…"
                 rows={2}
-                className="w-full resize-none rounded-xl border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2.5 text-[13px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-brand)]"
+                className="w-full resize-none rounded-xl border border-[var(--zm-line)] bg-[var(--zm-canvas)] px-3 py-2.5 text-[13px] text-[var(--zm-ink)] outline-none placeholder:text-[var(--zm-ink-soft)] focus:border-[var(--zm-brand)]"
                 style={{ transition: 'border-color 0.15s' }}
               />
             </div>
@@ -817,14 +817,14 @@ export function ProductAddModal({
 
         {/* Footer */}
         <div
-          className="flex shrink-0 items-center gap-3 border-t border-[var(--color-line)] px-5 py-4"
+          className="flex shrink-0 items-center gap-3 border-t border-[var(--zm-line)] px-5 py-4"
           style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
         >
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               type="button"
               onClick={() => setQtyDraft((v) => String(Math.max(1, (parseInt(v, 10) || 0) - 1)))}
-              className="flex h-10 w-10 min-h-11 min-w-11 items-center justify-center rounded-full border border-[var(--color-line)]"
+              className="flex h-10 w-10 min-h-11 min-w-11 items-center justify-center rounded-full border border-[var(--zm-line)]"
               aria-label="Diminuir quantidade"
             >
               <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
@@ -836,14 +836,14 @@ export function ProductAddModal({
               value={qtyDraft}
               onChange={(e) => setQtyDraft(e.target.value)}
               onFocus={(e) => e.currentTarget.select()}
-              className="h-10 w-12 rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] text-center text-[15px] font-bold tabular-nums outline-none focus:border-[var(--color-brand)]"
+              className="h-10 w-12 rounded-lg border border-[var(--zm-line)] bg-[var(--zm-canvas)] text-center text-[15px] font-bold tabular-nums outline-none focus:border-[var(--zm-brand)]"
               aria-label={hasActiveModifiers ? 'Quantidade desta montagem' : 'Quantidade'}
             />
             <button
               type="button"
               onClick={() => setQtyDraft((v) => String((parseInt(v, 10) || 0) + 1))}
               className="flex h-10 w-10 min-h-11 min-w-11 items-center justify-center rounded-full text-white"
-              style={{ background: 'var(--color-brand)' }}
+              style={{ background: 'var(--zm-brand)' }}
               aria-label="Aumentar quantidade"
             >
               <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
@@ -855,7 +855,7 @@ export function ProductAddModal({
             disabled={!canConfirm && !canGuideToSelection}
             aria-label={primaryActionLabel}
             className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 sm:px-4"
-            style={{ background: 'var(--color-brand)' }}
+            style={{ background: 'var(--zm-brand)' }}
           >
             {pizzaActionLabel || nextRequiredGroup ? (
               <ArrowDown className="h-4 w-4" strokeWidth={2.5} />
