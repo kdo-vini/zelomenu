@@ -105,7 +105,11 @@ describe('searchCatalogDiscovery', () => {
 
     const result = searchCatalogDiscovery({ empresaId: 'empresa-a', query: 'oq tem de mistura hoje', catalog: catalogWithDistractors });
 
-    expect(result.results[0]).toMatchObject({ productId: 10, publicName: 'Marmita do dia', confidence: 0.95 });
+    // 2026-09-09: `confidence` passou a ser cobertura 0..1 — a fração do peso
+    // da consulta que o produto cobre. O alias cobre a consulta inteira no
+    // nome do produto, então fecha em 1,00; o 0,95 anterior era o 95 da escala
+    // bruta dividido por 100, não uma medida de confiança.
+    expect(result.results[0]).toMatchObject({ productId: 10, publicName: 'Marmita do dia', confidence: 1 });
     expect(result.results.filter((candidate) => candidate.productId === 50 || candidate.productId === 51)
       .every((candidate) => candidate.confidence < 1)).toBe(true);
   });

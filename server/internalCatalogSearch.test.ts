@@ -192,12 +192,18 @@ describe('CatalogDiscovery', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
+    // 2026-09-09: `total` caiu de 2 para 1. O segundo candidato era o grupo
+    // "Escolha a massa", que casava metade da consulta ("massa") num campo de
+    // peso 0,6 e ficava em 0,30 — abaixo do piso de relevância. É redundante:
+    // o candidato do produto já carrega todos os seus grupos em
+    // `modifierGroups`, e essa linha extra só inflava a contagem de sentidos
+    // que decide `ambiguous`.
     expect(result).toEqual({
       empresaId: 'empresa-massa',
       query: 'Monte Sua Massa',
       normalizedQuery: 'monte sua massa',
       limit: 1,
-      total: 2,
+      total: 1,
       ambiguous: false,
       results: [{
         productId: 1007,
@@ -267,7 +273,7 @@ describe('CatalogDiscovery', () => {
           },
         ],
         matchReason: 'nome_publico',
-        confidence: 0.95,
+        confidence: 1,
         ambiguous: false,
       }],
     });
