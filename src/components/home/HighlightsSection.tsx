@@ -111,7 +111,7 @@ export function HighlightsSection({ businesses }: HighlightsSectionProps) {
               <strong>{highlight.name}</strong>
               <span>{business.name}</span>
               <div className="home-highlight-card__footer">
-                <b>{formatPrice(highlight.price)}</b>
+                <b>{highlight.priceFrom ? `A partir de ${formatPrice(highlight.price)}` : formatPrice(highlight.price)}</b>
                 <span>
                   Adicionar
                   <ArrowRight size={15} strokeWidth={2.4} aria-hidden="true" />

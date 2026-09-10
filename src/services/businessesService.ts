@@ -29,7 +29,7 @@ export const businessesService = {
         maxDeliveryDistanceM: number | null;
         rating: number | null;
         ratingCount: number;
-        highlights: Array<{ id: number; name: string; price: number; photoUrl: string | null }>;
+        highlights: Array<{ id: number; name: string; price: number; priceFrom: boolean; photoUrl: string | null }>;
         featured: boolean;
         sponsored: boolean;
         menuUrl: string | null;

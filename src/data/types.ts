@@ -24,6 +24,7 @@ export interface BusinessHighlight {
   id: number;
   name: string;
   price: number;
+  priceFrom: boolean;
   photoUrl: string | null;
 }
 

@@ -1,6 +1,7 @@
 import { readAllRows } from '../src/utils/readAllRows.js';
 import { getServiceSupabase } from './supabaseServer.js';
 import { getEligibleZeloMenuUserIds } from './zelomenuAccess.js';
+import { getConfig, loadCatalogFromDb, resolveConversationCatalogDisplayPrice } from './configStore.js';
 
 // Curadoria editorial independente dos produtos destacados no cardápio.
 // Por enquanto, somente o Bem Servido entra nessa vitrine.
@@ -31,6 +32,8 @@ export interface BusinessDirectoryHighlight {
   id: number;
   name: string;
   price: number;
+  /** `true` quando `price` é o valor mínimo de um grupo obrigatório (ex.: "Monte sua massa") — exibir como "A partir de". */
+  priceFrom: boolean;
   photoUrl: string | null;
 }
 
@@ -105,9 +108,7 @@ async function listBusinessesPage(offset: number): Promise<{ entries: BusinessDi
   const companyIds = profiles
     .map((row: Record<string, unknown>) => String(row.id ?? '').trim())
     .filter(Boolean);
-  const featuredProductIds = [...new Set(profiles.flatMap((profile) => profile.zelomenu_featured_enabled === true && Array.isArray(profile.zelomenu_featured_product_ids)
-    ? profile.zelomenu_featured_product_ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0) : []))];
-  const [eligibleUserIds, deliveryRangesResult, productsAndPublicationsResult, categoriesResult] = await Promise.all([
+  const [eligibleUserIds, deliveryRangesResult, categoriesResult] = await Promise.all([
     getEligibleZeloMenuUserIds(userIds),
     companyIds.length > 0
       ? supabase
@@ -116,23 +117,6 @@ async function listBusinessesPage(offset: number): Promise<{ entries: BusinessDi
           .in('company_id', companyIds)
           .order('max_distance_m', { ascending: true })
       : Promise.resolve({ data: [], error: null }),
-    userIds.length > 0 && featuredProductIds.length > 0
-      ? Promise.all([
-          readAllRows((from, to) => supabase
-            .from('produtos')
-            .select('id, id_usuario, nome, preco, controlar_estoque, estoque_atual')
-            .in('id_usuario', userIds)
-            .in('id', featuredProductIds)
-            .order('id').range(from, to)),
-          readAllRows((from, to) => supabase
-            .from('zelomenu_product_publications')
-            .select('id_usuario, id_produto, nome_publico, foto_url, visivel_online, pausado_manualmente, ordem')
-            .in('id_usuario', userIds)
-            .in('id_produto', featuredProductIds)
-            .order('ordem')
-            .order('id').range(from, to)),
-        ])
-      : Promise.resolve([{ data: [], error: null }, { data: [], error: null }]),
     userIds.length > 0
       ? readAllRows((from, to) => supabase
           .from('categorias')
@@ -146,8 +130,6 @@ async function listBusinessesPage(offset: number): Promise<{ entries: BusinessDi
   const eligibleProfiles = profiles.filter((row) => eligibleUserIds.has(String(row.user_id ?? '').trim()));
   if (eligibleProfiles.length === 0) return { entries: [], hasMore: profiles.length === 50 };
 
-  const [productsResult, publicationsResult] = productsAndPublicationsResult;
-
   if (deliveryRangesResult.error) {
     console.warn('[ZeloMenu] Could not load directory delivery ranges:', deliveryRangesResult.error);
   }
@@ -158,20 +140,23 @@ async function listBusinessesPage(offset: number): Promise<{ entries: BusinessDi
     if (!companyId || !Number.isFinite(maxDistanceM) || maxDistanceM <= 0) continue;
     maxDeliveryDistanceByCompany.set(companyId, Math.max(maxDistanceM, maxDeliveryDistanceByCompany.get(companyId) ?? 0));
   }
-  if (productsResult.error || publicationsResult.error) {
-    console.warn('[ZeloMenu] Could not load directory highlights:', productsResult.error ?? publicationsResult.error);
-  }
 
-  const productsByKey = new Map<string, Record<string, unknown>>();
-  for (const product of productsResult.data ?? []) {
-    const row = product as Record<string, unknown>;
-    productsByKey.set(`${String(row.id_usuario)}:${String(row.id)}`, row);
-  }
-  const publicationsByKey = new Map<string, Record<string, unknown>>();
-  for (const publication of publicationsResult.data ?? []) {
-    const row = publication as Record<string, unknown>;
-    publicationsByKey.set(`${String(row.id_usuario)}:${String(row.id_produto)}`, row);
-  }
+  // Highlight prices reuse the same catalog projection as the storefront
+  // (canonical modifier-group resolution) so "Destaques" never shows a raw
+  // base price of R$ 0,00 for products priced entirely by required groups.
+  const featuredCompanyIds = eligibleProfiles
+    .filter((row) => row.zelomenu_featured_enabled === true
+      && Array.isArray(row.zelomenu_featured_product_ids)
+      && row.zelomenu_featured_product_ids.some((id) => Number.isSafeInteger(Number(id)) && Number(id) > 0))
+    .map((row) => String(row.id ?? '').trim())
+    .filter(Boolean);
+  await Promise.all(featuredCompanyIds.map(async (companyId) => {
+    try {
+      await loadCatalogFromDb(companyId);
+    } catch (error) {
+      console.warn('[ZeloMenu] Could not load directory highlights catalog:', companyId, error);
+    }
+  }));
 
   const categoriesByUser = new Map<string, string[]>();
   for (const category of categoriesResult.data ?? []) {
@@ -189,23 +174,24 @@ async function listBusinessesPage(offset: number): Promise<{ entries: BusinessDi
     const state = String(row.delivery_state ?? '') || extractStateFromAddress(String(row.endereco ?? ''));
     const slug = row.zelomenu_slug ? String(row.zelomenu_slug) : null;
     const userId = String(row.user_id ?? '').trim();
+    const companyId = String(row.id ?? '').trim();
     const deliveryConfig = row.delivery_config as { enabled?: boolean } | null;
     const featuredIds = Array.isArray(row.zelomenu_featured_product_ids)
       ? row.zelomenu_featured_product_ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0)
       : [];
     const highlights = row.zelomenu_featured_enabled === true
       ? featuredIds.map((productId): BusinessDirectoryHighlight | null => {
-          const product = productsByKey.get(`${userId}:${productId}`);
-          const publication = publicationsByKey.get(`${userId}:${productId}`);
-          if (!product || !publication || publication.visivel_online !== true || publication.pausado_manualmente === true) return null;
-          if (product.controlar_estoque === true && Number(product.estoque_atual ?? 0) <= 0) return null;
-          const name = String(publication.nome_publico ?? product.nome ?? '').trim();
+          const product = getConfig(companyId).products.find((candidate) => candidate.id === productId);
+          if (!product || !product.available) return null;
+          const name = product.name.trim();
           if (!name) return null;
+          const displayPrice = resolveConversationCatalogDisplayPrice(product);
           return {
             id: productId,
             name,
-            price: Number(product.preco ?? 0),
-            photoUrl: publication.foto_url ? String(publication.foto_url) : null,
+            price: displayPrice.amount,
+            priceFrom: displayPrice.kind === 'from',
+            photoUrl: product.photoUrl ?? null,
           };
         }).filter((highlight): highlight is BusinessDirectoryHighlight => highlight !== null)
       : [];
