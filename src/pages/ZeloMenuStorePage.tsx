@@ -498,7 +498,7 @@ function ZeloMenuStorePageContent({
                 role="region"
                 aria-roledescription="carrossel"
                 aria-label="Destaques"
-                className="-mx-4 flex snap-x snap-proximity touch-pan-y select-none gap-3 overflow-x-auto overscroll-x-contain px-4 cursor-grab active:cursor-grabbing"
+                className="-mx-4 flex snap-x snap-proximity select-none gap-3 overflow-x-auto overscroll-x-contain px-4 cursor-grab active:cursor-grabbing"
                 onPointerDown={handleFeaturedPointerDown}
                 onPointerMove={handleFeaturedPointerMove}
                 onPointerUp={handleFeaturedPointerEnd}
