@@ -20,11 +20,11 @@ test.describe('Vitrine pública', () => {
     await expect(page.getByRole('heading', { name: /casa dos salgados/i })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('img', { name: /capa de casa dos salgados/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /aberto agora/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /entrega: 40 min/i })).toBeVisible();
+    await expect(page.getByLabel('Entrega: 40 min')).toBeVisible();
     await expect(page.getByRole('button', { name: /informações: endereço e contato/i })).toBeVisible();
   });
 
-  test('abre sheets de horário, entrega e informação e restaura o foco', async ({ page }) => {
+  test('abre sheets de horário e informação e restaura o foco', async ({ page }) => {
     await page.goto(`/${SLUG}`);
 
     const hoursButton = page.getByRole('button', { name: /aberto agora/i });
@@ -34,14 +34,10 @@ test.describe('Vitrine pública', () => {
     await page.keyboard.press('Escape');
     await expect(hoursButton).toBeFocused();
 
-    await page.getByRole('button', { name: /entrega: 40 min/i }).click();
-    await expect(page.getByRole('dialog')).toContainText('Taxas por região');
-    await expect(page.getByRole('dialog')).toContainText('Centro');
-    await page.getByRole('button', { name: 'Fechar informações' }).click();
-
     await page.getByRole('button', { name: /informações: endereço e contato/i }).click();
     await expect(page.getByRole('dialog')).toContainText('Rua de teste, 100');
-    await expect(page.getByRole('dialog').getByRole('link', { name: /como chegar/i })).toHaveAttribute('href', /google\.com\/maps/);
+    await expect(page.getByRole('dialog').getByRole('link', { name: /abrir no google maps/i })).toHaveAttribute('href', /google\.com\/maps/);
+    await expect(page.getByRole('dialog').getByTitle(/mapa de casa dos salgados/i)).toHaveAttribute('src', /google\.com\/maps/);
   });
 
   test('mantém controles públicos com área mínima de toque', async ({ page }) => {
@@ -71,8 +67,8 @@ test.describe('Vitrine pública', () => {
       },
     });
     await page.goto(`/${SLUG}`);
-    await expect(page.getByText(/loja fechada agora/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: /fechado:/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /fechado agora/i })).toBeVisible();
+    await expect(page.getByText(/abre/i).first()).toBeVisible();
     await expect(page.getByText('Coxinha', { exact: true })).toBeVisible();
   });
 
@@ -90,9 +86,8 @@ test.describe('Vitrine pública', () => {
     await expect(page.getByRole('heading', { name: /casa dos salgados/i })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('img', { name: /capa de casa dos salgados/i })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /horários: horário não informado/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /entrega: prazo a confirmar/i })).toBeVisible();
-    await page.getByRole('button', { name: /entrega: prazo a confirmar/i }).click();
-    await expect(page.getByRole('dialog')).toContainText('A taxa é calculada ao informar o endereço');
+    await expect(page.getByLabel('Entrega: Prazo a confirmar')).toBeVisible();
+    await expect(page.getByRole('button', { name: /informações: endereço e contato/i })).toBeVisible();
   });
 
   test('funciona sem overflow nos viewports públicos da matriz', async ({ page }) => {
@@ -141,7 +136,7 @@ test.describe('Vitrine pública', () => {
     await page.getByRole('dialog').getByRole('button', { name: 'Adicionar', exact: true }).click();
 
     // Barra inferior com "Continuar pedido" deve aparecer
-    await expect(page.getByRole('button', { name: /ver sacola/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /continuar pedido/i })).toBeVisible({ timeout: 10_000 });
   });
 
   test('layout responsivo funciona em viewport estreito', async ({ page }) => {

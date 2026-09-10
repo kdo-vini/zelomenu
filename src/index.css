@@ -42,17 +42,16 @@
 
 /*
  * ZeloMenu storefront theme. Scoped via .zelomenu-theme on the top-level
- * wrapper of ZeloMenuStorePage and ZeloMenuCartPage. Comparte a marca lilás
- * com o @theme acima, mas dá à vitrine seu próprio fundo lilás-claro
- * (#F5F2FF), tipografia azul-marinho (#0B1D3A) e o acento verde-limão.
+ * wrapper of ZeloMenuStorePage and ZeloMenuCartPage. A vitrine usa uma base
+ * off-white para deixar fotos e CTAs roxos conduzirem a hierarquia.
  */
 .zelomenu-theme {
   --zm-brand: #6E3AFF;
   --zm-brand-deep: #5A2EEA;
   --zm-brand-soft: #E9E2FF;
-  --zm-canvas: #F5F2FF;
+  --zm-canvas: #FAFAF8;
   --zm-surface: #FFFFFF;
-  --zm-surface-muted: #ECEEF3;
+  --zm-surface-muted: #F1F2F3;
   --zm-ink: #0B1D3A;
   --zm-ink-soft: #5B6475;
   --zm-line: #E6E8EF;

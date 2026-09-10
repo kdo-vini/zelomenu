@@ -1,6 +1,6 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { AlertTriangle, Loader2, Minus, Plus, RefreshCw, Search, ShoppingBag, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Loader2, Minus, Plus, RefreshCw, Search, ShoppingBag, X } from 'lucide-react';
 import {
   getPublicStore,
   isPublicStoreNotFoundError,
@@ -11,7 +11,6 @@ import {
 } from '../services/zelomenuApi';
 
 import { type ZeloMenuStoreCartItem } from '../domain/zelomenuStoreCartCache';
-import { formatNextOpenDay } from '../domain/businessHours';
 import { buildStorefrontOperations, type StorefrontOperationKey } from '../domain/storefrontOperations';
 import { useStoreCart } from '../hooks/useStoreCart';
 import { ToastProvider } from '../contexts/ToastContext';
@@ -110,6 +109,18 @@ function ZeloMenuStorePageContent({
   const tabsRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const handledHighlightRef = useRef<string | null>(null);
+  const featuredRailRef = useRef<HTMLDivElement>(null);
+  const featuredInteractionPausedRef = useRef(false);
+  const featuredResumeTimerRef = useRef<number | null>(null);
+  const featuredDraggingRef = useRef(false);
+  const featuredDragStartXRef = useRef(0);
+  const featuredDragStartScrollLeftRef = useRef(0);
+  const featuredDragMovedRef = useRef(false);
+  const featuredDragFrameRef = useRef<number | null>(null);
+  const featuredDragDeltaRef = useRef(0);
+  const featuredSuppressClickRef = useRef(false);
+  const featuredActiveIndexRef = useRef(0);
+  const [featuredActiveIndex, setFeaturedActiveIndex] = useState(0);
 
   // ── Load store ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -221,6 +232,174 @@ function ZeloMenuStorePageContent({
     return filterPublicCatalogByQuery(store.catalog, searchQuery);
   }, [store, searchQuery]);
 
+  const featuredProducts = useMemo(() => {
+    if (!store || searchQuery || !store.business.featuredEnabled) return [];
+    return getFeaturedProducts(store.catalog, store.business.featuredProductIds ?? []);
+  }, [store, searchQuery]);
+
+  function clearFeaturedResumeTimer() {
+    if (featuredResumeTimerRef.current != null) {
+      window.clearTimeout(featuredResumeTimerRef.current);
+      featuredResumeTimerRef.current = null;
+    }
+  }
+
+  function pauseFeaturedInteraction() {
+    clearFeaturedResumeTimer();
+    featuredInteractionPausedRef.current = true;
+  }
+
+  function resumeFeaturedInteractionSoon() {
+    clearFeaturedResumeTimer();
+    featuredResumeTimerRef.current = window.setTimeout(() => {
+      featuredInteractionPausedRef.current = false;
+      featuredResumeTimerRef.current = null;
+    }, 1400);
+  }
+
+  function getFeaturedScrollTarget(index: number, rail = featuredRailRef.current): number | null {
+    const slide = rail?.children[index] as HTMLElement | undefined;
+    if (!rail || !slide) return null;
+    const maxScrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    const centeredLeft = slide.offsetLeft - Math.max(0, (rail.clientWidth - slide.offsetWidth) / 2);
+    return Math.min(maxScrollLeft, Math.max(0, centeredLeft));
+  }
+
+  function snapFeaturedToNearest() {
+    const rail = featuredRailRef.current;
+    if (!rail || rail.children.length === 0) return;
+
+    const viewportCenter = rail.scrollLeft + rail.clientWidth / 2;
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    Array.from(rail.children).forEach((child, index) => {
+      const slide = child as HTMLElement;
+      const slideCenter = slide.offsetLeft + slide.offsetWidth / 2;
+      const distance = Math.abs(slideCenter - viewportCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    const target = getFeaturedScrollTarget(nearestIndex, rail);
+    if (target == null) return;
+    featuredActiveIndexRef.current = nearestIndex;
+    setFeaturedActiveIndex(nearestIndex);
+    rail.scrollTo({
+      left: target,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  }
+
+  function updateFeaturedActiveIndexFromScroll() {
+    const rail = featuredRailRef.current;
+    if (!rail || rail.children.length === 0) return;
+
+    const viewportCenter = rail.scrollLeft + rail.clientWidth / 2;
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    Array.from(rail.children).forEach((child, index) => {
+      const slide = child as HTMLElement;
+      const slideCenter = slide.offsetLeft + slide.offsetWidth / 2;
+      const distance = Math.abs(slideCenter - viewportCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    if (featuredActiveIndexRef.current === nearestIndex) return;
+    featuredActiveIndexRef.current = nearestIndex;
+    setFeaturedActiveIndex(nearestIndex);
+  }
+
+  function handleFeaturedPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('button, input, textarea, select')) return;
+    pauseFeaturedInteraction();
+    if (event.pointerType !== 'mouse') return;
+    const rail = featuredRailRef.current;
+    if (!rail) return;
+    featuredDraggingRef.current = true;
+    featuredDragMovedRef.current = false;
+    featuredDragStartXRef.current = event.clientX;
+    featuredDragStartScrollLeftRef.current = rail.scrollLeft;
+    rail.style.scrollSnapType = 'none';
+    rail.setPointerCapture(event.pointerId);
+  }
+
+  function handleFeaturedPointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!featuredDraggingRef.current) return;
+    const rail = featuredRailRef.current;
+    if (!rail) return;
+    const delta = event.clientX - featuredDragStartXRef.current;
+    if (Math.abs(delta) > 8) featuredDragMovedRef.current = true;
+    if (!featuredDragMovedRef.current) return;
+    event.preventDefault();
+    featuredDragDeltaRef.current = delta;
+    if (featuredDragFrameRef.current != null) return;
+    featuredDragFrameRef.current = window.requestAnimationFrame(() => {
+      rail.scrollLeft = featuredDragStartScrollLeftRef.current - featuredDragDeltaRef.current;
+      featuredDragFrameRef.current = null;
+    });
+  }
+
+  function handleFeaturedPointerEnd(event: PointerEvent<HTMLDivElement>) {
+    if (!featuredDraggingRef.current) {
+      updateFeaturedActiveIndexFromScroll();
+      resumeFeaturedInteractionSoon();
+      return;
+    }
+    featuredDraggingRef.current = false;
+    const rail = featuredRailRef.current;
+    if (featuredDragFrameRef.current != null) {
+      window.cancelAnimationFrame(featuredDragFrameRef.current);
+      featuredDragFrameRef.current = null;
+      if (rail) rail.scrollLeft = featuredDragStartScrollLeftRef.current - featuredDragDeltaRef.current;
+    }
+    if (rail?.hasPointerCapture(event.pointerId)) rail.releasePointerCapture(event.pointerId);
+    if (featuredDragMovedRef.current) featuredSuppressClickRef.current = true;
+    if (rail) rail.style.scrollSnapType = '';
+    window.requestAnimationFrame(() => snapFeaturedToNearest());
+    resumeFeaturedInteractionSoon();
+  }
+
+  useEffect(() => {
+    featuredActiveIndexRef.current = 0;
+    setFeaturedActiveIndex(0);
+    clearFeaturedResumeTimer();
+    featuredInteractionPausedRef.current = false;
+    featuredRailRef.current?.scrollTo({ left: 0, behavior: 'auto' });
+  }, [featuredProducts.length]);
+
+  useEffect(() => () => clearFeaturedResumeTimer(), []);
+
+  useEffect(() => {
+    const rail = featuredRailRef.current;
+    if (!rail || featuredProducts.length < 2) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const intervalId = window.setInterval(() => {
+      const currentRail = featuredRailRef.current;
+      if (!currentRail || document.hidden || featuredInteractionPausedRef.current) return;
+
+      setFeaturedActiveIndex((current) => {
+        const next = (current + 1) % featuredProducts.length;
+        const target = getFeaturedScrollTarget(next, currentRail);
+        if (target == null) return next;
+        featuredActiveIndexRef.current = next;
+        currentRail.scrollTo({
+          left: target,
+          behavior: 'smooth',
+        });
+        return next;
+      });
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [featuredProducts.length]);
+
   // ── Loading / error states ──────────────────────────────────────────────────
   if (loading) {
     return <CatalogSkeleton />;
@@ -263,9 +442,6 @@ function ZeloMenuStorePageContent({
   if (!store) return null;
 
   const visibleCategories = store.catalog.filter((g) => allGroupProducts(g).length > 0);
-  const businessHours = store.business.businessHours;
-  const outsideBusinessHours = businessHours?.configured === true && businessHours.openNow === false;
-
   return (
     <div className="zelomenu-theme flex min-h-screen flex-col bg-[var(--zm-canvas)]">
 
@@ -290,7 +466,7 @@ function ZeloMenuStorePageContent({
       />
 
       {/* ── Catalog body ──────────────────────────────────────────────────── */}
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-28 pt-5">
+      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-28 pt-4">
 
         {/* Mesa unavailability notice */}
         {mesaUnavailableMessage ? (
@@ -299,51 +475,68 @@ function ZeloMenuStorePageContent({
           </div>
         ) : null}
 
-        {outsideBusinessHours ? (
-          <section className="mb-5 rounded-2xl border border-[var(--color-warn)] bg-[var(--color-warn-soft)] px-4 py-3">
-            <div className="flex gap-3">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warn)]" strokeWidth={2} />
-              <div className="min-w-0">
-                <p className="text-[13px] font-semibold text-[var(--zm-ink)]">
-                  Loja fechada agora
-                </p>
-                <p className="mt-0.5 text-[12px] leading-5 text-[var(--zm-ink-soft)]">
-                  {businessHours?.nextOpen
-                    ? `Abre ${formatNextOpenDay(businessHours.nextOpen.day, businessHours.timezone)} às ${businessHours.nextOpen.start}. Você pode montar e agendar seu pedido.`
-                    : `Você pode montar seu pedido agora e agendar para um horário disponível${businessHours?.label ? ` (${businessHours.label}).` : '.'}`}
-                </p>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {/* Welcome text — clamped to 3 lines to avoid long AI-generated text */}
-        {!searchQuery && store.business.welcomeText ? (
-          <p className="mb-5 line-clamp-3 text-[14px] leading-relaxed text-[var(--zm-ink-soft)]">
-            {store.business.welcomeText}
-          </p>
-        ) : null}
-
         {/* Featured section */}
-        {!searchQuery && store.business.featuredEnabled && (store.business.featuredProductIds ?? []).length > 0 ? (() => {
-          const featured = getFeaturedProducts(store.catalog, store.business.featuredProductIds ?? []);
-          if (featured.length === 0) return null;
-          return (
-            <div className="mb-8">
-              <h2 className="mb-3 text-[15px] font-bold text-[var(--zm-ink)]">Destaques</h2>
+        {featuredProducts.length > 0 ? (
+            <div className="mb-6">
+              <div className="mb-2 flex items-center justify-between gap-4">
+                <h2 className="text-[22px] font-bold tracking-[-0.02em] text-[var(--zm-ink)]">Destaques</h2>
+                <div className="flex items-center gap-1">
+                  {visibleCategories[0] ? (
+                    <button
+                      type="button"
+                      onClick={() => scrollToCategory(visibleCategories[0].nome)}
+                      className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg text-[14px] font-semibold text-[var(--zm-brand)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--zm-brand)]"
+                    >
+                      Ver todos
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
               <div
-                className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1"
+                ref={featuredRailRef}
+                role="region"
+                aria-roledescription="carrossel"
+                aria-label="Destaques"
+                className="-mx-4 flex snap-x snap-proximity touch-pan-y select-none gap-3 overflow-x-auto overscroll-x-contain px-4 cursor-grab active:cursor-grabbing"
+                onPointerDown={handleFeaturedPointerDown}
+                onPointerMove={handleFeaturedPointerMove}
+                onPointerUp={handleFeaturedPointerEnd}
+                onPointerCancel={handleFeaturedPointerEnd}
+                onScroll={() => {
+                  pauseFeaturedInteraction();
+                  updateFeaturedActiveIndexFromScroll();
+                  resumeFeaturedInteractionSoon();
+                }}
+                onFocusCapture={pauseFeaturedInteraction}
+                onBlurCapture={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    resumeFeaturedInteractionSoon();
+                  }
+                }}
+                onClickCapture={(event) => {
+                  if (!featuredSuppressClickRef.current) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  featuredSuppressClickRef.current = false;
+                }}
                 style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } as CSSProperties}
               >
-                {featured.map((p) => (
-                  <div key={`featured-${p.id}`} className="shrink-0">
+                {featuredProducts.map((p, index) => (
+                  <div
+                    key={`featured-${p.id}`}
+                    className="shrink-0 snap-center"
+                    role="group"
+                    aria-roledescription="slide"
+                    aria-label={`${index + 1} de ${featuredProducts.length}`}
+                    aria-current={index === featuredActiveIndex ? 'true' : undefined}
+                  >
                     <FeaturedCard product={p} items={cart.items} onAdd={() => cart.onAddProduct(p)} onChangeQty={cart.changeQty} onSetQty={cart.setQty} />
                   </div>
                 ))}
               </div>
             </div>
-          );
-        })() : null}
+        ) : null}
 
         {filteredCatalog.length === 0 ? (
           <div className="flex flex-col items-center py-16 text-center">
@@ -352,7 +545,7 @@ function ZeloMenuStorePageContent({
             <p className="mt-1 text-[13px] text-[var(--zm-ink-soft)]">Tente um termo diferente</p>
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-6">
             {filteredCatalog.map((group) => {
               const hasPhotos = groupHasPhotos(group);
               if (allGroupProducts(group).length === 0) return null;
@@ -362,7 +555,17 @@ function ZeloMenuStorePageContent({
                   data-category={group.nome}
                   ref={(el) => { sectionRefs.current[group.nome] = el; }}
                 >
-                  <h2 className="mb-3 text-[15px] font-bold text-[var(--zm-ink)]">{group.nome}</h2>
+                  <div className="mb-2 flex items-center justify-between gap-4">
+                    <h2 className="text-[22px] font-bold tracking-[-0.02em] text-[var(--zm-ink)]">{group.nome}</h2>
+                    <button
+                      type="button"
+                      onClick={() => scrollToCategory(group.nome)}
+                      className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg text-[14px] font-semibold text-[var(--zm-brand)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--zm-brand)]"
+                    >
+                      Ver todos
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
 
                   {group.produtosDireto.length > 0 ? (
                     <ProductGrid
@@ -377,8 +580,8 @@ function ZeloMenuStorePageContent({
 
                   {group.subcategorias.map((sub) =>
                     sub.produtos.length > 0 ? (
-                      <div key={sub.nome} className="mt-4">
-                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--zm-ink-soft)]">
+                      <div key={sub.nome} className="mt-3">
+                        <p className="mb-1.5 text-[12px] font-semibold text-[var(--zm-ink-soft)]">
                           {sub.nome}
                         </p>
                         <ProductGrid
@@ -410,36 +613,42 @@ function ZeloMenuStorePageContent({
       {/* ── Floating cart bar ────────────────────────────────────────────── */}
       {cart.lines.length > 0 ? (
         <div
-          className="fixed inset-x-0 bottom-0 z-30 px-4"
+          className="fixed inset-x-0 bottom-0 z-30 px-3"
           style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
         >
-          <div className="mx-auto max-w-md">
+          <div className="mx-auto max-w-lg">
             {cart.submitError ? (
               <div className="mb-2 rounded-xl border border-[var(--color-alert)] bg-[var(--color-alert-soft)] px-3 py-2 text-[12px] font-medium text-[var(--color-alert)]" role="alert">
                 {cart.submitError}
               </div>
             ) : null}
-            <button
-              type="button"
-              onClick={() => void cart.continueToCart()}
-              disabled={cart.submitting || !!mesaUnavailableMessage}
-              className="flex w-full items-center justify-between rounded-2xl px-5 py-4 text-white shadow-2xl disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ background: 'var(--zm-brand)' }}
-            >
-              <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 rounded-[22px] border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3 shadow-[0_-4px_12px_rgba(11,29,58,0.08)]">
+              <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--zm-canvas)] text-[var(--zm-ink)]">
+                <ShoppingBag className="h-6 w-6" strokeWidth={1.8} aria-hidden="true" />
                 <span
-                  className="flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[11px] font-bold"
-                  style={{ background: 'rgba(255,255,255,0.22)' }}
+                  className="absolute -right-1 -top-1 flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white"
+                  style={{ background: 'var(--zm-brand)' }}
                 >
                   {cart.totalQty}
                 </span>
-                <span className="flex items-center gap-2 text-[14px] font-semibold">
-                  {cart.submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
-                  {cart.submitting ? 'Abrindo pedido…' : 'Ver sacola'}
-                </span>
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[18px] font-bold leading-tight text-[var(--zm-ink)]">{toBRL(cart.subtotal)}</p>
+                <p className="mt-0.5 truncate text-[13px] text-[var(--zm-ink-soft)]">
+                  {cart.totalQty} {cart.totalQty === 1 ? 'item' : 'itens'} no pedido
+                </p>
               </div>
-              <span className="text-[15px] font-bold">{toBRL(cart.subtotal)}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => void cart.continueToCart()}
+                disabled={cart.submitting || !!mesaUnavailableMessage}
+                className="flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-2xl bg-[var(--zm-brand)] px-4 text-[14px] font-semibold text-white transition-colors hover:bg-[var(--zm-brand-deep)] disabled:cursor-not-allowed disabled:opacity-50 sm:px-5"
+              >
+                {cart.submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} /> : null}
+                {cart.submitting ? 'Abrindo pedido…' : 'Continuar pedido'}
+                {!cart.submitting ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : null}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -622,9 +831,8 @@ function QtyControl({
 }
 
 // ─── PhotoRow ─────────────────────────────────────────────────────────────────
-// Horizontal card: name/description/price on the left, a fixed-size thumbnail
-// on the right so photos stay a supporting detail instead of the dominant
-// element (previously a full-bleed square that scaled with the grid column).
+// Horizontal card: a fixed-size thumbnail on the left, with name,
+// description, price and the add control kept in a compact reading order.
 
 function PhotoRow({
   product,
@@ -645,7 +853,7 @@ function PhotoRow({
 
   return (
     <div
-      className="flex gap-3 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3 cursor-pointer active:scale-[0.99] transition-transform"
+      className="flex min-h-[112px] cursor-pointer gap-3 rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] p-3 transition-transform active:scale-[0.99]"
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, input, textarea, select')) return;
         onAdd();
@@ -653,33 +861,7 @@ function PhotoRow({
       role="group"
       aria-label={`Abrir ${product.name}`}
     >
-      <div className="flex min-w-0 flex-1 flex-col">
-        <p className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[var(--zm-ink)]">
-          {product.name}
-        </p>
-        {product.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[var(--zm-ink-soft)]">
-            {product.description}
-          </p>
-        ) : null}
-        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-          <p className="text-[13px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
-            {getProductPriceLabel(product)}
-          </p>
-          <QtyControl
-            product={product}
-            qty={qty}
-            hasModifiers={hasModifiers}
-            isUnit={isUnit}
-            onAdd={onAdd}
-            onChangeQty={onChangeQty}
-            onSetQty={onSetQty}
-            size="sm"
-          />
-        </div>
-      </div>
-
-      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-[var(--zm-line)]">
+      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-[var(--zm-canvas)] sm:h-24 sm:w-24">
         {product.photoUrl ? (
           <img
             src={product.photoUrl}
@@ -701,6 +883,31 @@ function PhotoRow({
           </span>
         ) : null}
       </div>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <p className="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--zm-ink)]">
+          {product.name}
+        </p>
+        {product.description ? (
+          <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-[var(--zm-ink-soft)]">
+            {product.description}
+          </p>
+        ) : null}
+        <p className="mt-auto pt-2 text-[14px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
+            {getProductPriceLabel(product)}
+        </p>
+      </div>
+
+      <QtyControl
+        product={product}
+        qty={qty}
+        hasModifiers={hasModifiers}
+        isUnit={isUnit}
+        onAdd={onAdd}
+        onChangeQty={onChangeQty}
+        onSetQty={onSetQty}
+        size="sm"
+      />
     </div>
   );
 }
@@ -728,7 +935,7 @@ function FeaturedCard({
 
   return (
     <div
-      className="flex h-full w-[148px] flex-col overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] cursor-pointer"
+      className="flex h-full w-[min(180px,calc((100vw-44px)/2))] cursor-pointer flex-col overflow-hidden rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-surface)] sm:w-[190px]"
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button, input, textarea, select')) return;
         onAdd();
@@ -736,7 +943,7 @@ function FeaturedCard({
       role="group"
       aria-label={`Abrir ${product.name}`}
     >
-      <div className="relative h-[110px] w-full overflow-hidden bg-[var(--zm-canvas)]">
+      <div className="relative aspect-[4/3] w-full overflow-hidden bg-[var(--zm-canvas)]">
         {product.photoUrl ? (
           <img
             src={product.photoUrl}
@@ -758,12 +965,17 @@ function FeaturedCard({
           </span>
         ) : null}
       </div>
-      <div className="flex flex-1 flex-col gap-1 p-2.5">
-        <p className="line-clamp-2 text-[12.5px] font-semibold leading-snug text-[var(--zm-ink)]">
+      <div className="flex flex-1 flex-col gap-1 p-3">
+        <p className="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--zm-ink)]">
           {product.name}
         </p>
+        {product.description ? (
+          <p className="line-clamp-2 text-[13px] leading-snug text-[var(--zm-ink-soft)]">
+            {product.description}
+          </p>
+        ) : null}
         <div className="mt-auto flex items-center justify-between gap-1 pt-1.5">
-          <p className="text-[12.5px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
+          <p className="text-[14px] font-bold" style={{ color: 'var(--zm-brand-deep)' }}>
             {getProductPriceLabel(product)}
           </p>
           <QtyControl

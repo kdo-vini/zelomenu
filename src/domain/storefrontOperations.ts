@@ -31,7 +31,7 @@ function buildHoursAction(hours: ZeloMenuPublicBusinessHoursStatus | undefined):
   const nextOpen = hours.nextOpen
     ? `Abre ${formatNextOpenDay(hours.nextOpen.day, hours.timezone)} às ${hours.nextOpen.start}`
     : 'Fechado no momento';
-  return { key: 'hours', title: 'Fechado', summary: nextOpen, tone: 'warning' };
+  return { key: 'hours', title: 'Fechado agora', summary: nextOpen, tone: 'warning' };
 }
 
 export function buildStorefrontOperations(

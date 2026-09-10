@@ -48,7 +48,7 @@ describe('buildStorefrontOperations', () => {
       },
     });
 
-    expect(hours).toEqual(expect.objectContaining({ title: 'Fechado', tone: 'warning' }));
+    expect(hours).toEqual(expect.objectContaining({ title: 'Fechado agora', tone: 'warning' }));
     expect(hours.summary).toMatch(/Abre/);
   });
 

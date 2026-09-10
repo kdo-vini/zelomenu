@@ -16,23 +16,17 @@ function toBRL(value: number): string {
 function requiredActionLabel(groupName: string): string {
   const subject = groupName
     .trim()
-    .replace(/^escolha\s+/i, '')
-    .replace(/^(?:o|a|um|uma)\s+/i, '')
+    .replace(/^\d+\s+/i, '')
+    .replace(/^escolh(?:a|er)\s+/i, '')
+    .replace(/^\d+\s+/i, '')
+    .replace(/^escolh(?:a|er)\s+/i, '')
     .trim();
-  if (!subject) return 'Escolher opção';
-  const conciseSubject = subject.length > 22 ? 'opção' : subject;
-  return `Escolher ${conciseSubject.charAt(0).toLocaleLowerCase('pt-BR')}${conciseSubject.slice(1)}`;
+  if (!subject) return 'Escolha uma opção';
+  return `Escolha ${subject}`;
 }
 
 function quantityTotal(selections: Record<string, number>): number {
   return Object.values(selections).reduce((total, quantity) => total + quantity, 0);
-}
-
-function groupSelectedCount(
-  group: { allowsQuantity: boolean },
-  selections: Record<string, number>,
-): number {
-  return group.allowsQuantity ? quantityTotal(selections) : Object.keys(selections).length;
 }
 
 function groupCounterLabel(
@@ -43,28 +37,17 @@ function groupCounterLabel(
     minTotalQuantity: number;
     maxTotalQuantity: number | null;
   },
-  selectedCount: number,
 ): string {
-  if (group.allowsQuantity) {
-    const min = Math.max(group.minTotalQuantity, group.minSelections);
-    const max = group.maxTotalQuantity;
-    const choiceLabel = min > 0 && max != null && min === max
-      ? `Escolha ${min} ${min === 1 ? 'item' : 'itens'}`
-      : min > 0 && max != null
-        ? `Escolha de ${min} a ${max} itens`
-        : min > 0
-          ? `Escolha pelo menos ${min} ${min === 1 ? 'item' : 'itens'}`
-          : max != null
-            ? `Escolha até ${max} ${max === 1 ? 'item' : 'itens'}`
-            : 'Escolha os itens';
-    const countLabel = max != null ? `${selectedCount} de ${max}` : `${selectedCount} selecionado${selectedCount === 1 ? '' : 's'}`;
-    const distinctLabel = group.maxSelections != null ? ` · até ${group.maxSelections} opções diferentes` : '';
-    return `${choiceLabel} · ${countLabel}${distinctLabel}`;
-  }
+  const min = group.allowsQuantity ? Math.max(group.minTotalQuantity, group.minSelections) : group.minSelections;
+  const max = group.allowsQuantity ? group.maxTotalQuantity : group.maxSelections;
+  const singular = group.allowsQuantity ? 'item' : 'opção';
+  const plural = group.allowsQuantity ? 'itens' : 'opções';
 
-  const minimum = group.minSelections > 0 ? `Obrigatório · mínimo ${group.minSelections}` : 'Opcional';
-  const maximum = group.maxSelections != null ? ` · máximo ${group.maxSelections}` : '';
-  return `${minimum}${maximum} · ${selectedCount} selecionada${selectedCount === 1 ? '' : 's'}`;
+  if (min > 0 && max != null && min === max) return `Escolha ${min} ${min === 1 ? singular : plural}`;
+  if (min > 0 && max != null) return `Escolha de ${min} a ${max} ${plural}`;
+  if (min > 0) return `Escolha pelo menos ${min} ${min === 1 ? singular : plural}`;
+  if (max != null) return `Opcional · escolha até ${max}${group.allowsQuantity ? ` ${max === 1 ? singular : plural}` : ''}`;
+  return 'Opcional';
 }
 
 /** Mini-stepper para opções com quantidade (visualmente menor que o stepper do produto). */
@@ -595,7 +578,7 @@ export function ProductAddModal({
                 <div className="mb-2.5">
                   <p className="text-[14px] font-bold text-[var(--zm-ink)]">{group.name}</p>
                   <p className="text-[12px] text-[var(--zm-ink-soft)]">
-                    {groupCounterLabel(group, groupSelectedCount(group, selections[group.id] ?? {}))}
+                    {groupCounterLabel(group)}
                   </p>
                   {nextRequiredGroup?.id === group.id && group.allowsQuantity && group.minTotalQuantity > quantityTotal(selections[group.id] ?? {}) ? (
                     <p className="mt-1 text-[12px] font-semibold text-[var(--color-alert)]" role="alert">
@@ -761,24 +744,24 @@ export function ProductAddModal({
                         {catSuggestions.map((p) => (
                           <div
                             key={p.id}
-                            className="flex w-[130px] shrink-0 flex-col rounded-xl border border-[var(--zm-line)] bg-[var(--zm-canvas)]"
+                            className="flex w-[148px] shrink-0 flex-col rounded-xl border border-[var(--zm-line)] bg-[var(--zm-canvas)]"
                             style={{ scrollSnapAlign: 'start' }}
                           >
-                            <div className="flex h-[80px] items-center justify-center overflow-hidden rounded-t-xl bg-[var(--zm-surface)]">
+                            <div className="flex h-[92px] items-center justify-center overflow-hidden rounded-t-xl bg-[var(--zm-surface)]">
                               {p.photoUrl ? (
                                 <img src={p.photoUrl} alt={p.name} className="h-full w-full object-cover" loading="lazy" />
                               ) : (
                                 <ImageIcon className="h-6 w-6 text-[var(--zm-ink-soft)]" strokeWidth={1.4} />
                               )}
                             </div>
-                            <div className="flex flex-1 flex-col justify-between gap-1 p-2">
-                              <p className="text-[11px] font-medium leading-tight text-[var(--zm-ink)] line-clamp-2">{p.name}</p>
+                            <div className="flex flex-1 flex-col justify-between gap-1 p-2.5">
+                              <p className="line-clamp-2 text-[12px] font-medium leading-tight text-[var(--zm-ink)]">{p.name}</p>
                               <div className="flex items-center justify-between gap-1">
                                 <span className="text-[12px] font-semibold text-[var(--zm-ink)]">{toBRL(p.basePrice)}</span>
                                 <button
                                   type="button"
                                   onClick={() => onQuickAdd(p)}
-                                  className="flex h-7 w-7 min-h-11 min-w-11 items-center justify-center rounded-lg bg-[var(--zm-brand)] text-white transition-transform active:scale-90"
+                                  className="flex h-8 w-8 min-h-11 min-w-11 items-center justify-center rounded-full bg-[var(--zm-brand)] text-white transition-transform active:scale-90"
                                   aria-label={`Adicionar ${p.name}`}
                                 >
                                   <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />

@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Clock3, ExternalLink, MapPin, MessageCircle, Truck, X } from 'lucide-react';
+import { Bike, Clock3, ExternalLink, MapPin, MessageCircle, X } from 'lucide-react';
 import { Modal } from '../Modal';
 import { formatEstimatedDeliveryMinutes } from '../../domain/deliverySettings';
 import { formatNextOpenDay } from '../../domain/businessHours';
@@ -30,6 +30,10 @@ function formatAddressSearch(address: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
 
+function formatAddressEmbed(address: string): string {
+  return `https://www.google.com/maps?q=${encodeURIComponent(address)}&output=embed`;
+}
+
 export function StorefrontOperationSheet({ operation, business, onClose }: StorefrontOperationSheetProps) {
   const titleId = useId();
   const hours = business.businessHours;
@@ -43,14 +47,14 @@ export function StorefrontOperationSheet({ operation, business, onClose }: Store
       containerClassName="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4"
       backdropClassName="absolute inset-0 bg-black/60"
       panelLayoutClassName="w-full sm:max-w-lg"
-      panelClassName="max-h-[min(86vh,720px)] overflow-hidden rounded-t-3xl bg-[var(--zm-surface)] shadow-2xl sm:rounded-3xl"
+      panelClassName="max-h-[min(86vh,720px)] overflow-hidden rounded-t-2xl bg-[var(--zm-surface)] shadow-2xl sm:rounded-2xl"
     >
       <div className="flex max-h-[min(86vh,720px)] flex-col">
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--zm-line)] px-5 py-4">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--zm-brand-soft)] text-[var(--zm-brand-deep)]">
               {operation === 'hours' ? <Clock3 className="h-5 w-5" aria-hidden="true" /> : null}
-              {operation === 'fulfillment' ? <Truck className="h-5 w-5" aria-hidden="true" /> : null}
+              {operation === 'fulfillment' ? <Bike className="h-5 w-5" aria-hidden="true" /> : null}
               {operation === 'information' ? <MapPin className="h-5 w-5" aria-hidden="true" /> : null}
             </span>
             <div>
@@ -70,7 +74,7 @@ export function StorefrontOperationSheet({ operation, business, onClose }: Store
         <div className="overflow-y-auto px-5 py-5">
           {operation === 'hours' ? (
             <div className="space-y-4">
-              <div className={`rounded-2xl border px-4 py-3 ${hours?.openNow ? 'border-[var(--zm-brand)]/30 bg-[var(--zm-brand-soft)]' : 'border-[var(--color-warn)]/40 bg-[var(--color-warn-soft)]'}`}>
+              <div className={`rounded-xl border px-4 py-3 ${hours?.openNow ? 'border-[var(--color-success)]/30 bg-[var(--color-success-soft)]' : 'border-[var(--color-alert)]/30 bg-[var(--color-alert-soft)]'}`}>
                 <p className="text-[14px] font-bold text-[var(--zm-ink)]">
                   {!hours?.configured ? 'Horário não informado' : hours.openNow ? 'Aberto agora' : 'Fechado no momento'}
                 </p>
@@ -139,17 +143,26 @@ export function StorefrontOperationSheet({ operation, business, onClose }: Store
                 </div>
               ) : null}
               {business.address ? (
-                <div className="rounded-2xl border border-[var(--zm-line)] bg-[var(--zm-canvas)] px-4 py-4">
-                  <div className="flex gap-3">
+                <div className="overflow-hidden rounded-xl border border-[var(--zm-line)] bg-[var(--zm-canvas)]">
+                  <div className="flex gap-3 px-4 pb-3 pt-4">
                     <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-[var(--zm-brand)]" aria-hidden="true" />
                     <div className="min-w-0">
                       <h3 className="text-[14px] font-bold text-[var(--zm-ink)]">Endereço</h3>
                       <p className="mt-1 text-[13px] leading-relaxed text-[var(--zm-ink-soft)]">{business.address}</p>
-                      <a href={formatAddressSearch(business.address)} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[var(--zm-line-strong)] px-3.5 text-[13px] font-semibold text-[var(--zm-ink)] hover:border-[var(--zm-brand)]">
-                        <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                        Como chegar
-                      </a>
                     </div>
+                  </div>
+                  <iframe
+                    title={`Mapa de ${business.name || 'loja'}`}
+                    src={formatAddressEmbed(business.address)}
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    className="h-44 w-full border-0"
+                  />
+                  <div className="px-4 py-3">
+                    <a href={formatAddressSearch(business.address)} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[var(--zm-line-strong)] px-3.5 text-[13px] font-semibold text-[var(--zm-ink)] hover:border-[var(--zm-brand)]">
+                      <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                      Abrir no Google Maps
+                    </a>
                   </div>
                 </div>
               ) : null}

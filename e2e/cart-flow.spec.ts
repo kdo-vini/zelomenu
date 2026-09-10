@@ -18,7 +18,7 @@ test.describe('Fluxo de carrinho público', () => {
     await page.getByRole('dialog').getByRole('button', { name: 'Adicionar', exact: true }).click();
 
     // Clica em "Continuar pedido"
-    const continueBtn = page.getByRole('button', { name: /ver sacola/i });
+    const continueBtn = page.getByRole('button', { name: /continuar pedido/i });
     await expect(continueBtn).toBeVisible({ timeout: 10_000 });
     await continueBtn.click();
 
